@@ -2,12 +2,21 @@ import { useRef, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { motion } from "framer-motion";
 import {
-  Candy,
+  Boxes,
+  Cloud,
+  DownloadCloud,
   FolderSearch,
   Gamepad2,
+  Globe2,
   HardDrive,
-  LayoutPanelTop,
-  Star
+  Keyboard,
+  Play,
+  Radar,
+  RotateCw,
+  Server,
+  ShieldCheck,
+  Sparkles,
+  Wrench
 } from "lucide-react";
 import ddnetArtwork from "./assets/ddnet2.svg";
 import ddnetArtworkFallback from "./assets/ddnet2.webp";
@@ -23,35 +32,35 @@ import type { ClientHealth, ClientInstallation, LauncherState } from "./types";
 
 type AppView = "launch" | "clients" | "update" | "resources" | "binds";
 
-function MetricCard(props: {
-  icon: ReactNode;
+type NavItem = {
+  id: AppView;
   label: string;
-  value: string;
-  tone: "mint" | "berry" | "lemon" | "sky";
-}) {
-  const toneClass =
-    props.tone === "berry"
-      ? "bg-[#ffe1f0] text-[#dc6498]"
-      : props.tone === "lemon"
-        ? "bg-[#fff3be] text-[#b68b11]"
-        : props.tone === "sky"
-          ? "bg-[#dff4ff] text-[#4a90be]"
-          : "bg-[#dff9ed] text-[#3c9f74]";
+  icon: ReactNode;
+};
 
-  return (
-    <div className="rounded-[28px] border border-white/80 bg-white/68 px-4 py-4 shadow-[0_18px_45px_rgba(134,164,214,0.12)] backdrop-blur-2xl">
-      <div className="flex items-center gap-3">
-        <div className={`grid h-11 w-11 place-items-center rounded-[16px] ${toneClass}`}>
-          {props.icon}
-        </div>
-        <div>
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-[#99a5bd]">{props.label}</div>
-          <div className="mt-1 text-sm font-bold text-[#5c6782]">{props.value}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
+type WorkspaceBackground = {
+  id: string;
+  src: string;
+  fallback: string;
+  label: string;
+};
+
+const workspaceBackgrounds: WorkspaceBackground[] = [
+  {
+    id: "ddnet-default",
+    src: ddnetArtwork,
+    fallback: ddnetArtworkFallback,
+    label: "DDNet Default"
+  }
+];
+
+const navItems: NavItem[] = [
+  { id: "launch", label: "启动", icon: <Play size={22} fill="currentColor" /> },
+  { id: "clients", label: "客户端", icon: <Gamepad2 size={22} /> },
+  { id: "update", label: "更新", icon: <DownloadCloud size={22} /> },
+  { id: "resources", label: "资源", icon: <Boxes size={22} /> },
+  { id: "binds", label: "Binds", icon: <Keyboard size={22} /> }
+];
 
 function normalizeHealth(health: ClientHealth): string {
   switch (health) {
@@ -83,6 +92,255 @@ function getStatusText(state: LauncherState, client: ClientInstallation | null):
   }
 }
 
+function ActivityBar(props: { activeView: AppView; onChangeView: (view: AppView) => void }) {
+  return (
+    <nav
+      aria-label="主模块导航"
+      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-white/10 bg-[#12151f]/88 px-2 py-4 text-white shadow-[18px_0_60px_rgba(18,21,31,0.22)] backdrop-blur-2xl"
+    >
+      <div className="mb-5 grid h-11 w-11 place-items-center overflow-hidden rounded-2xl bg-white/92 shadow-[0_16px_34px_rgba(255,143,189,0.22)]">
+        <img src={ddnetLogo} alt="DDNet Manager" className="h-7 w-7" />
+      </div>
+
+      <div className="flex flex-1 flex-col gap-2">
+        {navItems.map((item) => {
+          const active = props.activeView === item.id;
+
+          return (
+            <button
+              key={item.id}
+              type="button"
+              aria-label={item.label}
+              aria-current={active ? "page" : undefined}
+              onClick={() => props.onChangeView(item.id)}
+              className={`group relative grid h-12 w-12 place-items-center rounded-2xl transition ${
+                active
+                  ? "bg-[linear-gradient(135deg,#ff86bd,#ffd777_58%,#8bdcff)] text-[#43233b] shadow-[0_14px_30px_rgba(255,137,189,0.32)]"
+                  : "text-white/58 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              {active ? <span className="absolute -left-2 h-7 w-1 rounded-full bg-[#ff9bc8]" /> : null}
+              {item.icon}
+              <span className="pointer-events-none absolute left-[58px] z-30 rounded-xl bg-[#151827]/95 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:translate-x-1 group-hover:opacity-100">
+                {item.label}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        aria-label="设置"
+        disabled
+        title="设置暂未开放"
+        className="grid h-12 w-12 place-items-center rounded-2xl text-white/22"
+      >
+        <Wrench size={21} />
+      </button>
+    </nav>
+  );
+}
+
+function SidebarSection(props: { title: string; children: ReactNode }) {
+  return (
+    <section className="rounded-3xl border border-white/12 bg-white/[0.07] p-4 shadow-[0_22px_60px_rgba(4,8,20,0.16)] backdrop-blur-2xl">
+      <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-white/46">{props.title}</h3>
+      <div className="mt-3">{props.children}</div>
+    </section>
+  );
+}
+
+function ContextSidebar(props: {
+  activeView: AppView;
+  clientPath: string;
+  selectedClient: ClientInstallation | null;
+  statusText: string;
+}) {
+  const activeLabel = navItems.find((item) => item.id === props.activeView)?.label ?? "启动";
+  const recentClients = props.selectedClient
+    ? [props.selectedClient.display_name, "DDNet Vanilla", "QmClient Nightly"]
+    : ["QmClient Stable", "DDNet Vanilla", "QmClient Nightly"];
+
+  return (
+    <aside className="dm-scroll hidden h-full w-[232px] shrink-0 overflow-y-auto border-r border-white/12 bg-[#171b29]/78 px-4 py-5 text-white backdrop-blur-2xl min-[1024px]:block min-[1320px]:w-[292px]">
+      <div className="mb-5">
+        <div className="text-[11px] font-black uppercase tracking-[0.24em] text-[#ffaad0]">Workspace</div>
+        <h2 className="mt-2 text-3xl font-black tracking-[-0.05em] text-white">{activeLabel}</h2>
+      </div>
+
+      {props.activeView === "launch" ? (
+        <div className="space-y-4">
+          <SidebarSection title="当前客户端">
+            <div className="rounded-2xl bg-white/9 p-4">
+              <div className="flex items-center gap-3">
+                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#ffe0ef] text-[#d85e93]">
+                  <Gamepad2 size={21} />
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-base font-black text-white">
+                    {props.selectedClient?.display_name ?? "未选择客户端"}
+                  </div>
+                  <div className="mt-1 text-xs font-semibold text-white/48">{props.statusText}</div>
+                </div>
+              </div>
+              <div className="mt-4 rounded-xl bg-black/18 px-3 py-2 text-xs font-semibold leading-5 text-white/58">
+                {props.selectedClient?.install_dir ?? (props.clientPath || "选择客户端目录后显示路径。")}
+              </div>
+            </div>
+          </SidebarSection>
+
+          <SidebarSection title="最近客户端">
+            <div className="space-y-2">
+              {recentClients.map((client, index) => (
+                <div
+                  key={`${client}-${index}`}
+                  className={`w-full rounded-2xl px-3 py-3 text-left transition ${
+                    index === 0
+                      ? "bg-white/14 text-white"
+                      : "bg-white/[0.055] text-white/58"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate text-sm font-black">{client}</span>
+                    <span className="shrink-0 rounded-full bg-white/[0.08] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/38">
+                      soon
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SidebarSection>
+
+          <SidebarSection title="路径健康">
+            <div className="grid gap-2 text-sm font-semibold text-white/68">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={16} className="text-[#a9f0c8]" />
+                {props.selectedClient ? normalizeHealth(props.selectedClient.health) : "尚未验证"}
+              </div>
+              <div className="flex items-center gap-2">
+                <HardDrive size={16} className="text-[#8bdcff]" />
+                {props.selectedClient ? "已锁定启动目标" : "等待选择目录"}
+              </div>
+            </div>
+          </SidebarSection>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <SidebarSection title="页面上下文">
+            <div className="space-y-2 text-sm font-semibold leading-6 text-white/64">
+              <div>当前模块会在右侧主工作区显示具体工具。</div>
+              <div>侧栏后续可承载筛选、任务队列或文件树。</div>
+            </div>
+          </SidebarSection>
+          <SidebarSection title="快捷入口">
+            <div className="space-y-2">
+              {["刷新状态", "打开目录", "查看日志"].map((label) => (
+                <div
+                  key={label}
+                  className="w-full rounded-2xl bg-white/[0.045] px-3 py-3 text-left text-sm font-black text-white/38"
+                >
+                  {label} · 待接入
+                </div>
+              ))}
+            </div>
+          </SidebarSection>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+function UpdateHub(props: { selectedClient: ClientInstallation | null; compact?: boolean }) {
+  const rows = [
+    { icon: <Globe2 size={16} />, label: "GitHub", value: "等待连通性检测", tone: "text-[#8bdcff]" },
+    { icon: <Server size={16} />, label: "Host", value: "未启用加速", tone: "text-[#ffd777]" },
+    { icon: <Cloud size={16} />, label: "Manifest", value: "未刷新", tone: "text-[#ff9bc8]" },
+    {
+      icon: <RotateCw size={16} />,
+      label: "Client",
+      value: props.selectedClient?.version ? `本地 ${props.selectedClient.version}` : "版本未知",
+      tone: "text-[#a9f0c8]"
+    }
+  ];
+
+  return (
+    <section
+      className={`rounded-[30px] border border-white/18 bg-[#141827]/68 p-5 text-white shadow-[0_30px_90px_rgba(6,10,26,0.28)] backdrop-blur-2xl ${
+        props.compact ? "" : "w-[330px]"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-black uppercase tracking-[0.24em] text-[#8bdcff]">Update Hub</div>
+          <h3 className="mt-1 text-xl font-black tracking-[-0.03em]">网络与更新源</h3>
+        </div>
+        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/12 text-[#ffd777]">
+          <Radar size={20} />
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center gap-3 rounded-2xl bg-white/[0.075] px-3 py-3">
+            <div className={row.tone}>{row.icon}</div>
+            <div className="min-w-0">
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-white/38">{row.label}</div>
+              <div className="mt-0.5 truncate text-sm font-bold text-white/78">{row.value}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WorkspaceShell(props: {
+  activeView: AppView;
+  children: ReactNode;
+  selectedClient: ClientInstallation | null;
+}) {
+  const background = workspaceBackgrounds[0];
+
+  return (
+    <section className="relative min-w-0 flex-1 overflow-hidden bg-[#090b12]">
+      <div className="absolute inset-0">
+        <img
+          src={background.src}
+          alt={background.label}
+          className="h-full w-full object-cover opacity-64"
+          onError={(event) => {
+            event.currentTarget.src = background.fallback;
+          }}
+        />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_28%,rgba(255,213,231,0.16),transparent_24%),linear-gradient(90deg,rgba(8,10,18,0.86)_0%,rgba(8,10,18,0.48)_44%,rgba(8,10,18,0.24)_100%),linear-gradient(180deg,rgba(8,10,18,0.26),rgba(8,10,18,0.80))]" />
+      </div>
+
+      <div className="relative z-10 flex h-full min-h-0 flex-col">
+        {props.activeView === "launch" ? (
+          <div className="dm-scroll min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
+            {props.children}
+          </div>
+        ) : (
+          <div className="dm-scroll min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
+            <div className="mx-auto max-w-[1120px] rounded-[34px] border border-white/18 bg-white/82 p-5 text-[#5f6782] shadow-[0_34px_90px_rgba(6,10,26,0.18)] backdrop-blur-2xl">
+              {props.children}
+            </div>
+          </div>
+        )}
+
+        {props.activeView === "launch" ? (
+          <div className="pointer-events-none absolute bottom-6 right-6 hidden min-[1320px]:block">
+            <div className="pointer-events-auto">
+              <UpdateHub selectedClient={props.selectedClient} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [activeView, setActiveView] = useState<AppView>("launch");
   const [launcherState, setLauncherState] = useState<LauncherState>("unconfigured");
@@ -90,14 +348,6 @@ export default function App() {
   const [selectedClient, setSelectedClient] = useState<ClientInstallation | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const validationRequestId = useRef(0);
-
-  const navItems: Array<{ id: AppView; label: string }> = [
-    { id: "launch", label: "启动" },
-    { id: "clients", label: "客户端" },
-    { id: "update", label: "更新" },
-    { id: "resources", label: "资源" },
-    { id: "binds", label: "Binds" }
-  ];
 
   const activeViewLabel = navItems.find((item) => item.id === activeView)?.label ?? "启动";
 
@@ -157,7 +407,7 @@ export default function App() {
 
     if (selectedClient && value !== selectedClient.install_dir) {
       setSelectedClient(null);
-      setLauncherState(value.trim() ? "unconfigured" : "unconfigured");
+      setLauncherState("unconfigured");
     } else if (!value.trim()) {
       setSelectedClient(null);
       setLauncherState("unconfigured");
@@ -229,182 +479,43 @@ export default function App() {
       case "binds":
         return <BindsPanel />;
       case "launch":
-        return null;
+        return (
+          <LaunchPanel
+            state={launcherState}
+            clientPath={clientPath}
+            selectedClient={selectedClient}
+            statusText={statusText}
+            errorMessage={errorMessage}
+            updateHub={<UpdateHub selectedClient={selectedClient} compact />}
+            onClientPathChange={handleClientPathChange}
+            onBrowse={handleBrowse}
+            onValidate={handleValidate}
+            onPrimaryAction={handlePrimaryAction}
+          />
+        );
     }
   };
 
   const statusText = getStatusText(launcherState, selectedClient);
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[var(--dm-bg)] text-[#5f6782]">
+    <main className="relative h-screen w-screen overflow-hidden bg-[#090b12] text-[#5f6782]">
       <TitleBar />
-
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_18%,rgba(255,213,231,0.95),transparent_24%),radial-gradient(circle_at_82%_20%,rgba(183,238,255,0.92),transparent_28%),radial-gradient(circle_at_48%_88%,rgba(255,244,186,0.88),transparent_30%),linear-gradient(180deg,#fffdfa_0%,#f8fbff_48%,#fff7f1_100%)]" />
-      <div className="absolute left-[-80px] top-[92px] h-[260px] w-[260px] rounded-full bg-[#ffd8ea]/70 blur-3xl" />
-      <div className="absolute right-[-50px] top-[180px] h-[240px] w-[240px] rounded-full bg-[#c6efff]/72 blur-3xl" />
-      <div className="absolute bottom-[-110px] left-[22%] h-[280px] w-[320px] rounded-full bg-[#fff1b6]/72 blur-3xl" />
-
-      <section className="relative z-10 flex h-full pt-11">
-        <div className="flex flex-1 flex-col overflow-hidden px-10 pb-6 pt-6">
-          <div className="flex min-h-0 flex-1 gap-8">
-            <div className="flex min-h-0 flex-1 flex-col">
-              <motion.div
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, ease: "easeOut" }}
-                className="inline-flex w-fit items-center gap-2 rounded-full bg-white/72 px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-[#e577a9] shadow-[0_14px_30px_rgba(255,184,208,0.24)]"
-              >
-                <Candy size={14} />
-                Sugar Rush Shell
-              </motion.div>
-
-              <div className="mt-4 flex items-start justify-between gap-6">
-                <div className="max-w-[640px]">
-                  <motion.img
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05, duration: 0.45 }}
-                    src={ddnetLogo}
-                    alt="DDNet Manager logo"
-                    className="h-11 w-auto"
-                  />
-                  <motion.h1
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.08, duration: 0.5 }}
-                    className="mt-4 text-[52px] font-black leading-[0.92] tracking-[-0.07em] text-[#6a658c]"
-                  >
-                    糖果补给站
-                    <span className="block bg-[linear-gradient(90deg,#ff73af_0%,#ffb168_42%,#55b8ff_100%)] bg-clip-text text-transparent">
-                      QmClient Ready
-                    </span>
-                  </motion.h1>
-                  <motion.p
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.14, duration: 0.42 }}
-                    className="mt-3 max-w-[620px] text-sm font-medium leading-7 text-[#7483a1]"
-                  >
-                    用奶油底、薄荷蓝、草莓粉和柠檬糖重新整理首页。主流程只保留一件事：找到你的客户端目录，验证成功后再真实拉起游戏。
-                  </motion.p>
-                </div>
-
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.94, y: 18 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  transition={{ delay: 0.12, duration: 0.5 }}
-                  className="relative hidden h-[210px] w-[250px] shrink-0 overflow-hidden rounded-[34px] border border-white/75 bg-white/55 shadow-[0_28px_70px_rgba(255,171,199,0.18)] backdrop-blur-2xl xl:block"
-                >
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),transparent_38%),linear-gradient(180deg,rgba(255,227,239,0.55),rgba(219,244,255,0.66))]" />
-                  <img
-                    src={ddnetArtwork}
-                    alt="DDNet artwork"
-                    className="relative z-10 h-full w-full object-contain p-5"
-                    onError={(event) => {
-                      event.currentTarget.src = ddnetArtworkFallback;
-                    }}
-                  />
-                  <div className="absolute bottom-5 left-5 rounded-full bg-white/72 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-[#7d87a0]">
-                    Local Hero Asset
-                  </div>
-                </motion.div>
-              </div>
-
-              <motion.nav
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.18, duration: 0.42 }}
-                className="mt-4 grid max-w-[760px] grid-cols-5 gap-3"
-                aria-label="Manager 导航"
-              >
-                {navItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveView(item.id)}
-                    aria-pressed={activeView === item.id}
-                    aria-current={activeView === item.id ? "page" : undefined}
-                    className={`rounded-[18px] border px-3 py-3 text-sm font-black tracking-[0.08em] transition ${
-                      activeView === item.id
-                        ? "border-white bg-white/84 text-[#5e6685] shadow-[0_14px_30px_rgba(255,182,211,0.24)]"
-                        : "border-white/65 bg-white/45 text-[#89a0b9] hover:-translate-y-0.5 hover:bg-white/65"
-                    } py-2.5`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </motion.nav>
-
-              <div className="dm-scroll mt-4 min-h-0 flex-1 overflow-y-auto pb-8 pr-3">
-                {activeView === "launch" ? (
-                  <LaunchPanel
-                    state={launcherState}
-                    clientPath={clientPath}
-                    selectedClient={selectedClient}
-                    statusText={statusText}
-                    errorMessage={errorMessage}
-                    onClientPathChange={handleClientPathChange}
-                    onBrowse={handleBrowse}
-                    onValidate={handleValidate}
-                    onPrimaryAction={handlePrimaryAction}
-                  />
-                ) : (
-                  <motion.div
-                    initial={{ opacity: 0, y: 14 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.35, ease: "easeOut" }}
-                    className="rounded-[36px] border border-white/80 bg-white/64 p-6 shadow-[0_24px_70px_rgba(150,182,220,0.14)] backdrop-blur-2xl"
-                    role="region"
-                    aria-label={`${activeViewLabel} 面板`}
-                  >
-                    {renderActiveView()}
-                  </motion.div>
-                )}
-              </div>
+      <section className="flex h-full min-h-0 pt-11">
+        <ActivityBar activeView={activeView} onChangeView={setActiveView} />
+        <ContextSidebar
+          activeView={activeView}
+          clientPath={clientPath}
+          selectedClient={selectedClient}
+          statusText={statusText}
+        />
+        <WorkspaceShell activeView={activeView} selectedClient={selectedClient}>
+          {activeView === "launch" ? renderActiveView() : (
+            <div role="region" aria-label={`${activeViewLabel} 面板`}>
+              {renderActiveView()}
             </div>
-
-            <aside className="hidden w-[320px] shrink-0 xl:block">
-              <div className="space-y-4">
-                <MetricCard
-                  icon={<FolderSearch size={18} />}
-                  label="路径状态"
-                  value={clientPath ? "已填写目录" : "等待选择"}
-                  tone="sky"
-                />
-                <MetricCard
-                  icon={<Gamepad2 size={18} />}
-                  label="客户端健康"
-                  value={selectedClient ? normalizeHealth(selectedClient.health) : "尚未验证"}
-                  tone="berry"
-                />
-                <MetricCard
-                  icon={<HardDrive size={18} />}
-                  label="启动目标"
-                  value={selectedClient ? selectedClient.executable_path : "未锁定可执行文件"}
-                  tone="mint"
-                />
-                <MetricCard
-                  icon={<LayoutPanelTop size={18} />}
-                  label="当前状态"
-                  value={statusText}
-                  tone="lemon"
-                />
-              </div>
-
-              <div className="mt-4 rounded-[32px] border border-white/80 bg-white/65 p-5 shadow-[0_20px_52px_rgba(255,192,217,0.16)] backdrop-blur-2xl">
-                <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.22em] text-[#90a1bf]">
-                  <Star size={14} />
-                  首页约束
-                </div>
-                <div className="mt-4 space-y-3 text-sm font-semibold leading-6 text-[#6f7d98]">
-                  <div>不再展示 936MB 假包体。</div>
-                  <div>不再监听 mock 下载事件。</div>
-                  <div>没有有效目录时不伪装成可运行。</div>
-                </div>
-              </div>
-            </aside>
-          </div>
-        </div>
+          )}
+        </WorkspaceShell>
       </section>
     </main>
   );

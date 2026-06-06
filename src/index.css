@@ -1,14 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  color: #5e6781;
-  background: #fffaf7;
+  color: #eef3ff;
+  background: #090b12;
   font-family: "Nunito", "Trebuchet MS", "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --dm-bg: #fffaf7;
+  --dm-bg: #090b12;
 }
 
 * {
@@ -29,8 +29,8 @@ body,
 }
 
 body {
-  min-width: 1280px;
-  min-height: 720px;
+  min-width: 1024px;
+  min-height: 640px;
 }
 
 button,
@@ -58,7 +58,7 @@ svg {
 }
 
 .dm-scroll {
-  scrollbar-color: rgba(255, 143, 189, 0.48) rgba(255, 255, 255, 0.34);
+  scrollbar-color: rgba(255, 143, 189, 0.56) rgba(255, 255, 255, 0.12);
   scrollbar-width: thin;
 }
 
@@ -69,11 +69,11 @@ svg {
 
 .dm-scroll::-webkit-scrollbar-track {
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.36);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .dm-scroll::-webkit-scrollbar-thumb {
-  border: 2px solid rgba(255, 255, 255, 0.68);
+  border: 2px solid rgba(255, 255, 255, 0.28);
   border-radius: 999px;
   background: linear-gradient(180deg, rgba(255, 143, 189, 0.88), rgba(141, 220, 255, 0.82));
 }
