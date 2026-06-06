@@ -115,14 +115,20 @@ function LaunchButton(props: LaunchButtonProps) {
   );
 }
 
-function InfoPill(props: { icon: ReactNode; label: string; value: string }) {
+function StatusChip(props: { icon: ReactNode; value: string; tone: "pink" | "mint" | "sky" }) {
+  const toneClass =
+    props.tone === "mint"
+      ? "bg-[#a9f0c8]/14 text-[#c8ffe1] ring-[#a9f0c8]/20"
+      : props.tone === "sky"
+        ? "bg-[#8bdcff]/14 text-[#d6f6ff] ring-[#8bdcff]/20"
+        : "bg-[#ff9bc8]/14 text-[#ffd9e9] ring-[#ff9bc8]/20";
+
   return (
-    <div className="rounded-2xl border border-white/14 bg-white/[0.08] px-4 py-3 text-white backdrop-blur-xl">
-      <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-white/42">
+    <div className={`inline-flex min-w-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-black ring-1 ${toneClass}`}>
+      <span className="shrink-0">
         {props.icon}
-        {props.label}
-      </div>
-      <div className="mt-2 truncate text-sm font-black text-white/86">{props.value}</div>
+      </span>
+      <span className="truncate">{props.value}</span>
     </div>
   );
 }
@@ -173,21 +179,21 @@ export function LaunchPanel(props: LaunchPanelProps) {
                 <div className="rounded-full bg-white/12 px-3 py-1.5 text-xs font-black text-white/72">{props.statusText}</div>
               </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-3">
-                <InfoPill
+              <div className="mt-5 flex flex-wrap gap-2">
+                <StatusChip
                   icon={<FolderOpen size={14} />}
-                  label="Install"
-                  value={props.selectedClient?.install_dir ?? (props.clientPath || "等待选择目录")}
+                  value={props.selectedClient || props.clientPath ? "目录已填写" : "等待目录"}
+                  tone="pink"
                 />
-                <InfoPill
+                <StatusChip
                   icon={<ShieldCheck size={14} />}
-                  label="Health"
-                  value={props.selectedClient?.health === "ok" ? "目录健康" : props.selectedClient?.health ?? "尚未验证"}
+                  value={props.selectedClient?.health === "ok" ? "目录健康" : "尚未验证"}
+                  tone="mint"
                 />
-                <InfoPill
+                <StatusChip
                   icon={<HardDrive size={14} />}
-                  label="Target"
-                  value={props.selectedClient?.executable_path ?? "未锁定可执行文件"}
+                  value={props.selectedClient?.executable_path ? "目标已锁定" : "未锁定目标"}
+                  tone="sky"
                 />
               </div>
             </div>
