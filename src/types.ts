@@ -1,4 +1,10 @@
-export type LauncherState = "ready" | "downloading" | "running";
+export type LauncherState =
+  | "unconfigured"
+  | "validating"
+  | "ready"
+  | "launching"
+  | "running"
+  | "error";
 
 export type ClientHealth =
   | "ok"
