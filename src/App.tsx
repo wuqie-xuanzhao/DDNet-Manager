@@ -1,71 +1,96 @@
-import { useRef, useState, type ReactNode } from "react";
+import { startTransition, useRef, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { motion } from "framer-motion";
-import {
-  Boxes,
-  Cloud,
-  DownloadCloud,
-  FolderSearch,
-  Gamepad2,
-  Globe2,
-  HardDrive,
-  Keyboard,
-  Play,
-  Radar,
-  RotateCw,
-  Server,
-  ShieldCheck,
-  Sparkles,
-  Wrench
-} from "lucide-react";
-import ddnetArtwork from "./assets/ddnet2.svg";
-import ddnetArtworkFallback from "./assets/ddnet2.webp";
+import ddnetArt from "./assets/ddnet2.svg";
 import ddnetLogo from "./assets/logo.svg";
 import { BindsPanel } from "./components/binds/BindsPanel";
-import { ClientManager } from "./components/clients/ClientManager";
+import { GamesPanel, type ClientType, type ClientTypeId } from "./components/games/GamesPanel";
+import { GameIcon, type GameIconName } from "./components/icons/GameIcon";
 import { TitleBar } from "./components/layout/TitleBar";
 import { LaunchPanel } from "./components/launch/LaunchPanel";
 import { ResourcePanel } from "./components/resources/ResourcePanel";
+import { SettingsDialog, type SettingsSectionId } from "./components/settings/SettingsDialog";
+import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { UpdatePanel } from "./components/update/UpdatePanel";
 import { launchClient, validateClientDir } from "./lib/tauri";
 import type { ClientHealth, ClientInstallation, LauncherState } from "./types";
 
-type AppView = "launch" | "clients" | "update" | "resources" | "binds";
+type AppView = "launch" | "games" | "update" | "resources" | "binds";
+type BackgroundMode = "default" | "custom";
 
 type NavItem = {
   id: AppView;
   label: string;
-  icon: ReactNode;
+  icon: GameIconName;
 };
 
-type WorkspaceBackground = {
-  id: string;
-  src: string;
-  fallback: string;
-  label: string;
-};
+const navItems: NavItem[] = [
+  { id: "launch", label: "启动", icon: "play" },
+  { id: "update", label: "更新", icon: "cloudDownload" },
+  { id: "resources", label: "资源", icon: "folder" },
+  { id: "binds", label: "Binds", icon: "keyboard" }
+];
 
-const workspaceBackgrounds: WorkspaceBackground[] = [
+const clientTypes: ClientType[] = [
   {
-    id: "ddnet-default",
-    src: ddnetArtwork,
-    fallback: ddnetArtworkFallback,
-    label: "DDNet Default"
+    id: "qmclient",
+    name: "QmClient",
+    subtitle: "主力客户端",
+    version: "Stable",
+    status: "已选",
+    pathHint: "等待定位",
+    icon: "gamepad",
+    accent: "#2f3440"
+  },
+  {
+    id: "ddnet",
+    name: "DDNet Vanilla",
+    subtitle: "官方客户端",
+    version: "Vanilla",
+    status: "可添加",
+    pathHint: "未定位",
+    icon: "play",
+    accent: "#6d7280"
+  },
+  {
+    id: "qmclient-nightly",
+    name: "QmClient Nightly",
+    subtitle: "测试通道",
+    version: "Nightly",
+    status: "占位",
+    pathHint: "未接入",
+    icon: "refresh",
+    accent: "#59606d"
+  },
+  {
+    id: "third-party",
+    name: "第三方客户端",
+    subtitle: "自定义",
+    version: "Custom",
+    status: "占位",
+    pathHint: "手动添加",
+    icon: "toolKit",
+    accent: "#4f5663"
   }
 ];
 
-const navItems: NavItem[] = [
-  { id: "launch", label: "启动", icon: <Play size={22} fill="currentColor" /> },
-  { id: "clients", label: "客户端", icon: <Gamepad2 size={22} /> },
-  { id: "update", label: "更新", icon: <DownloadCloud size={22} /> },
-  { id: "resources", label: "资源", icon: <Boxes size={22} /> },
-  { id: "binds", label: "Binds", icon: <Keyboard size={22} /> }
-];
+function getUpdateRows(selectedClient: ClientInstallation | null) {
+  return [
+    { icon: "cloudDownload" as const, label: "GitHub", value: "未检测", tone: "text-[#5f6673]" },
+    { icon: "settings" as const, label: "Host", value: "未启用", tone: "text-[#5f6673]" },
+    { icon: "folder" as const, label: "Manifest", value: "未刷新", tone: "text-[#5f6673]" },
+    {
+      icon: "refresh" as const,
+      label: "Client",
+      value: selectedClient?.version ? selectedClient.version : "未知",
+      tone: "text-[#5f6673]"
+    }
+  ];
+}
 
 function normalizeHealth(health: ClientHealth): string {
   switch (health) {
     case "ok":
-      return "目录健康";
+      return "可启动";
     case "missing_executable":
       return "缺少 DDNet.exe";
     case "missing_storage_cfg":
@@ -75,32 +100,42 @@ function normalizeHealth(health: ClientHealth): string {
   }
 }
 
-function getStatusText(state: LauncherState, client: ClientInstallation | null): string {
+function getStatusText(state: LauncherState, client: ClientInstallation | null, clientType: ClientType): string {
   switch (state) {
     case "unconfigured":
-      return "等待配置";
+      return clientType.status;
     case "validating":
       return "验证中";
     case "ready":
-      return client ? `准备就绪 · ${client.display_name}` : "准备就绪";
+      return client ? `就绪 · ${client.display_name}` : "就绪";
     case "launching":
       return "启动中";
     case "running":
-      return "已拉起";
+      return "已启动";
     case "error":
-      return "配置错误";
+      return "需处理";
   }
 }
 
-function ActivityBar(props: { activeView: AppView; onChangeView: (view: AppView) => void }) {
+function ActivityBar(props: {
+  activeView: AppView;
+  onChangeView: (view: AppView) => void;
+}) {
+  const gamesActive = props.activeView === "games";
+
   return (
     <nav
       aria-label="主模块导航"
-      className="flex h-full w-[72px] shrink-0 flex-col items-center border-r border-white/10 bg-[#12151f]/88 px-2 py-4 text-white shadow-[18px_0_60px_rgba(18,21,31,0.22)] backdrop-blur-2xl"
+      className="relative z-50 flex h-full w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-[var(--dm-border)] bg-[var(--dm-sidebar)] px-2 py-4 text-[var(--dm-ink)] shadow-[18px_0_50px_rgba(47,52,64,0.08)] backdrop-blur-2xl"
     >
-      <div className="mb-5 grid h-11 w-11 place-items-center overflow-hidden rounded-2xl bg-white/92 shadow-[0_16px_34px_rgba(255,143,189,0.22)]">
-        <img src={ddnetLogo} alt="DDNet Manager" className="h-7 w-7" />
-      </div>
+      <button
+        type="button"
+        aria-label="返回启动页"
+        onClick={() => props.onChangeView("launch")}
+        className="mb-5 grid h-12 w-12 place-items-center overflow-hidden rounded-2xl border border-[var(--dm-border)] bg-white shadow-[0_14px_30px_rgba(47,52,64,0.08)] transition hover:-translate-y-0.5"
+      >
+        <img src={ddnetLogo} alt="DDNet Manager" className="h-8 w-8" />
+      </button>
 
       <div className="flex flex-1 flex-col gap-2">
         {navItems.map((item) => {
@@ -115,13 +150,13 @@ function ActivityBar(props: { activeView: AppView; onChangeView: (view: AppView)
               onClick={() => props.onChangeView(item.id)}
               className={`group relative grid h-12 w-12 place-items-center rounded-2xl transition ${
                 active
-                  ? "bg-[linear-gradient(135deg,#ff86bd,#ffd777_58%,#8bdcff)] text-[#43233b] shadow-[0_14px_30px_rgba(255,137,189,0.32)]"
-                  : "text-white/58 hover:bg-white/10 hover:text-white"
+                  ? "bg-[var(--dm-ink)] text-[var(--dm-paper)] shadow-[0_14px_28px_rgba(47,52,64,0.18)]"
+                  : "text-[var(--dm-muted-ink)] hover:bg-[var(--dm-soft)] hover:text-[var(--dm-ink)]"
               }`}
             >
-              {active ? <span className="absolute -left-2 h-7 w-1 rounded-full bg-[#ff9bc8]" /> : null}
-              {item.icon}
-              <span className="pointer-events-none absolute left-[58px] z-30 rounded-xl bg-[#151827]/95 px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:translate-x-1 group-hover:opacity-100">
+              {active ? <span className="absolute -left-2 h-7 w-1 rounded-full bg-[var(--dm-ink)]" /> : null}
+              <GameIcon name={item.icon} className="size-7" />
+              <span className="pointer-events-none absolute left-[60px] z-[120] whitespace-nowrap rounded-xl bg-[var(--dm-ink)] px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:translate-x-1 group-hover:opacity-100">
                 {item.label}
               </span>
             </button>
@@ -131,211 +166,85 @@ function ActivityBar(props: { activeView: AppView; onChangeView: (view: AppView)
 
       <button
         type="button"
-        aria-label="设置"
-        disabled
-        title="设置暂未开放"
-        className="grid h-12 w-12 place-items-center rounded-2xl text-white/22"
+        aria-label="全部游戏"
+        aria-current={gamesActive ? "page" : undefined}
+        onClick={() => props.onChangeView("games")}
+        className={`group relative grid h-12 w-12 place-items-center rounded-2xl transition ${
+          gamesActive
+            ? "bg-[var(--dm-ink)] text-[var(--dm-paper)] shadow-[0_14px_28px_rgba(47,52,64,0.18)]"
+            : "text-[var(--dm-muted-ink)] hover:bg-[var(--dm-soft)] hover:text-[var(--dm-ink)]"
+        }`}
       >
-        <Wrench size={21} />
+        {gamesActive ? <span className="absolute -left-2 h-7 w-1 rounded-full bg-[var(--dm-ink)]" /> : null}
+        <GameIcon name="gamepad" className="size-7" />
+        <span className="pointer-events-none absolute left-[60px] z-[120] whitespace-nowrap rounded-xl bg-[var(--dm-ink)] px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:translate-x-1 group-hover:opacity-100">
+          全部游戏
+        </span>
       </button>
     </nav>
   );
 }
 
-function SidebarSection(props: { title: string; children: ReactNode }) {
+function CompactUpdateStatus(props: { selectedClient: ClientInstallation | null }) {
   return (
-    <section className="rounded-3xl border border-white/12 bg-white/[0.07] p-4 shadow-[0_22px_60px_rgba(4,8,20,0.16)] backdrop-blur-2xl">
-      <h3 className="text-[11px] font-black uppercase tracking-[0.22em] text-white/46">{props.title}</h3>
-      <div className="mt-3">{props.children}</div>
-    </section>
-  );
-}
-
-function ContextSidebar(props: {
-  activeView: AppView;
-  clientPath: string;
-  selectedClient: ClientInstallation | null;
-  statusText: string;
-}) {
-  const activeLabel = navItems.find((item) => item.id === props.activeView)?.label ?? "启动";
-  const recentClients = props.selectedClient
-    ? [props.selectedClient.display_name, "DDNet Vanilla", "QmClient Nightly"]
-    : ["QmClient Stable", "DDNet Vanilla", "QmClient Nightly"];
-
-  return (
-    <aside className="dm-scroll hidden h-full w-[232px] shrink-0 overflow-y-auto border-r border-white/12 bg-[#171b29]/78 px-4 py-5 text-white backdrop-blur-2xl min-[1024px]:block min-[1320px]:w-[292px]">
-      <div className="mb-5">
-        <div className="text-[11px] font-black uppercase tracking-[0.24em] text-[#ffaad0]">Workspace</div>
-        <h2 className="mt-2 text-3xl font-black tracking-[-0.05em] text-white">{activeLabel}</h2>
-      </div>
-
-      {props.activeView === "launch" ? (
-        <div className="space-y-4">
-          <SidebarSection title="当前客户端">
-            <div className="rounded-2xl bg-white/9 p-4">
-              <div className="flex items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-[#ffe0ef] text-[#d85e93]">
-                  <Gamepad2 size={21} />
-                </div>
-                <div className="min-w-0">
-                  <div className="truncate text-base font-black text-white">
-                    {props.selectedClient?.display_name ?? "未选择客户端"}
-                  </div>
-                  <div className="mt-1 text-xs font-semibold text-white/48">{props.statusText}</div>
-                </div>
-              </div>
-              <div className="mt-4 rounded-xl bg-black/18 px-3 py-2 text-xs font-semibold leading-5 text-white/58">
-                {props.selectedClient?.install_dir ?? (props.clientPath || "选择客户端目录后显示路径。")}
-              </div>
-            </div>
-          </SidebarSection>
-
-          <SidebarSection title="最近客户端">
-            <div className="space-y-2">
-              {recentClients.map((client, index) => (
-                <div
-                  key={`${client}-${index}`}
-                  className={`w-full rounded-2xl px-3 py-3 text-left transition ${
-                    index === 0
-                      ? "bg-white/14 text-white"
-                      : "bg-white/[0.055] text-white/58"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate text-sm font-black">{client}</span>
-                    <span className="shrink-0 rounded-full bg-white/[0.08] px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/38">
-                      soon
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </SidebarSection>
-
-          <SidebarSection title="路径健康">
-            <div className="grid gap-2 text-sm font-semibold text-white/68">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={16} className="text-[#a9f0c8]" />
-                {props.selectedClient ? normalizeHealth(props.selectedClient.health) : "尚未验证"}
-              </div>
-              <div className="flex items-center gap-2">
-                <HardDrive size={16} className="text-[#8bdcff]" />
-                {props.selectedClient ? "已锁定启动目标" : "等待选择目录"}
-              </div>
-            </div>
-          </SidebarSection>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <SidebarSection title="页面上下文">
-            <div className="space-y-2 text-sm font-semibold leading-6 text-white/64">
-              <div>当前模块会在右侧主工作区显示具体工具。</div>
-              <div>侧栏后续可承载筛选、任务队列或文件树。</div>
-            </div>
-          </SidebarSection>
-          <SidebarSection title="快捷入口">
-            <div className="space-y-2">
-              {["刷新状态", "打开目录", "查看日志"].map((label) => (
-                <div
-                  key={label}
-                  className="w-full rounded-2xl bg-white/[0.045] px-3 py-3 text-left text-sm font-black text-white/38"
-                >
-                  {label} · 待接入
-                </div>
-              ))}
-            </div>
-          </SidebarSection>
-        </div>
-      )}
-    </aside>
-  );
-}
-
-function UpdateHub(props: { selectedClient: ClientInstallation | null; compact?: boolean }) {
-  const rows = [
-    { icon: <Globe2 size={16} />, label: "GitHub", value: "等待连通性检测", tone: "text-[#8bdcff]" },
-    { icon: <Server size={16} />, label: "Host", value: "未启用加速", tone: "text-[#ffd777]" },
-    { icon: <Cloud size={16} />, label: "Manifest", value: "未刷新", tone: "text-[#ff9bc8]" },
-    {
-      icon: <RotateCw size={16} />,
-      label: "Client",
-      value: props.selectedClient?.version ? `本地 ${props.selectedClient.version}` : "版本未知",
-      tone: "text-[#a9f0c8]"
-    }
-  ];
-
-  return (
-    <section
-      className={`rounded-[30px] border border-white/18 bg-[#141827]/68 p-5 text-white shadow-[0_30px_90px_rgba(6,10,26,0.28)] backdrop-blur-2xl ${
-        props.compact ? "" : "w-[330px]"
-      }`}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-black uppercase tracking-[0.24em] text-[#8bdcff]">Update Hub</div>
-          <h3 className="mt-1 text-xl font-black tracking-[-0.03em]">网络与更新源</h3>
-        </div>
-        <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/12 text-[#ffd777]">
-          <Radar size={20} />
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-3">
-        {rows.map((row) => (
-          <div key={row.label} className="flex items-center gap-3 rounded-2xl bg-white/[0.075] px-3 py-3">
-            <div className={row.tone}>{row.icon}</div>
+    <Card className="rounded-[28px] border-[var(--dm-border)] bg-white/72 text-[var(--dm-ink)] shadow-[0_18px_44px_rgba(47,52,64,0.08)] backdrop-blur-2xl">
+      <CardHeader className="p-4 pb-0">
+        <CardTitle className="text-[11px] font-black tracking-[0.18em] text-[#5f6673]">更新</CardTitle>
+      </CardHeader>
+      <CardContent className="grid grid-cols-2 gap-2 p-4 pt-3">
+        {getUpdateRows(props.selectedClient).map((row) => (
+          <div key={row.label} className="flex min-w-0 items-center gap-2 rounded-2xl bg-[var(--dm-soft)] px-3 py-3">
+            <GameIcon name={row.icon} className={`size-4 ${row.tone}`} />
             <div className="min-w-0">
-              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-white/38">{row.label}</div>
-              <div className="mt-0.5 truncate text-sm font-bold text-white/78">{row.value}</div>
+              <div className="text-[9px] font-black uppercase tracking-[0.14em] text-[#8b9099]">{row.label}</div>
+              <div className="truncate text-xs font-black text-[#3d4350]">{row.value}</div>
             </div>
           </div>
         ))}
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }
 
 function WorkspaceShell(props: {
   activeView: AppView;
   children: ReactNode;
-  selectedClient: ClientInstallation | null;
+  customBackgroundUrl: string | null;
 }) {
-  const background = workspaceBackgrounds[0];
-
   return (
-    <section className="relative min-w-0 flex-1 overflow-hidden bg-[#090b12]">
+    <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--dm-bg)]">
       <div className="absolute inset-0">
-        <img
-          src={background.src}
-          alt={background.label}
-          className="h-full w-full object-cover opacity-64"
-          onError={(event) => {
-            event.currentTarget.src = background.fallback;
-          }}
-        />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_72%_28%,rgba(255,213,231,0.16),transparent_24%),linear-gradient(90deg,rgba(8,10,18,0.86)_0%,rgba(8,10,18,0.48)_44%,rgba(8,10,18,0.24)_100%),linear-gradient(180deg,rgba(8,10,18,0.26),rgba(8,10,18,0.80))]" />
+        {props.customBackgroundUrl ? (
+          <img
+            src={props.customBackgroundUrl}
+            alt="自定义背景"
+            className="h-full w-full object-cover opacity-28"
+          />
+        ) : null}
+        <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(243,241,234,0.96)_0%,rgba(243,241,234,0.90)_42%,rgba(243,241,234,0.84)_100%),radial-gradient(circle_at_78%_18%,rgba(47,52,64,0.06),transparent_28%)]" />
       </div>
+
+      {props.activeView === "launch" ? (
+        <img
+          src={ddnetArt}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none absolute right-[5%] top-[8%] z-[1] hidden w-[min(46vw,540px)] select-none opacity-90 drop-shadow-[0_34px_70px_rgba(47,52,64,0.12)] min-[1024px]:block"
+        />
+      ) : null}
 
       <div className="relative z-10 flex h-full min-h-0 flex-col">
         {props.activeView === "launch" ? (
-          <div className="min-h-0 flex-1 overflow-hidden p-4 md:p-6">
+          <div className="min-h-0 flex-1 overflow-hidden px-4 pb-3 pt-4 md:px-6 md:pb-4 md:pt-6">
             {props.children}
           </div>
         ) : (
           <div className="dm-scroll min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
-            <div className="mx-auto max-w-[1120px] rounded-[34px] border border-white/18 bg-white/82 p-5 text-[#5f6782] shadow-[0_34px_90px_rgba(6,10,26,0.18)] backdrop-blur-2xl">
+            <div className="mx-auto max-w-[1120px] text-[var(--dm-ink)]">
               {props.children}
             </div>
           </div>
         )}
-
-        {props.activeView === "launch" ? (
-          <div className="pointer-events-none absolute bottom-6 right-6 hidden min-[1320px]:block">
-            <div className="pointer-events-auto">
-              <UpdateHub selectedClient={props.selectedClient} />
-            </div>
-          </div>
-        ) : null}
       </div>
     </section>
   );
@@ -346,10 +255,15 @@ export default function App() {
   const [launcherState, setLauncherState] = useState<LauncherState>("unconfigured");
   const [clientPath, setClientPath] = useState("");
   const [selectedClient, setSelectedClient] = useState<ClientInstallation | null>(null);
+  const [selectedClientTypeId, setSelectedClientTypeId] = useState<ClientTypeId>("qmclient");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [customBackgroundUrl, setCustomBackgroundUrl] = useState<string | null>(null);
+  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("default");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("general");
   const validationRequestId = useRef(0);
 
-  const activeViewLabel = navItems.find((item) => item.id === activeView)?.label ?? "启动";
+  const selectedClientType = clientTypes.find((client) => client.id === selectedClientTypeId) ?? clientTypes[0];
 
   const markInvalid = (message: string, options?: { clearClient?: boolean }) => {
     if (options?.clearClient ?? true) {
@@ -362,7 +276,7 @@ export default function App() {
   const validateClientPath = async (path: string) => {
     const normalizedPath = path.trim();
     if (!normalizedPath) {
-      markInvalid("请先选择客户端目录。");
+      markInvalid("请先选择路径。");
       return;
     }
 
@@ -383,7 +297,7 @@ export default function App() {
       setClientPath(installation.install_dir);
 
       if (installation.health !== "ok") {
-        markInvalid(`目录已识别为 ${installation.display_name}，但当前不可启动：${normalizeHealth(installation.health)}。`, {
+        markInvalid(`不可启动：${normalizeHealth(installation.health)}。`, {
           clearClient: false
         });
         return;
@@ -396,7 +310,7 @@ export default function App() {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      markInvalid(`目录验证失败：${message}`);
+      markInvalid(`验证失败：${message}`);
     }
   };
 
@@ -419,7 +333,7 @@ export default function App() {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: "选择 DDNet / QmClient 客户端目录"
+        title: "选择客户端目录"
       });
 
       if (typeof selected !== "string") {
@@ -432,7 +346,7 @@ export default function App() {
       await validateClientPath(selected);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      markInvalid(`目录选择失败：${message}`);
+      markInvalid(`选择失败：${message}`);
     }
   };
 
@@ -468,10 +382,62 @@ export default function App() {
     }
   };
 
+  const handleBackgroundImageSelect = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      markInvalid("背景必须是图片。", { clearClient: false });
+      return;
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("背景读取失败。"));
+      reader.readAsDataURL(file);
+    });
+
+    setCustomBackgroundUrl(dataUrl);
+    setBackgroundMode("custom");
+  };
+
+  const clearBackgroundImage = () => {
+    setCustomBackgroundUrl(null);
+    setBackgroundMode("default");
+  };
+
+  const changeView = (view: AppView) => {
+    startTransition(() => setActiveView(view));
+  };
+
+  const changeSettingsSection = (section: SettingsSectionId) => {
+    startTransition(() => setActiveSettingsSection(section));
+  };
+
+  const selectClientType = (id: ClientTypeId) => {
+    if (id === selectedClientTypeId) {
+      return;
+    }
+
+    startTransition(() => {
+      setSelectedClientTypeId(id);
+      setErrorMessage(null);
+      setClientPath("");
+      setSelectedClient(null);
+      setLauncherState("unconfigured");
+    });
+  };
+
   const renderActiveView = () => {
     switch (activeView) {
-      case "clients":
-        return <ClientManager />;
+      case "games":
+        return (
+          <GamesPanel
+            clientTypes={clientTypes}
+            selectedClientTypeId={selectedClientTypeId}
+            selectedClient={selectedClient}
+            clientPath={clientPath}
+            onSelectClientType={selectClientType}
+          />
+        );
       case "update":
         return <UpdatePanel />;
       case "resources":
@@ -483,40 +449,45 @@ export default function App() {
           <LaunchPanel
             state={launcherState}
             clientPath={clientPath}
-            selectedClient={selectedClient}
-            statusText={statusText}
             errorMessage={errorMessage}
-            updateHub={<UpdateHub selectedClient={selectedClient} compact />}
+            mobileUpdateStatus={<CompactUpdateStatus selectedClient={selectedClient} />}
+            backgroundMode={backgroundMode}
             onClientPathChange={handleClientPathChange}
             onBrowse={handleBrowse}
             onValidate={handleValidate}
             onPrimaryAction={handlePrimaryAction}
+            onBackgroundImageSelect={handleBackgroundImageSelect}
+            onClearBackgroundImage={clearBackgroundImage}
           />
         );
     }
   };
 
-  const statusText = getStatusText(launcherState, selectedClient);
-
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[#090b12] text-[#5f6782]">
-      <TitleBar />
+    <main className="relative h-screen w-screen overflow-hidden bg-[var(--dm-bg)] text-[var(--dm-muted-ink)]">
+      <TitleBar onOpenSettings={() => setIsSettingsOpen(true)} />
       <section className="flex h-full min-h-0 pt-11">
-        <ActivityBar activeView={activeView} onChangeView={setActiveView} />
-        <ContextSidebar
-          activeView={activeView}
-          clientPath={clientPath}
-          selectedClient={selectedClient}
-          statusText={statusText}
-        />
-        <WorkspaceShell activeView={activeView} selectedClient={selectedClient}>
-          {activeView === "launch" ? renderActiveView() : (
-            <div role="region" aria-label={`${activeViewLabel} 面板`}>
-              {renderActiveView()}
-            </div>
-          )}
+        <ActivityBar activeView={activeView} onChangeView={changeView} />
+        <WorkspaceShell activeView={activeView} customBackgroundUrl={customBackgroundUrl}>
+          {renderActiveView()}
         </WorkspaceShell>
       </section>
+      <SettingsDialog
+        open={isSettingsOpen}
+        activeSection={activeSettingsSection}
+        launcherState={launcherState}
+        clientPath={clientPath}
+        selectedClientType={selectedClientType}
+        backgroundMode={backgroundMode}
+        errorMessage={errorMessage}
+        onClose={() => setIsSettingsOpen(false)}
+        onSectionChange={changeSettingsSection}
+        onClientPathChange={handleClientPathChange}
+        onBrowse={handleBrowse}
+        onValidate={handleValidate}
+        onBackgroundImageSelect={handleBackgroundImageSelect}
+        onClearBackgroundImage={clearBackgroundImage}
+      />
     </main>
   );
 }

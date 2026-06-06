@@ -80,13 +80,12 @@ export function BindsPanel() {
   };
 
   return (
-    <section className="dm-glass dm-cut-corner p-5">
-      <div className="text-[11px] font-black uppercase tracking-[0.3em] text-cyan-200">Binds</div>
-      <h2 className="mt-3 text-2xl font-black">Binds 管理</h2>
-      <p className="mt-2 text-sm text-slate-300/80">分析本地 cfg，接入 Workshop，并通过安全事务写入。</p>
+    <section className="rounded-[34px] border border-[var(--dm-border)] bg-white/82 p-6 text-[var(--dm-ink)] shadow-[0_24px_70px_rgba(47,52,64,0.10)] backdrop-blur-2xl">
+      <h2 className="text-3xl font-black tracking-[-0.05em]">Binds 管理</h2>
+      <p className="mt-2 text-sm font-semibold text-[#4f5663]">分析本地 cfg，并预览 Workshop 数据。</p>
 
-      <div className="mt-5 border border-white/10 bg-black/20 p-4">
-        <label className="block text-[10px] font-black uppercase tracking-[0.28em] text-slate-400" htmlFor="binds-cfg-input">
+      <div className="mt-5 rounded-[26px] bg-[var(--dm-soft)] p-4">
+        <label className="block text-[11px] font-black tracking-[0.18em] text-[#59606d]" htmlFor="binds-cfg-input">
           CFG Path
         </label>
         <input
@@ -94,69 +93,69 @@ export function BindsPanel() {
           value={cfgPath}
           onChange={(event) => handleCfgPathChange(event.target.value)}
           disabled={isAnalyzing}
-          className="mt-3 w-full border border-white/10 bg-black/30 px-3 py-2 text-sm text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-200/50"
+          className="mt-3 h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#7b808c] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
           placeholder="C:/Users/User/AppData/Roaming/DDNet/settings_ddnet.cfg"
           spellCheck={false}
         />
 
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             onClick={() => void analyze()}
             disabled={!cfgPath.trim() || isAnalyzing}
-            className="border border-cyan-200 bg-cyan-200 px-4 py-2 text-sm font-black text-slate-950 transition disabled:cursor-not-allowed disabled:border-cyan-200/20 disabled:bg-cyan-200/20 disabled:text-cyan-100/55"
+            className="h-11 rounded-[18px] bg-[var(--dm-ink)] px-5 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
           >
-            {isAnalyzing ? "分析中..." : "分析 cfg"}
+            {isAnalyzing ? "分析中" : "分析 cfg"}
           </button>
           <button
             onClick={() => void loadWorkshop()}
             disabled={isLoadingWorkshop}
-            className="border border-white/10 bg-white/5 px-4 py-2 text-sm font-black text-slate-100 transition hover:border-cyan-200/40 disabled:cursor-not-allowed disabled:border-white/6 disabled:text-slate-500"
+            className="h-11 rounded-[18px] border border-[var(--dm-border)] bg-white px-5 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
           >
-            {isLoadingWorkshop ? "加载中..." : "加载 Workshop"}
+            {isLoadingWorkshop ? "加载中" : "加载 Workshop"}
           </button>
-          <div className="text-xs uppercase tracking-[0.18em] text-slate-500">Readonly Analysis / Remote Bind Catalog</div>
+          <div className="text-xs font-bold text-[#59606d]">只读分析。</div>
         </div>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <div className="border border-cyan-200/12 bg-black/30 p-3">
-          <div className="mb-3 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.28em] text-cyan-100/72">
+        <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
+          <div className="mb-3 flex items-center justify-between text-xs font-black text-[#59606d]">
             <span>CFG Analysis</span>
             <span>{analysis ? analysis.binds.length : 0}</span>
           </div>
-          <div className="grid gap-2 border border-white/6 bg-black/20 p-3 text-[11px] uppercase tracking-[0.18em] text-slate-400">
+          <div className="grid gap-2 rounded-[20px] bg-white/76 p-3 text-sm font-bold text-[#3d4350]">
             <div className="flex items-center justify-between">
               <span>Binds</span>
-              <span className="text-cyan-100">{analysis?.binds.length ?? 0}</span>
+              <span>{analysis?.binds.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Unbinds</span>
-              <span className="text-cyan-100">{analysis?.unbinds.length ?? 0}</span>
+              <span>{analysis?.unbinds.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Execs</span>
-              <span className="text-cyan-100">{analysis?.execs.length ?? 0}</span>
+              <span>{analysis?.execs.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Conflicts</span>
-              <span className="text-cyan-100">{analysis?.conflicts.length ?? 0}</span>
+              <span>{analysis?.conflicts.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Missing Exec</span>
-              <span className="text-red-200">{analysis?.missing_exec_targets.length ?? 0}</span>
+              <span className="text-[#8f2f2f]">{analysis?.missing_exec_targets.length ?? 0}</span>
             </div>
           </div>
-          <pre className="max-h-64 overflow-auto text-xs leading-6 text-cyan-100">
+          <pre className="dm-scroll mt-3 max-h-64 overflow-auto rounded-[20px] bg-white/78 p-3 text-xs leading-6 text-[#2f3440]">
             {JSON.stringify(analysis, null, 2)}
           </pre>
         </div>
 
-        <div className="border border-amber-200/12 bg-black/30 p-3">
-          <div className="mb-3 flex items-center justify-between text-[10px] font-black uppercase tracking-[0.28em] text-amber-100/72">
+        <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
+          <div className="mb-3 flex items-center justify-between text-xs font-black text-[#59606d]">
             <span>Workshop Preview</span>
             <span>{Math.min(workshop.length, 5)}</span>
           </div>
-          <pre className="max-h-64 overflow-auto text-xs leading-6 text-amber-100">
+          <pre className="dm-scroll max-h-64 overflow-auto rounded-[20px] bg-white/78 p-3 text-xs leading-6 text-[#2f3440]">
             {JSON.stringify(workshop.slice(0, 5), null, 2)}
           </pre>
         </div>
@@ -164,22 +163,22 @@ export function BindsPanel() {
 
       {analysis ? (
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          <div className="border border-white/8 bg-black/25 p-3">
-            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.28em] text-slate-300/80">Conflicts</div>
-            <pre className="max-h-52 overflow-auto text-xs leading-6 text-slate-100">
+          <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
+            <div className="mb-3 text-xs font-black text-[#59606d]">Conflicts</div>
+            <pre className="dm-scroll max-h-52 overflow-auto rounded-[20px] bg-white/78 p-3 text-xs leading-6 text-[#2f3440]">
               {JSON.stringify(analysis.conflicts, null, 2)}
             </pre>
           </div>
-          <div className="border border-red-200/12 bg-black/25 p-3">
-            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.28em] text-red-200/80">Missing Exec Targets</div>
-            <pre className="max-h-52 overflow-auto text-xs leading-6 text-red-100">
+          <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
+            <div className="mb-3 text-xs font-black text-[#8f2f2f]">Missing Exec Targets</div>
+            <pre className="dm-scroll max-h-52 overflow-auto rounded-[20px] bg-white/78 p-3 text-xs leading-6 text-[#2f3440]">
               {JSON.stringify(analysis.missing_exec_targets, null, 2)}
             </pre>
           </div>
         </div>
       ) : null}
 
-      {error ? <div className="mt-4 text-sm text-red-300">{error}</div> : null}
+      {error ? <div className="mt-4 rounded-2xl border border-[#b84a4a]/20 bg-[#b84a4a]/8 px-4 py-3 text-sm font-semibold text-[#8f2f2f]">{error}</div> : null}
     </section>
   );
 }

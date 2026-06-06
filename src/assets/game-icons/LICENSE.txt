@@ -1,0 +1,11 @@
+Nieo's Game Icon Pack License
+
+Source: https://github.com/Nieobie/Game-Icon-Pack
+
+Allowed:
+- Personal and commercial use
+- No attribution required
+
+Not allowed:
+- Reselling this icon pack directly
+- Reselling modified versions of this icon pack
