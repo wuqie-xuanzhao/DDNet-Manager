@@ -245,7 +245,7 @@ export default function App() {
       <div className="absolute bottom-[-110px] left-[22%] h-[280px] w-[320px] rounded-full bg-[#fff1b6]/72 blur-3xl" />
 
       <section className="relative z-10 flex h-full pt-11">
-        <div className="flex flex-1 flex-col overflow-hidden px-10 pb-8 pt-8">
+        <div className="flex flex-1 flex-col overflow-hidden px-10 pb-6 pt-6">
           <div className="flex min-h-0 flex-1 gap-8">
             <div className="flex min-h-0 flex-1 flex-col">
               <motion.div
@@ -258,7 +258,7 @@ export default function App() {
                 Sugar Rush Shell
               </motion.div>
 
-              <div className="mt-7 flex items-start justify-between gap-6">
+              <div className="mt-4 flex items-start justify-between gap-6">
                 <div className="max-w-[640px]">
                   <motion.img
                     initial={{ opacity: 0, y: 12 }}
@@ -266,13 +266,13 @@ export default function App() {
                     transition={{ delay: 0.05, duration: 0.45 }}
                     src={ddnetLogo}
                     alt="DDNet Manager logo"
-                    className="h-14 w-auto"
+                    className="h-11 w-auto"
                   />
                   <motion.h1
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.08, duration: 0.5 }}
-                    className="mt-6 text-[76px] font-black leading-[0.9] tracking-[-0.08em] text-[#6a658c]"
+                    className="mt-4 text-[52px] font-black leading-[0.92] tracking-[-0.07em] text-[#6a658c]"
                   >
                     糖果补给站
                     <span className="block bg-[linear-gradient(90deg,#ff73af_0%,#ffb168_42%,#55b8ff_100%)] bg-clip-text text-transparent">
@@ -283,7 +283,7 @@ export default function App() {
                     initial={{ opacity: 0, y: 16 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.14, duration: 0.42 }}
-                    className="mt-5 max-w-[580px] text-base font-medium leading-8 text-[#7483a1]"
+                    className="mt-3 max-w-[620px] text-sm font-medium leading-7 text-[#7483a1]"
                   >
                     用奶油底、薄荷蓝、草莓粉和柠檬糖重新整理首页。主流程只保留一件事：找到你的客户端目录，验证成功后再真实拉起游戏。
                   </motion.p>
@@ -293,13 +293,13 @@ export default function App() {
                   initial={{ opacity: 0, scale: 0.94, y: 18 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   transition={{ delay: 0.12, duration: 0.5 }}
-                  className="relative hidden h-[320px] w-[320px] shrink-0 overflow-hidden rounded-[42px] border border-white/75 bg-white/55 shadow-[0_36px_90px_rgba(255,171,199,0.20)] backdrop-blur-2xl xl:block"
+                  className="relative hidden h-[210px] w-[250px] shrink-0 overflow-hidden rounded-[34px] border border-white/75 bg-white/55 shadow-[0_28px_70px_rgba(255,171,199,0.18)] backdrop-blur-2xl xl:block"
                 >
                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),transparent_38%),linear-gradient(180deg,rgba(255,227,239,0.55),rgba(219,244,255,0.66))]" />
                   <img
                     src={ddnetArtwork}
                     alt="DDNet artwork"
-                    className="relative z-10 h-full w-full object-contain p-6"
+                    className="relative z-10 h-full w-full object-contain p-5"
                     onError={(event) => {
                       event.currentTarget.src = ddnetArtworkFallback;
                     }}
@@ -314,7 +314,7 @@ export default function App() {
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.18, duration: 0.42 }}
-                className="mt-7 grid max-w-[760px] grid-cols-5 gap-3"
+                className="mt-4 grid max-w-[760px] grid-cols-5 gap-3"
                 aria-label="Manager 导航"
               >
                 {navItems.map((item) => (
@@ -328,14 +328,14 @@ export default function App() {
                       activeView === item.id
                         ? "border-white bg-white/84 text-[#5e6685] shadow-[0_14px_30px_rgba(255,182,211,0.24)]"
                         : "border-white/65 bg-white/45 text-[#89a0b9] hover:-translate-y-0.5 hover:bg-white/65"
-                    }`}
+                    } py-2.5`}
                   >
                     {item.label}
                   </button>
                 ))}
               </motion.nav>
 
-              <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-2">
+              <div className="dm-scroll mt-4 min-h-0 flex-1 overflow-y-auto pb-8 pr-3">
                 {activeView === "launch" ? (
                   <LaunchPanel
                     state={launcherState}

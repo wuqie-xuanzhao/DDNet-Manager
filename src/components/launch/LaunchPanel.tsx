@@ -98,7 +98,7 @@ function LaunchButton(props: LaunchButtonProps) {
       disabled={props.disabled}
       whileHover={props.disabled ? undefined : { y: -3, scale: 1.01 }}
       whileTap={props.disabled ? undefined : { scale: 0.99 }}
-      className="group relative flex h-[86px] w-full items-center justify-between overflow-hidden rounded-[28px] border border-white/70 bg-[linear-gradient(135deg,#ff7fbc_0%,#ff9fc1_24%,#ffd781_62%,#8ddcff_100%)] px-7 text-left text-[#6f2f52] shadow-[0_22px_55px_rgba(255,137,189,0.30)] transition disabled:cursor-not-allowed disabled:opacity-70"
+      className="group relative flex h-[76px] w-full items-center justify-between overflow-hidden rounded-[26px] border border-white/70 bg-[linear-gradient(135deg,#ff7fbc_0%,#ff9fc1_24%,#ffd781_62%,#8ddcff_100%)] px-6 text-left text-[#6f2f52] shadow-[0_20px_48px_rgba(255,137,189,0.28)] transition disabled:cursor-not-allowed disabled:opacity-70"
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.85),transparent_34%),radial-gradient(circle_at_bottom_right,rgba(255,255,255,0.35),transparent_28%)]" />
       <div className="absolute -right-6 -top-8 h-24 w-24 rounded-full bg-white/30 blur-xl transition group-hover:scale-110" />
@@ -108,7 +108,7 @@ function LaunchButton(props: LaunchButtonProps) {
           {copy.icon}
         </div>
         <div>
-          <div className="text-[28px] font-black tracking-[-0.04em] text-[#7b3660]">{copy.title}</div>
+          <div className="text-[24px] font-black tracking-[-0.04em] text-[#7b3660]">{copy.title}</div>
           <div className="text-xs font-bold tracking-[0.12em] text-[#8d5473]/80">{copy.subtitle}</div>
         </div>
       </div>
@@ -157,16 +157,16 @@ export function LaunchPanel(props: LaunchPanelProps) {
   const primaryDisabled = props.state === "validating" || props.state === "launching";
 
   return (
-    <section className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_320px]">
-      <div className="rounded-[36px] border border-white/80 bg-white/66 p-7 shadow-[0_28px_80px_rgba(255,173,204,0.20)] backdrop-blur-2xl">
+    <section className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_300px]">
+      <div className="rounded-[32px] border border-white/80 bg-white/66 p-6 shadow-[0_24px_64px_rgba(255,173,204,0.18)] backdrop-blur-2xl">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-[#fff5fb] px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-[#e170aa]">
               <Sparkles size={14} />
               Candy Launch Deck
             </div>
-            <h2 className="mt-4 text-[44px] font-black tracking-[-0.06em] text-[#5f5b86]">把你的客户端放进发射台</h2>
-            <p className="mt-3 max-w-[600px] text-sm font-medium leading-7 text-[#73819c]">
+            <h2 className="mt-3 text-[34px] font-black tracking-[-0.055em] text-[#5f5b86]">把你的客户端放进发射台</h2>
+            <p className="mt-2 max-w-[660px] text-sm font-medium leading-6 text-[#73819c]">
               不再伪装更新、不再模拟下载。这里直接选择本地 DDNet 或 QmClient 安装目录，验证通过后再真实启动可执行文件。
             </p>
           </div>
@@ -174,7 +174,7 @@ export function LaunchPanel(props: LaunchPanelProps) {
           <HealthBadge state={props.state} text={props.statusText} />
         </div>
 
-        <div className="mt-7 rounded-[28px] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(250,252,255,0.68))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.95)]">
+        <div className="mt-5 rounded-[26px] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.82),rgba(250,252,255,0.68))] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.95)]">
           <label htmlFor="client-path" className="text-[11px] font-black uppercase tracking-[0.22em] text-[#94a0bd]">
             客户端目录
           </label>
@@ -184,12 +184,12 @@ export function LaunchPanel(props: LaunchPanelProps) {
               value={props.clientPath}
               onChange={(event) => props.onClientPathChange(event.target.value)}
               placeholder="例如 D:/Games/QmClient"
-              className="h-14 flex-1 rounded-[20px] border border-[#dbe7ff] bg-white/90 px-5 text-sm font-semibold text-[#60708c] outline-none transition placeholder:text-[#b2bfd8] focus:border-[#8bd8ff] focus:ring-4 focus:ring-[#bcecff]/60"
+              className="h-12 flex-1 rounded-[18px] border border-[#dbe7ff] bg-white/90 px-5 text-sm font-semibold text-[#60708c] outline-none transition placeholder:text-[#b2bfd8] focus:border-[#8bd8ff] focus:ring-4 focus:ring-[#bcecff]/60"
             />
             <button
               type="button"
               onClick={() => void props.onBrowse()}
-              className="h-14 rounded-[20px] border border-white/75 bg-[#dff7ff] px-5 text-sm font-black text-[#4995bc] shadow-[0_14px_30px_rgba(141,220,255,0.22)] transition hover:-translate-y-0.5"
+              className="h-12 rounded-[18px] border border-white/75 bg-[#dff7ff] px-5 text-sm font-black text-[#4995bc] shadow-[0_14px_30px_rgba(141,220,255,0.22)] transition hover:-translate-y-0.5"
             >
               浏览目录
             </button>
@@ -197,7 +197,7 @@ export function LaunchPanel(props: LaunchPanelProps) {
               type="button"
               onClick={() => void props.onValidate()}
               disabled={!canValidate}
-              className="h-14 rounded-[20px] border border-white/75 bg-[#fff0a9] px-5 text-sm font-black text-[#9b7b17] shadow-[0_14px_30px_rgba(255,215,129,0.24)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
+              className="h-12 rounded-[18px] border border-white/75 bg-[#fff0a9] px-5 text-sm font-black text-[#9b7b17] shadow-[0_14px_30px_rgba(255,215,129,0.24)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60"
             >
               验证路径
             </button>
@@ -210,7 +210,7 @@ export function LaunchPanel(props: LaunchPanelProps) {
           ) : null}
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
           <MetaCard
             label="安装目录"
             value={props.selectedClient?.install_dir ?? "尚未验证"}
@@ -233,7 +233,7 @@ export function LaunchPanel(props: LaunchPanelProps) {
           />
         </div>
 
-        <div className="mt-6">
+        <div className="mt-4">
           <LaunchButton
             state={props.state}
             disabled={primaryDisabled}
@@ -247,8 +247,8 @@ export function LaunchPanel(props: LaunchPanelProps) {
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="rounded-[32px] border border-white/80 bg-white/62 p-5 shadow-[0_22px_58px_rgba(115,188,255,0.14)] backdrop-blur-2xl">
+      <div className="dm-scroll max-h-[430px] space-y-4 overflow-y-auto pr-2">
+        <div className="rounded-[28px] border border-white/80 bg-white/62 p-5 shadow-[0_22px_58px_rgba(115,188,255,0.14)] backdrop-blur-2xl">
           <div className="text-[11px] font-black uppercase tracking-[0.22em] text-[#8da3c5]">启动规则</div>
           <div className="mt-4 space-y-3 text-sm font-semibold leading-6 text-[#6f7c96]">
             <div>1. 先选目录，再验证 DDNet.exe、storage.cfg 与 data。</div>
@@ -257,7 +257,7 @@ export function LaunchPanel(props: LaunchPanelProps) {
           </div>
         </div>
 
-        <div className="rounded-[32px] border border-white/80 bg-[linear-gradient(180deg,rgba(230,251,255,0.94),rgba(255,244,214,0.88))] p-5 shadow-[0_22px_58px_rgba(255,204,122,0.16)]">
+        <div className="rounded-[28px] border border-white/80 bg-[linear-gradient(180deg,rgba(230,251,255,0.94),rgba(255,244,214,0.88))] p-5 shadow-[0_22px_58px_rgba(255,204,122,0.16)]">
           <div className="text-[11px] font-black uppercase tracking-[0.22em] text-[#8d96a9]">状态提示</div>
           <div className="mt-4 space-y-3">
             <div className="rounded-[20px] bg-white/72 px-4 py-3 text-sm font-semibold text-[#67809e]">未配置：等待用户选择目录。</div>
