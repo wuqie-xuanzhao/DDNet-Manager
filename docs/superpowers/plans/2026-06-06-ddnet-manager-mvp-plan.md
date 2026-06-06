@@ -21,8 +21,9 @@ updated_at: 2026-06-06
 - 前端生产构建已通过：`make build` 成功生成 `dist/index.html` 和 assets，且 `dist/` 已被 `.gitignore` 忽略。
 - `AGENTS.md` 与 `CLAUDE.md` 哈希一致，两份代理规则文本保持同步。
 - 手动桌面联调尚未执行：任务 15、任务 16 中的 `make tauri-dev` 真实路径验证仍为验证 gap，不得声称已经完成。
-- PRD 级 MVP 尚未收口：`cfg` 深度解析仍缺少 `unbind`、`exec` 链、冲突和缺失目标分析；更新链路仍包含 mock/stub；资源管理页仍是占位展示。
-- 当前仓库处于初始化状态：`main` 分支尚无提交，脚手架文件整体为未跟踪状态；原计划中的逐任务 commit 步骤未按粒度执行，后续应由整体初始化提交或用户指定的提交拆分策略收口。
+- 已补齐基础闭环：`cfg` 深度解析支持 `bind`、`unbind`、`exec` 链、缺失目标和按键冲突分析；更新页已接入 `load_manifest` 元数据读取；资源页已接入 `validate_client_dir` 路径识别。
+- PRD 级 MVP 尚未完全收口：真实下载、校验、安装、回滚事务和桌面手动联调仍未完成；更新页当前明确只做 manifest 元数据闭环。
+- 当前仓库已有初始化提交：`feat(core): 初始化 DDNet Manager MVP 基线`。原计划中的逐任务 commit 步骤未按粒度执行，后续新主题改动应按中文 Conventional Commits 单独提交。
 
 ## 工程基线更新
 

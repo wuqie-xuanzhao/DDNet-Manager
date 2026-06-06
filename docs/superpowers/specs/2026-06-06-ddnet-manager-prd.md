@@ -5,7 +5,7 @@ implementation_status: partial_implementation_verified
 date: 2026-06-06
 scope: QmClient-first MVP
 
-implementation_note: 首版脚手架、基础 IPC、基础后端模块和前端页面骨架已通过自动门禁；PRD 级 MVP 尚未收口，仍需补齐 cfg 深度解析、真实更新链路、资源管理闭环和桌面手动联调。
+implementation_note: 首版脚手架、基础 IPC、基础后端模块、前端页面骨架、cfg 深度解析、manifest 元数据读取和资源路径识别已通过自动门禁；PRD 级 MVP 尚未完全收口，仍需补齐真实下载、校验、安装、回滚事务和桌面手动联调。
 
 ## 背景
 
