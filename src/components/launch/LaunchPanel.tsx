@@ -96,7 +96,7 @@ function LaunchButton(props: LaunchButtonProps) {
       disabled={props.disabled}
       whileHover={props.disabled ? undefined : { y: -3, scale: 1.01 }}
       whileTap={props.disabled ? undefined : { scale: 0.99 }}
-      className="group relative flex min-h-[88px] w-full items-center justify-between overflow-hidden rounded-[999px] border border-[#ffec99]/70 bg-[#f5d328] px-6 text-left text-[#2c2510] shadow-[0_24px_70px_rgba(245,211,40,0.32)] transition disabled:cursor-not-allowed disabled:opacity-70 sm:w-[360px]"
+      className="group relative flex min-h-[78px] w-full items-center justify-between overflow-hidden rounded-[999px] border border-[#ffec99]/70 bg-[#f5d328] px-5 text-left text-[#2c2510] shadow-[0_24px_70px_rgba(245,211,40,0.32)] transition disabled:cursor-not-allowed disabled:opacity-70 sm:w-[340px]"
     >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.9),transparent_32%),linear-gradient(135deg,rgba(255,255,255,0.45),rgba(255,255,255,0)_42%,rgba(0,0,0,0.12))]" />
       <div className="relative z-10 flex items-center gap-4">
@@ -104,7 +104,7 @@ function LaunchButton(props: LaunchButtonProps) {
           {copy.icon}
         </div>
         <div>
-          <div className="text-[26px] font-black tracking-[-0.045em]">{copy.title}</div>
+          <div className="text-[24px] font-black tracking-[-0.045em]">{copy.title}</div>
           <div className="mt-0.5 text-xs font-black uppercase tracking-[0.12em] opacity-70">{copy.subtitle}</div>
         </div>
       </div>
@@ -138,21 +138,21 @@ export function LaunchPanel(props: LaunchPanelProps) {
   const primaryDisabled = props.state === "validating" || props.state === "launching";
 
   return (
-    <section className="mx-auto flex min-h-full w-full max-w-[1360px] flex-col justify-end gap-5 pb-4 pt-3">
+    <section className="mx-auto flex h-full w-full max-w-[1360px] flex-col justify-end gap-3">
       <motion.div
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: "easeOut" }}
-        className="max-w-[620px]"
+        className="max-w-[620px] shrink"
       >
         <div className="inline-flex items-center gap-2 rounded-full border border-white/16 bg-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-[#ffb8d6] shadow-[0_18px_44px_rgba(6,10,26,0.18)] backdrop-blur-2xl">
           <Sparkles size={14} />
           Candy Utility Launcher
         </div>
-        <h1 className="mt-5 text-[48px] font-black leading-[0.95] tracking-[-0.075em] text-white drop-shadow-[0_20px_60px_rgba(0,0,0,0.36)] sm:text-[64px]">
+        <h1 className="mt-4 text-[42px] font-black leading-[0.95] tracking-[-0.075em] text-white drop-shadow-[0_20px_60px_rgba(0,0,0,0.36)] sm:text-[56px] xl:text-[64px]">
           DDNet Manager
         </h1>
-        <p className="mt-4 max-w-[520px] text-sm font-semibold leading-7 text-white/68">
+        <p className="mt-3 max-w-[520px] text-sm font-semibold leading-6 text-white/68">
           选择本地 DDNet / QmClient 目录，验证资源结构后直接启动。更新源和 Host 状态保留在右侧 Update Hub。
         </p>
       </motion.div>
@@ -161,10 +161,10 @@ export function LaunchPanel(props: LaunchPanelProps) {
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.08, duration: 0.42, ease: "easeOut" }}
-        className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]"
+        className="grid shrink-0 gap-3 xl:grid-cols-[minmax(0,1fr)_340px]"
       >
-        <div className="rounded-[34px] border border-white/16 bg-[#151927]/62 p-5 text-white shadow-[0_34px_100px_rgba(6,10,26,0.30)] backdrop-blur-2xl">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="rounded-[30px] border border-white/16 bg-[#151927]/62 p-4 text-white shadow-[0_34px_100px_rgba(6,10,26,0.30)] backdrop-blur-2xl">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-3">
                 <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[#ffe1f0] text-[#d85e93]">
@@ -179,7 +179,7 @@ export function LaunchPanel(props: LaunchPanelProps) {
                 <div className="rounded-full bg-white/12 px-3 py-1.5 text-xs font-black text-white/72">{props.statusText}</div>
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
                 <StatusChip
                   icon={<FolderOpen size={14} />}
                   value={props.selectedClient || props.clientPath ? "目录已填写" : "等待目录"}
@@ -203,11 +203,11 @@ export function LaunchPanel(props: LaunchPanelProps) {
             </div>
           </div>
 
-          <div className="mt-5 rounded-[26px] border border-white/12 bg-white/[0.075] p-4">
+          <div className="mt-4 rounded-[24px] border border-white/12 bg-white/[0.075] p-3">
             <label htmlFor="client-path" className="text-[10px] font-black uppercase tracking-[0.22em] text-white/42">
               客户端目录
             </label>
-            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
               <input
                 id="client-path"
                 value={props.clientPath}

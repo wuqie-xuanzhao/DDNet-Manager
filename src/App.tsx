@@ -318,7 +318,7 @@ function WorkspaceShell(props: {
 
       <div className="relative z-10 flex h-full min-h-0 flex-col">
         {props.activeView === "launch" ? (
-          <div className="dm-scroll min-h-0 flex-1 overflow-y-auto p-5 md:p-7">
+          <div className="min-h-0 flex-1 overflow-hidden p-4 md:p-6">
             {props.children}
           </div>
         ) : (
