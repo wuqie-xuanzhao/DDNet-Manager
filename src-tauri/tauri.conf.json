@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.11.2",
+  "productName": "DDNet Manager",
+  "version": "0.1.0",
+  "identifier": "com.ddnet.manager",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "beforeBuildCommand": "bun run build",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "DDNet Manager",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 1280,
+        "minHeight": 720,
+        "maxWidth": 1280,
+        "maxHeight": 720,
+        "center": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": true,
+        "closable": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "fullscreen": false,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5173 https://ddnet.org https://*.ddnet.org; font-src 'self' data:; media-src 'self' asset: https://asset.localhost data: blob:",
+      "capabilities": [
+        {
+          "identifier": "main-window-core",
+          "description": "Core permissions for the primary DDNet Manager launcher window.",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "core:default",
+            "core:app:default",
+            "core:event:default",
+            "core:webview:default",
+            "core:window:default",
+            "core:window:allow-close",
+            "core:window:allow-minimize",
+            "core:window:allow-start-dragging"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Game",
+    "shortDescription": "DDNet third-party launcher.",
+    "longDescription": "A neon-clean industrial launcher for DDNet with update simulation, download progress and game launch orchestration.",
+    "copyright": "Copyright 2026 DDNet Manager Team"
+  }
+}

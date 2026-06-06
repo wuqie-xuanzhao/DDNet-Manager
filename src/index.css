@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+:root {
+  color: #f4f7fb;
+  background: #111213;
+  font-family: "Rajdhani", "Bahnschrift", "DIN Condensed", "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --dm-bg: #111213;
+  --dm-panel: rgba(18, 21, 24, 0.72);
+  --dm-panel-strong: rgba(8, 10, 12, 0.86);
+  --dm-line: rgba(201, 224, 255, 0.16);
+  --dm-line-hot: rgba(65, 242, 255, 0.58);
+  --dm-cyan: #41f2ff;
+  --dm-ice: #d9f7ff;
+  --dm-red: #ff3f4f;
+  --dm-amber: #ffb84d;
+  --dm-muted: #80909c;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #111213;
+}
+
+body {
+  min-width: 1280px;
+  min-height: 720px;
+}
+
+button {
+  font: inherit;
+}
+
+button,
+[role="button"] {
+  cursor: pointer;
+}
+
+svg {
+  pointer-events: none;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+::selection {
+  background: transparent;
+}
+
+.dm-grid {
+  background-image:
+    linear-gradient(rgba(65, 242, 255, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(65, 242, 255, 0.055) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+.dm-noise::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0.085;
+  mix-blend-mode: screen;
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.9) 0 1px, transparent 1px),
+    radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.75) 0 1px, transparent 1px);
+  background-size: 91px 91px, 137px 137px;
+}
+
+.dm-scanline::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  opacity: 0.18;
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 3px,
+    rgba(255, 255, 255, 0.035) 4px
+  );
+  background-size: 100% 5px;
+}
+
+.dm-glass {
+  border: 1px solid rgba(201, 224, 255, 0.13);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
+    rgba(10, 12, 14, 0.66);
+  box-shadow:
+    0 24px 90px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px) saturate(130%);
+}
+
+.dm-cut-corner {
+  clip-path: polygon(18px 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%, 0 18px);
+}
