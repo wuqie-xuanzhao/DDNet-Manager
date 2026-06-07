@@ -19,6 +19,19 @@ const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &[
     "raw.githubusercontent.com",
 ];
 
+/// 表示更新资产的安装包类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageKind {
+    /// zip 压缩包，当前支持自动解压安装。
+    Zip,
+    /// Linux tar.xz 压缩包，当前仅允许手动安装。
+    TarXz,
+    /// macOS dmg 镜像包，当前仅允许手动安装。
+    Dmg,
+    /// 未识别后缀，保守禁止自动安装。
+    Unknown,
+}
+
 /// 表示一次下载文件写入请求。
 pub struct DownloadFileRequest<'a> {
     /// 资产下载地址。
@@ -95,7 +108,10 @@ pub fn create_download_job(
 ) -> DownloadJob {
     let now = OffsetDateTime::now_utc().unix_timestamp_nanos();
     let id = format!("download-{now}");
-    let cache_path = downloads_dir.join(format!("{id}.zip"));
+    let cache_path = downloads_dir.join(format!(
+        "{id}{}",
+        package_kind_for_asset_url(&update.asset.asset_url).cache_suffix()
+    ));
     DownloadJob {
         id,
         client_installation_id: client_installation_id.to_string(),
@@ -109,6 +125,39 @@ pub fn create_download_job(
         downloaded_bytes: 0,
         cache_path: normalize_path(&cache_path),
         error: None,
+    }
+}
+
+/// 根据下载资产 URL 推断安装包类型。
+pub fn package_kind_for_asset_url(asset_url: &str) -> PackageKind {
+    let asset_url = asset_url.to_ascii_lowercase();
+    if asset_url.ends_with(".tar.xz") {
+        PackageKind::TarXz
+    } else if asset_url.ends_with(".dmg") {
+        PackageKind::Dmg
+    } else if asset_url.ends_with(".zip") {
+        PackageKind::Zip
+    } else {
+        PackageKind::Unknown
+    }
+}
+
+/// 校验当前自动安装链路是否支持该安装包类型。
+pub fn auto_install_guard(package_kind: PackageKind) -> Result<(), String> {
+    match package_kind {
+        PackageKind::Zip => Ok(()),
+        PackageKind::TarXz => Err(
+            "automatic install only supports .zip packages; .tar.xz requires manual install for now"
+                .to_string(),
+        ),
+        PackageKind::Dmg => Err(
+            "automatic install only supports .zip packages; .dmg requires manual install for now"
+                .to_string(),
+        ),
+        PackageKind::Unknown => Err(
+            "automatic install only supports .zip packages; unknown package type requires manual install for now"
+                .to_string(),
+        ),
     }
 }
 
@@ -575,6 +624,17 @@ fn failed_restore_dir_for(install_dir: &Path) -> PathBuf {
         .and_then(|name| name.to_str())
         .unwrap_or("ddnet-client");
     install_dir.with_file_name(format!("{name}.ddnet-manager-restore-failed"))
+}
+
+impl PackageKind {
+    fn cache_suffix(self) -> &'static str {
+        match self {
+            PackageKind::Zip => ".zip",
+            PackageKind::TarXz => ".tar.xz",
+            PackageKind::Dmg => ".dmg",
+            PackageKind::Unknown => ".download",
+        }
+    }
 }
 
 #[cfg(test)]

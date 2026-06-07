@@ -45,7 +45,7 @@ function getPathText(client: ClientInstallation | null, clientPath: string, item
 }
 
 function clientTypeIdFromClientId(clientId: string, installDir: string): ClientTypeId {
-  if (clientId === "ddnet_vanilla" && installDir.toLowerCase().includes("steamapps")) {
+  if ((clientId === "ddnet" || clientId === "ddnet_vanilla") && installDir.toLowerCase().includes("steamapps")) {
     return "ddnet-steam";
   }
 
@@ -54,6 +54,8 @@ function clientTypeIdFromClientId(clientId: string, installDir: string): ClientT
       return "qmclient";
     case "qmclient_nightly":
       return "qmclient-nightly";
+    case "ddnet":
+      return "ddnet";
     case "ddnet_vanilla":
       return "ddnet";
     case "taterclient":

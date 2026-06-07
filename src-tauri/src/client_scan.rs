@@ -1,4 +1,6 @@
-use crate::models::{ClientHealth, ClientInstallation};
+use crate::models::{
+    ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
+};
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -9,7 +11,7 @@ use time::OffsetDateTime;
 
 const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV1A_64_PRIME: u64 = 0x100000001b3;
-const DDNET_EXECUTABLE_NAMES: &[&str] = &["DDNet.exe", "ddnet.exe"];
+const DDNET_EXECUTABLE_NAMES: &[&str] = &["DDNet.exe", "ddnet.exe", "DDNet", "ddnet"];
 
 #[derive(Debug, Error)]
 enum ClientScanError {
@@ -45,19 +47,23 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, String> {
         return Err(ClientScanError::NotDirectory(normalize_path(path)).to_string());
     }
 
-    let executable_path = find_ddnet_executable(path).unwrap_or_else(|| path.join("DDNet.exe"));
-    let storage_cfg_path = path.join("storage.cfg");
-    let data_dir = path.join("data");
+    let executable_path =
+        find_ddnet_executable(path).unwrap_or_else(|| default_executable_path(path));
+    let storage_cfg_path = find_storage_cfg_path(path);
+    let data_dir = find_data_dir(path);
     let install_dir = normalize_path(path);
     let id_seed = normalized_id_seed(path);
-    let (client_id, display_name) = infer_client_identity(path);
+    let identity = infer_client_identity(path);
 
     let health = detect_client_health(&executable_path, &storage_cfg_path, &data_dir);
+    let missing_items = missing_items_for_health(&health);
+    let confidence = confidence_for_health(&identity.client_id, &health);
+    let can_launch = health == ClientHealth::Ok;
 
     Ok(ClientInstallation {
-        id: stable_installation_id(&client_id, &id_seed),
-        client_id,
-        display_name,
+        id: stable_installation_id(&identity.client_id, &id_seed),
+        client_id: identity.client_id,
+        display_name: identity.display_name,
         install_dir,
         executable_path: normalize_path(&executable_path),
         storage_cfg_path: normalize_path(&storage_cfg_path),
@@ -66,6 +72,15 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, String> {
         version: None,
         is_default: false,
         health,
+        missing_items,
+        install_source: identity.install_source,
+        confidence,
+        manager_owned: false,
+        compatibility: ClientCompatibility {
+            can_launch,
+            ..ClientCompatibility::default()
+        },
+        upstream_url: identity.upstream_url,
         last_scanned_at: Some(current_utc_rfc3339()),
     })
 }
@@ -204,6 +219,23 @@ fn detect_client_health(
     ClientHealth::Ok
 }
 
+fn missing_items_for_health(health: &ClientHealth) -> Vec<String> {
+    match health {
+        ClientHealth::Ok => Vec::new(),
+        ClientHealth::MissingExecutable => vec!["executable".to_string()],
+        ClientHealth::MissingStorageCfg => vec!["storage.cfg".to_string()],
+        ClientHealth::MissingDataDir => vec!["data".to_string()],
+    }
+}
+
+fn confidence_for_health(client_id: &str, health: &ClientHealth) -> ClientConfidence {
+    match health {
+        ClientHealth::Ok if client_id == "third_party" => ClientConfidence::Compatible,
+        ClientHealth::Ok => ClientConfidence::Verified,
+        _ => ClientConfidence::Partial,
+    }
+}
+
 fn scan_roots(options: &ScanOptions) -> Vec<PathBuf> {
     if options.roots.is_empty() {
         default_scan_roots()
@@ -249,10 +281,16 @@ fn find_candidate_dirs(root: &Path, max_depth: usize) -> Result<Vec<PathBuf>, St
 }
 
 fn is_candidate_dir(path: &Path) -> bool {
-    find_ddnet_executable(path).is_some() || path.join("storage.cfg").is_file()
+    is_macos_app_bundle(path)
+        || find_ddnet_executable(path).is_some()
+        || find_storage_cfg_path(path).is_file()
 }
 
 fn find_ddnet_executable(path: &Path) -> Option<PathBuf> {
+    if is_macos_app_bundle(path) {
+        return find_macos_app_executable(path);
+    }
+
     let entries = std::fs::read_dir(path).ok()?;
     for entry in entries.flatten() {
         let file_name = entry.file_name();
@@ -269,6 +307,53 @@ fn find_ddnet_executable(path: &Path) -> Option<PathBuf> {
     }
 
     None
+}
+
+fn default_executable_path(path: &Path) -> PathBuf {
+    if is_macos_app_bundle(path) {
+        path.join("Contents").join("MacOS").join("DDNet")
+    } else if cfg!(target_os = "windows") {
+        path.join("DDNet.exe")
+    } else {
+        path.join("DDNet")
+    }
+}
+
+fn find_macos_app_executable(path: &Path) -> Option<PathBuf> {
+    let macos_dir = path.join("Contents").join("MacOS");
+    let entries = std::fs::read_dir(macos_dir).ok()?;
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn find_storage_cfg_path(path: &Path) -> PathBuf {
+    let bundle_resource_cfg = path.join("Contents").join("Resources").join("storage.cfg");
+    if is_macos_app_bundle(path) && bundle_resource_cfg.is_file() {
+        bundle_resource_cfg
+    } else {
+        path.join("storage.cfg")
+    }
+}
+
+fn find_data_dir(path: &Path) -> PathBuf {
+    let bundle_resource_data = path.join("Contents").join("Resources").join("data");
+    if is_macos_app_bundle(path) && bundle_resource_data.is_dir() {
+        bundle_resource_data
+    } else {
+        path.join("data")
+    }
+}
+
+fn is_macos_app_bundle(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
 }
 
 fn find_everything_candidate_dirs() -> Vec<PathBuf> {
@@ -407,36 +492,57 @@ fn parse_steam_library_path_line(line: &str) -> Option<PathBuf> {
     }
 }
 
-fn infer_client_identity(path: &Path) -> (String, String) {
+struct ClientIdentity {
+    client_id: String,
+    display_name: String,
+    install_source: ClientInstallSource,
+    upstream_url: Option<String>,
+}
+
+fn infer_client_identity(path: &Path) -> ClientIdentity {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("DDNet Client");
     let haystack = normalize_path(path).to_ascii_lowercase();
+    let install_source = if is_steam_ddnet_path(&haystack) {
+        ClientInstallSource::Steam
+    } else {
+        ClientInstallSource::Manual
+    };
 
-    if haystack.contains("qmclient") && haystack.contains("nightly") {
-        return (
-            "qmclient_nightly".to_string(),
-            "QmClient Nightly".to_string(),
-        );
-    }
-    if haystack.contains("qmclient") || haystack.contains("qm-client") {
-        return ("qmclient".to_string(), "QmClient".to_string());
-    }
-    if haystack.contains("taterclient") || haystack.contains("tclient") {
-        return ("taterclient".to_string(), "TaterClient".to_string());
-    }
-    if haystack.contains("bestclient") || haystack.contains("best-client") {
-        return ("bestclient".to_string(), "BestClient".to_string());
-    }
-    if haystack.contains("cactus") {
-        return ("cactusclient".to_string(), "Cactus Client".to_string());
-    }
-    if haystack.contains("steamapps/common/ddnet") || haystack.ends_with("/ddnet") {
-        return ("ddnet_vanilla".to_string(), "DDNet".to_string());
+    if is_steam_ddnet_path(&haystack) {
+        return ClientIdentity {
+            client_id: "ddnet".to_string(),
+            display_name: "DDNet".to_string(),
+            install_source,
+            upstream_url: Some(crate::client_catalog::ddnet_steam_url().to_string()),
+        };
     }
 
-    ("third_party".to_string(), name.to_string())
+    if let Some(entry) = crate::client_catalog::match_catalog_entry(&haystack) {
+        return ClientIdentity {
+            client_id: entry.client_id.to_string(),
+            display_name: entry.display_name.to_string(),
+            install_source,
+            upstream_url: entry.upstream_url.map(str::to_string),
+        };
+    }
+
+    ClientIdentity {
+        client_id: "third_party".to_string(),
+        display_name: trim_app_extension(name).to_string(),
+        install_source,
+        upstream_url: None,
+    }
+}
+
+fn is_steam_ddnet_path(normalized_lower_path: &str) -> bool {
+    normalized_lower_path.contains("/steamapps/common/ddnet")
+}
+
+fn trim_app_extension(name: &str) -> &str {
+    name.strip_suffix(".app").unwrap_or(name)
 }
 
 fn normalize_path(path: &Path) -> String {

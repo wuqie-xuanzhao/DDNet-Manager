@@ -1,5 +1,6 @@
 use crate::models::{
-    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, NetworkRouteMode, UpdateManifest,
+    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, NetworkRouteMode, UpdateAction,
+    UpdateManifest, UpdateSourceKind,
 };
 use reqwest::Url;
 use std::net::{IpAddr, Ipv6Addr};
@@ -149,6 +150,10 @@ pub fn select_client_update(
         latest_version: client.version.clone(),
         asset,
         needs_update: true,
+        source_kind: UpdateSourceKind::Manifest,
+        action: UpdateAction::Download,
+        action_url: None,
+        message: None,
     }))
 }
 

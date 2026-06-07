@@ -72,6 +72,10 @@ export function launchClient(path: string): Promise<void> {
   return invoke<void>("launch_client", { path });
 }
 
+export function launchDefaultClient(): Promise<void> {
+  return invoke<void>("launch_default_client");
+}
+
 export function isClientRunning(path: string): Promise<boolean> {
   return invoke<boolean>("is_client_running", { path });
 }

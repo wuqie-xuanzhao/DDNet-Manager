@@ -104,6 +104,7 @@ impl ClientRegistry {
             let mut client: ClientInstallation = serde_json::from_str(&client_json)
                 .map_err(|error| format!("failed to parse client installation: {error}"))?;
             client.is_default = is_default;
+            normalize_client_installation(&mut client);
             clients.push(client);
         }
 
@@ -150,6 +151,7 @@ impl ClientRegistry {
             let mut client: ClientInstallation = serde_json::from_str(&client_json)
                 .map_err(|error| format!("failed to parse default client: {error}"))?;
             client.is_default = true;
+            normalize_client_installation(&mut client);
             Ok(client)
         })
         .transpose()
@@ -199,9 +201,16 @@ impl ClientRegistry {
     }
 }
 
+fn normalize_client_installation(client: &mut ClientInstallation) {
+    client.client_id = crate::client_catalog::normalize_client_id(&client.client_id).to_string();
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::models::{ClientHealth, ClientInstallation};
+    use crate::models::{
+        ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource,
+        ClientInstallation,
+    };
 
     fn test_client(id: &str, is_default: bool) -> ClientInstallation {
         ClientInstallation {
@@ -216,6 +225,15 @@ mod tests {
             version: None,
             is_default,
             health: ClientHealth::Ok,
+            missing_items: Vec::new(),
+            install_source: ClientInstallSource::Manual,
+            confidence: ClientConfidence::Compatible,
+            manager_owned: false,
+            compatibility: ClientCompatibility {
+                can_launch: true,
+                ..ClientCompatibility::default()
+            },
+            upstream_url: None,
             last_scanned_at: Some("2026-06-06T12:00:00Z".to_string()),
         }
     }
@@ -270,5 +288,56 @@ mod tests {
             .list_client_installations()
             .expect("客户端列表应读取成功")
             .is_empty());
+    }
+
+    #[test]
+    fn registry_normalizes_legacy_ddnet_vanilla_records() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+        let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
+        let legacy_json = serde_json::json!({
+            "id": "ddnet-legacy",
+            "client_id": "ddnet_vanilla",
+            "display_name": "DDNet",
+            "install_dir": "D:/Games/DDNet",
+            "executable_path": "D:/Games/DDNet/DDNet.exe",
+            "storage_cfg_path": "D:/Games/DDNet/storage.cfg",
+            "data_dir": "D:/Games/DDNet/data",
+            "user_data_dir": null,
+            "version": null,
+            "is_default": true,
+            "health": "ok",
+            "last_scanned_at": "2026-06-06T12:00:00Z"
+        })
+        .to_string();
+
+        registry
+            .conn
+            .execute(
+                "INSERT INTO client_installations (
+                    id, client_id, display_name, install_dir, executable_path,
+                    storage_cfg_path, data_dir, user_data_dir, version, health,
+                    last_scanned_at, is_default, client_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?9, 1, ?10)",
+                rusqlite::params![
+                    "ddnet-legacy",
+                    "ddnet_vanilla",
+                    "DDNet",
+                    "D:/Games/DDNet",
+                    "D:/Games/DDNet/DDNet.exe",
+                    "D:/Games/DDNet/storage.cfg",
+                    "D:/Games/DDNet/data",
+                    "\"ok\"",
+                    "2026-06-06T12:00:00Z",
+                    legacy_json
+                ],
+            )
+            .expect("旧记录应写入成功");
+
+        let clients = registry
+            .list_client_installations()
+            .expect("旧记录应读取成功");
+
+        assert_eq!(clients[0].client_id, "ddnet");
     }
 }

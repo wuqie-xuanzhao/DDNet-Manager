@@ -14,6 +14,106 @@ pub enum ClientHealth {
     MissingDataDir,
 }
 
+/// 表示客户端安装记录的来源。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientInstallSource {
+    /// 来自客户端官方网站下载。
+    OfficialDownload,
+    /// 来自 Steam 安装目录。
+    Steam,
+    /// 用户手动添加的外部安装。
+    #[default]
+    Manual,
+    /// DDNet Manager 管理目录中的安装。
+    Manager,
+}
+
+/// 表示客户端识别结果的可信度。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientConfidence {
+    /// 结构、名称和 catalog 规则均匹配。
+    Verified,
+    /// 结构符合 DDNet 兼容客户端，但发行方未知。
+    Compatible,
+    /// 只命中部分文件或标记。
+    #[default]
+    Partial,
+    /// 已知客户端在当前环境不支持。
+    Unsupported,
+}
+
+/// 表示客户端在当前机器上的启动兼容性状态。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompatibilityStatus {
+    /// 当前机器满足已知基本运行条件。
+    Supported,
+    /// 当前机器不满足已知最低运行条件。
+    Unsupported,
+    /// 可能可启动，但存在依赖、权限或系统版本风险。
+    Risky,
+    /// 缺少足够证据判断兼容性。
+    #[default]
+    Unknown,
+    /// Manager 曾经成功启动并观察到进程。
+    Verified,
+}
+
+/// 表示兼容性判断的一条原因。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CompatibilityReason {
+    /// 稳定的原因代码，供前端映射文案。
+    pub code: String,
+    /// 可直接展示给用户的中文原因。
+    pub message: String,
+}
+
+/// 表示客户端在当前机器上的启动兼容性诊断。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ClientCompatibility {
+    /// 综合兼容性状态。
+    pub status: CompatibilityStatus,
+    /// 当前状态是否允许默认启动。
+    pub can_launch: bool,
+    /// 是否已通过 Manager 受控启动验证。
+    pub launch_verified: bool,
+    /// 影响兼容性判断的原因列表。
+    #[serde(default)]
+    pub reasons: Vec<CompatibilityReason>,
+    /// 最近一次启动结果摘要。
+    pub last_launch_result: Option<String>,
+}
+
+/// 表示更新来源的类型。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateSourceKind {
+    /// GitHub Release API。
+    GithubRelease,
+    /// 客户端官方网站。
+    Website,
+    /// 项目自维护 manifest。
+    Manifest,
+    /// 当前客户端没有自动更新来源。
+    #[default]
+    None,
+}
+
+/// 表示更新检查后建议前端执行的动作。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateAction {
+    /// 可以进入自动下载和安装流程。
+    Download,
+    /// 打开官方网站或管理页面，由用户手动处理。
+    OpenUrl,
+    /// 当前没有可执行动作。
+    #[default]
+    None,
+}
+
 /// 表示 DDNet 兼容客户端在本机的一条安装记录。
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ClientInstallation {
@@ -39,6 +139,24 @@ pub struct ClientInstallation {
     pub is_default: bool,
     /// 当前安装记录的健康状态。
     pub health: ClientHealth,
+    /// 当前安装缺失的具体项目列表。
+    #[serde(default)]
+    pub missing_items: Vec<String>,
+    /// 当前安装的来源。
+    #[serde(default)]
+    pub install_source: ClientInstallSource,
+    /// 当前记录的识别可信度。
+    #[serde(default)]
+    pub confidence: ClientConfidence,
+    /// 是否由 DDNet Manager 管理安装目录。
+    #[serde(default)]
+    pub manager_owned: bool,
+    /// 当前机器对该客户端的启动兼容性诊断。
+    #[serde(default)]
+    pub compatibility: ClientCompatibility,
+    /// 官方下载、GitHub release 或 Steam 管理入口。
+    #[serde(default)]
+    pub upstream_url: Option<String>,
     /// 最后一次扫描或验证该安装记录的 UTC 时间。
     pub last_scanned_at: Option<String>,
 }
@@ -121,6 +239,18 @@ pub struct ClientUpdateCheck {
     pub asset: UpdateAsset,
     /// 是否需要更新。版本未知时按需要更新处理。
     pub needs_update: bool,
+    /// 本次更新检查使用的来源类型。
+    #[serde(default)]
+    pub source_kind: UpdateSourceKind,
+    /// 建议前端执行的下一步动作。
+    #[serde(default)]
+    pub action: UpdateAction,
+    /// 手动下载或管理入口 URL。
+    #[serde(default)]
+    pub action_url: Option<String>,
+    /// 更新检查诊断或不可自动安装原因。
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 /// 表示检查客户端更新的请求。
@@ -136,6 +266,9 @@ pub struct CheckClientUpdateRequest {
     pub platform: Option<String>,
     /// 可选网络路由策略，用于代理或镜像 manifest 访问。
     pub network_route: Option<NetworkRouteConfig>,
+    /// 是否强制使用高级 manifest 来源。
+    #[serde(default)]
+    pub use_manifest_source: bool,
 }
 
 /// 表示从 manifest 中选择更新资产的条件。
@@ -211,6 +344,9 @@ pub struct StartUpdateDownloadRequest {
     pub platform: Option<String>,
     /// 可选网络路由策略，用于代理或镜像 manifest 访问。
     pub network_route: Option<NetworkRouteConfig>,
+    /// 是否强制使用高级 manifest 来源。
+    #[serde(default)]
+    pub use_manifest_source: bool,
 }
 
 /// 表示 manifest 中一个可下载更新资产。
@@ -344,8 +480,9 @@ pub struct WorkshopBind {
 #[cfg(test)]
 mod tests {
     use super::{
-        BindConflict, CfgAnalysis, CfgExecRecord, CfgUnbindRecord, ClientHealth,
-        ClientInstallation, WorkshopBind,
+        BindConflict, CfgAnalysis, CfgExecRecord, CfgUnbindRecord, ClientCompatibility,
+        ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
+        CompatibilityStatus, WorkshopBind,
     };
 
     #[test]
@@ -362,6 +499,18 @@ mod tests {
             version: Some("18.9.1".to_string()),
             is_default: true,
             health: ClientHealth::Ok,
+            missing_items: Vec::new(),
+            install_source: ClientInstallSource::Manual,
+            confidence: ClientConfidence::Compatible,
+            manager_owned: false,
+            compatibility: ClientCompatibility {
+                status: CompatibilityStatus::Unknown,
+                can_launch: true,
+                launch_verified: false,
+                reasons: Vec::new(),
+                last_launch_result: None,
+            },
+            upstream_url: None,
             last_scanned_at: Some("2026-06-06T12:00:00Z".to_string()),
         };
 
@@ -382,6 +531,44 @@ mod tests {
         );
         assert_eq!(serialized["is_default"], true);
         assert_eq!(serialized["health"], "ok");
+    }
+
+    #[test]
+    fn serializes_client_installation_with_mvp_metadata() {
+        let installation = ClientInstallation {
+            id: "ddnet-main".to_string(),
+            client_id: "ddnet".to_string(),
+            display_name: "DDNet".to_string(),
+            install_dir: "D:/SteamLibrary/steamapps/common/DDNet".to_string(),
+            executable_path: "D:/SteamLibrary/steamapps/common/DDNet/DDNet.exe".to_string(),
+            storage_cfg_path: "D:/SteamLibrary/steamapps/common/DDNet/storage.cfg".to_string(),
+            data_dir: "D:/SteamLibrary/steamapps/common/DDNet/data".to_string(),
+            user_data_dir: None,
+            version: Some("19.8.2".to_string()),
+            is_default: true,
+            health: ClientHealth::Ok,
+            missing_items: Vec::new(),
+            install_source: ClientInstallSource::Steam,
+            confidence: ClientConfidence::Verified,
+            manager_owned: false,
+            compatibility: ClientCompatibility {
+                status: CompatibilityStatus::Supported,
+                can_launch: true,
+                launch_verified: false,
+                reasons: Vec::new(),
+                last_launch_result: None,
+            },
+            upstream_url: Some("https://store.steampowered.com/app/412220/DDNet/".to_string()),
+            last_scanned_at: Some("2026-06-07T12:00:00Z".to_string()),
+        };
+
+        let serialized = serde_json::to_value(installation).expect("测试序列化应成功");
+
+        assert_eq!(serialized["client_id"], "ddnet");
+        assert_eq!(serialized["install_source"], "steam");
+        assert_eq!(serialized["confidence"], "verified");
+        assert_eq!(serialized["manager_owned"], false);
+        assert_eq!(serialized["compatibility"]["status"], "supported");
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use crate::download::DownloadManager;
 use crate::models::{
-    CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
-    ClientUpdateSelector, DownloadJob, DownloadJobStatus, NetworkRouteConfig,
-    ScanClientInstallationsOptions, StartUpdateDownloadRequest, UpsertClientInstallationRequest,
+    CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck, DownloadJob,
+    DownloadJobStatus, NetworkRouteConfig, ScanClientInstallationsOptions,
+    StartUpdateDownloadRequest, UpdateAction, UpsertClientInstallationRequest,
 };
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -109,6 +109,26 @@ pub fn launch_client(path: String) -> Result<(), String> {
     crate::process::launch_executable(&path)
 }
 
+/// 重新验证并启动默认客户端。
+#[tauri::command]
+pub fn launch_default_client(app: AppHandle) -> Result<(), String> {
+    let client = registry_for_app(&app)?
+        .get_default_client()?
+        .ok_or_else(|| "default client is not configured".to_string())?;
+    let verified = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
+    if verified.health != ClientHealth::Ok {
+        return Err(format!(
+            "default client is not healthy before launch: {:?}",
+            verified.health
+        ));
+    }
+    if !verified.compatibility.can_launch {
+        return Err("default client is not compatible with this machine".to_string());
+    }
+
+    crate::process::launch_executable(&verified.executable_path)
+}
+
 /// 判断指定客户端可执行文件是否正在运行。
 #[tauri::command]
 pub fn is_client_running(path: String) -> Result<bool, String> {
@@ -130,31 +150,20 @@ pub async fn check_client_update(
     app: AppHandle,
     request: CheckClientUpdateRequest,
 ) -> Result<Option<ClientUpdateCheck>, String> {
-    let manifest = crate::manifest::fetch_manifest_with_route(
-        required_manifest_url(request.manifest_url.as_deref())?,
-        request.network_route.as_ref(),
-    )
-    .await?;
-    let selector = ClientUpdateSelector {
-        client_id: request.client_id,
-        channel: request.channel,
-        platform: request.platform.unwrap_or_else(current_platform),
-    };
-    let mut update = match crate::manifest::select_client_update(&manifest, &selector)? {
-        Some(update) => update,
-        None => return Ok(None),
-    };
-
+    if request_requires_manifest_url(&request) {
+        required_manifest_url(request.manifest_url.as_deref())?;
+    }
     let current_version = registry_for_app(&app)?
         .list_client_installations()?
         .into_iter()
-        .find(|client| client.client_id == selector.client_id && client.is_default)
+        .find(|client| {
+            crate::client_catalog::normalize_client_id(&client.client_id)
+                == crate::client_catalog::normalize_client_id(&request.client_id)
+                && client.is_default
+        })
         .and_then(|client| client.version);
-    update.needs_update =
-        crate::version::is_update_needed(current_version.as_deref(), &update.latest_version);
-    update.current_version = current_version;
 
-    Ok(Some(update))
+    crate::update_source::check_client_update(&request, current_version).await
 }
 
 /// 创建下载任务并开始真实下载更新包。
@@ -183,46 +192,44 @@ async fn prepare_update_download_job(
     app: &AppHandle,
     request: StartUpdateDownloadRequest,
 ) -> Result<PreparedUpdateDownload, String> {
+    let client_installation_id = request.client_installation_id.clone();
+    let network_route = request.network_route.clone();
     let registry = registry_for_app(app)?;
     let client = registry
         .list_client_installations()?
         .into_iter()
-        .find(|client| client.id == request.client_installation_id)
-        .ok_or_else(|| {
-            format!(
-                "client installation not found: {}",
-                request.client_installation_id
-            )
-        })?;
-    let manifest = crate::manifest::fetch_manifest_with_route(
-        required_manifest_url(request.manifest_url.as_deref())?,
-        request.network_route.as_ref(),
-    )
-    .await?;
-    let selector = ClientUpdateSelector {
-        client_id: client.client_id,
+        .find(|client| client.id == client_installation_id)
+        .ok_or_else(|| format!("client installation not found: {}", client_installation_id))?;
+    let update_request = CheckClientUpdateRequest {
+        client_id: client.client_id.clone(),
         channel: request.channel,
-        platform: request.platform.unwrap_or_else(current_platform),
+        manifest_url: request.manifest_url,
+        platform: request.platform,
+        network_route: network_route.clone(),
+        use_manifest_source: request.use_manifest_source,
     };
-    let mut update = crate::manifest::select_client_update(&manifest, &selector)?
-        .ok_or_else(|| "manifest has no matching update asset".to_string())?;
+    let mut update = crate::update_source::check_client_update(&update_request, client.version)
+        .await?
+        .ok_or_else(|| "no downloadable update is available for this client".to_string())?;
+    if update.action != UpdateAction::Download {
+        return Err(update
+            .message
+            .clone()
+            .unwrap_or_else(|| "update source does not provide a downloadable asset".to_string()));
+    }
     update.asset.asset_url = crate::manifest::build_asset_url_with_route(
         &update.asset.asset_url,
-        request.network_route.as_ref(),
+        network_route.as_ref(),
     )?
     .to_string();
-    let enabled_route_hosts = request
-        .network_route
+    let enabled_route_hosts = network_route
         .as_ref()
         .map(|route| route.enabled_hosts.clone())
         .unwrap_or_default();
 
     let downloads_dir = app_cache_dir(app)?.join("downloads");
-    let mut job = crate::download::create_download_job(
-        &request.client_installation_id,
-        &update,
-        &downloads_dir,
-    );
+    let mut job =
+        crate::download::create_download_job(&client_installation_id, &update, &downloads_dir);
     job.status = DownloadJobStatus::Downloading;
     Ok(PreparedUpdateDownload {
         job,
@@ -236,6 +243,11 @@ pub(crate) fn required_manifest_url(input: Option<&str>) -> Result<&str, String>
         .map(str::trim)
         .filter(|url| !url.is_empty())
         .ok_or_else(|| "manifest url is not configured".to_string())
+}
+
+/// 判断当前更新检查请求是否必须显式提供 manifest URL。
+pub(crate) fn request_requires_manifest_url(request: &CheckClientUpdateRequest) -> bool {
+    request.use_manifest_source
 }
 
 fn spawn_download_task(context: DownloadTaskContext) {
@@ -399,20 +411,24 @@ fn run_install_transaction(
         .emit_to("main", "install-progress", context.job_id)
         .map_err(|error| format!("failed to emit install-progress: {error}"))?;
 
-    let install_result =
+    let install_result = crate::download::auto_install_guard(
+        crate::download::package_kind_for_asset_url(&context.job.asset_url),
+    )
+    .and_then(|_| {
         crate::download::verify_downloaded_file(&cache_path, &context.job.sha256, context.job.size)
-            .and_then(|_| crate::download::extract_zip_to_staging(&cache_path, &staging_dir))
-            .and_then(|_| crate::download::find_staged_client_dir(&staging_dir))
-            .and_then(|staged_client_dir| {
-                if crate::process::is_client_running(Path::new(&client.executable_path))? {
-                    return Err("target client is running; close it before install".to_string());
-                }
-                crate::download::install_staged_client(
-                    &staged_client_dir,
-                    Path::new(&client.install_dir),
-                    &rollback_dir,
-                )
-            });
+    })
+    .and_then(|_| crate::download::extract_zip_to_staging(&cache_path, &staging_dir))
+    .and_then(|_| crate::download::find_staged_client_dir(&staging_dir))
+    .and_then(|staged_client_dir| {
+        if crate::process::is_client_running(Path::new(&client.executable_path))? {
+            return Err("target client is running; close it before install".to_string());
+        }
+        crate::download::install_staged_client(
+            &staged_client_dir,
+            Path::new(&client.install_dir),
+            &rollback_dir,
+        )
+    });
 
     match install_result {
         Ok(()) => {
@@ -504,16 +520,6 @@ fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_cache_dir()
         .map_err(|error| format!("failed to resolve app cache dir: {error}"))
-}
-
-fn current_platform() -> String {
-    if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        "windows-x86_64".to_string()
-    } else if cfg!(target_os = "windows") {
-        "windows".to_string()
-    } else {
-        std::env::consts::OS.to_string()
-    }
 }
 
 #[cfg(test)]

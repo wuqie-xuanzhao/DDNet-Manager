@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::client_scan as scan;
+    use crate::models::ClientInstallSource;
 
     #[test]
     fn validate_client_dir_returns_ok_for_complete_directory() {
@@ -46,6 +47,89 @@ mod tests {
 
         assert_eq!(installation.client_id, "qmclient");
         assert_eq!(installation.display_name, "QmClient");
+    }
+
+    #[test]
+    fn validate_client_dir_uses_ddnet_client_id_for_official_directory() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let install_dir = temp_dir.path().join("DDNet");
+        std::fs::create_dir(&install_dir).expect("测试安装目录应创建成功");
+        std::fs::write(install_dir.join("DDNet.exe"), b"MZ").expect("测试可执行文件应写入成功");
+        std::fs::write(install_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+        std::fs::create_dir(install_dir.join("data")).expect("测试 data 目录应创建成功");
+
+        let installation = scan::validate_client_dir(&install_dir).expect("完整目录应验证成功");
+
+        assert_eq!(installation.client_id, "ddnet");
+        assert_ne!(installation.client_id, "ddnet_vanilla");
+        assert_eq!(installation.display_name, "DDNet");
+    }
+
+    #[test]
+    fn validate_client_dir_detects_steam_ddnet_source() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let install_dir = temp_dir
+            .path()
+            .join("SteamLibrary")
+            .join("steamapps")
+            .join("common")
+            .join("DDNet");
+        std::fs::create_dir_all(&install_dir).expect("测试安装目录应创建成功");
+        std::fs::write(install_dir.join("DDNet.exe"), b"MZ").expect("测试可执行文件应写入成功");
+        std::fs::write(install_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+        std::fs::create_dir(install_dir.join("data")).expect("测试 data 目录应创建成功");
+
+        let installation = scan::validate_client_dir(&install_dir).expect("完整目录应验证成功");
+
+        assert_eq!(installation.client_id, "ddnet");
+        assert_eq!(installation.install_source, ClientInstallSource::Steam);
+        assert_eq!(
+            installation.upstream_url.as_deref(),
+            Some("https://store.steampowered.com/app/412220/DDNet/")
+        );
+    }
+
+    #[test]
+    fn validate_client_dir_accepts_macos_app_bundle() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let app_dir = temp_dir.path().join("QmClient.app");
+        std::fs::create_dir_all(app_dir.join("Contents").join("MacOS"))
+            .expect("测试 MacOS 目录应创建成功");
+        std::fs::create_dir_all(app_dir.join("Contents").join("Resources").join("data"))
+            .expect("测试 data 目录应创建成功");
+        std::fs::write(
+            app_dir.join("Contents").join("MacOS").join("DDNet"),
+            b"mach-o",
+        )
+        .expect("测试 bundle 可执行文件应写入成功");
+        std::fs::write(app_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+
+        let installation = scan::validate_client_dir(&app_dir).expect(".app bundle 应验证成功");
+
+        assert_eq!(installation.client_id, "qmclient");
+        assert!(installation
+            .executable_path
+            .ends_with("QmClient.app/Contents/MacOS/DDNet"));
+        assert!(installation
+            .data_dir
+            .ends_with("QmClient.app/Contents/Resources/data"));
+    }
+
+    #[test]
+    fn validate_client_dir_accepts_linux_ddnet_executable_name() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let install_dir = temp_dir.path().join("TClient-linux");
+        std::fs::create_dir(&install_dir).expect("测试安装目录应创建成功");
+        std::fs::write(install_dir.join("DDNet"), b"elf").expect("测试 Linux 可执行文件应写入成功");
+        std::fs::write(install_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+        std::fs::create_dir(install_dir.join("data")).expect("测试 data 目录应创建成功");
+
+        let installation = scan::validate_client_dir(&install_dir).expect("Linux 目录应验证成功");
+
+        assert_eq!(installation.client_id, "taterclient");
+        assert!(installation
+            .executable_path
+            .ends_with("TClient-linux/DDNet"));
     }
 
     #[test]

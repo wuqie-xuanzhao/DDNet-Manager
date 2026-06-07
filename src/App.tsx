@@ -12,7 +12,7 @@ import { ResourcePanel } from "./components/resources/ResourcePanel";
 import { SettingsDialog, type SettingsSectionId } from "./components/settings/SettingsDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { UpdatePanel } from "./components/update/UpdatePanel";
-import { getDefaultClient, launchClient, upsertClientInstallation, validateClientDir } from "./lib/tauri";
+import { getDefaultClient, launchDefaultClient, upsertClientInstallation, validateClientDir } from "./lib/tauri";
 import type { ClientHealth, ClientInstallation, LauncherState } from "./types";
 
 type AppView = "launch" | "games" | "update" | "resources" | "binds";
@@ -26,9 +26,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { id: "launch", label: "启动", icon: "play" },
-  { id: "update", label: "更新", icon: "cloudDownload" },
-  { id: "resources", label: "资源", icon: "folder" },
-  { id: "binds", label: "Binds", icon: "keyboard" }
+  { id: "update", label: "更新", icon: "cloudDownload" }
 ];
 
 const clientTypes: ClientType[] = [
@@ -307,7 +305,10 @@ export default function App() {
   const selectedClientType = clientTypes.find((client) => client.id === selectedClientTypeId) ?? clientTypes[0];
 
   const clientTypeIdFromInstallation = (client: ClientInstallation): ClientTypeId => {
-    if (client.client_id === "ddnet_vanilla" && client.install_dir.toLowerCase().includes("steamapps")) {
+    if (
+      (client.client_id === "ddnet" || client.client_id === "ddnet_vanilla") &&
+      client.install_dir.toLowerCase().includes("steamapps")
+    ) {
       return "ddnet-steam";
     }
 
@@ -316,6 +317,8 @@ export default function App() {
         return "qmclient";
       case "qmclient_nightly":
         return "qmclient-nightly";
+      case "ddnet":
+        return "ddnet";
       case "ddnet_vanilla":
         return "ddnet";
       case "taterclient":
@@ -470,7 +473,7 @@ export default function App() {
     setErrorMessage(null);
 
     try {
-      await launchClient(selectedClient.executable_path);
+      await launchDefaultClient();
       setLauncherState("running");
       setErrorMessage(null);
     } catch (error) {

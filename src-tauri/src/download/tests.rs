@@ -1,11 +1,12 @@
 #[cfg(test)]
 mod tests {
     use crate::download::{
-        create_download_job, download_asset_to_file, extract_zip_to_staging, install_staged_client,
-        restore_rollback, rollback_dir_for, sha256_hex, validate_download_url_with_hosts,
-        verify_downloaded_file, DownloadFileRequest,
+        auto_install_guard, create_download_job, download_asset_to_file, extract_zip_to_staging,
+        install_staged_client, package_kind_for_asset_url, restore_rollback, rollback_dir_for,
+        sha256_hex, validate_download_url_with_hosts, verify_downloaded_file, DownloadFileRequest,
+        PackageKind,
     };
-    use crate::models::{ClientUpdateCheck, UpdateAsset};
+    use crate::models::{ClientUpdateCheck, UpdateAction, UpdateAsset, UpdateSourceKind};
     use std::fs;
     use std::io::Write;
 
@@ -53,6 +54,10 @@ mod tests {
                 size: 1,
             },
             needs_update: true,
+            source_kind: UpdateSourceKind::Manifest,
+            action: UpdateAction::Download,
+            action_url: None,
+            message: None,
         };
 
         let job = create_download_job("../evil", &update, temp_dir.path());
@@ -63,6 +68,101 @@ mod tests {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.starts_with("download-") && name.ends_with(".zip")));
+    }
+
+    #[test]
+    fn create_download_job_preserves_tar_xz_suffix_in_cache_path() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let update = sample_update(
+            "https://github.com/ddnet/ddnet/releases/download/v1/qmclient-linux.tar.xz",
+        );
+
+        let job = create_download_job("qmclient-linux", &update, temp_dir.path());
+        let cache_path = std::path::PathBuf::from(job.cache_path);
+
+        assert_eq!(cache_path.parent(), Some(temp_dir.path()));
+        assert!(cache_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("download-") && name.ends_with(".tar.xz")));
+    }
+
+    #[test]
+    fn create_download_job_preserves_dmg_suffix_in_cache_path() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let update =
+            sample_update("https://github.com/ddnet/ddnet/releases/download/v1/qmclient-macos.dmg");
+
+        let job = create_download_job("qmclient-macos", &update, temp_dir.path());
+        let cache_path = std::path::PathBuf::from(job.cache_path);
+
+        assert_eq!(cache_path.parent(), Some(temp_dir.path()));
+        assert!(cache_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("download-") && name.ends_with(".dmg")));
+    }
+
+    #[test]
+    fn create_download_job_uses_download_suffix_for_unknown_asset_kind() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        let update = sample_update(
+            "https://github.com/ddnet/ddnet/releases/download/v1/qmclient-installer.7z",
+        );
+
+        let job = create_download_job("qmclient-unknown", &update, temp_dir.path());
+        let cache_path = std::path::PathBuf::from(job.cache_path);
+
+        assert_eq!(cache_path.parent(), Some(temp_dir.path()));
+        assert!(cache_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("download-") && name.ends_with(".download")));
+    }
+
+    #[test]
+    fn package_kind_for_asset_url_detects_supported_suffixes() {
+        assert_eq!(
+            package_kind_for_asset_url(
+                "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip"
+            ),
+            PackageKind::Zip
+        );
+        assert_eq!(
+            package_kind_for_asset_url(
+                "https://github.com/ddnet/ddnet/releases/download/v1/qmclient-linux.tar.xz"
+            ),
+            PackageKind::TarXz
+        );
+        assert_eq!(
+            package_kind_for_asset_url(
+                "https://github.com/ddnet/ddnet/releases/download/v1/qmclient-macos.dmg"
+            ),
+            PackageKind::Dmg
+        );
+        assert_eq!(
+            package_kind_for_asset_url(
+                "https://github.com/ddnet/ddnet/releases/download/v1/qmclient-installer.7z"
+            ),
+            PackageKind::Unknown
+        );
+    }
+
+    #[test]
+    fn auto_install_guard_rejects_tar_xz_and_dmg_packages() {
+        let tar_xz_error =
+            auto_install_guard(PackageKind::TarXz).expect_err("当前自动安装流程不应接受 tar.xz 包");
+        let dmg_error =
+            auto_install_guard(PackageKind::Dmg).expect_err("当前自动安装流程不应接受 dmg 包");
+
+        assert_eq!(
+            tar_xz_error,
+            "automatic install only supports .zip packages; .tar.xz requires manual install for now"
+        );
+        assert_eq!(
+            dmg_error,
+            "automatic install only supports .zip packages; .dmg requires manual install for now"
+        );
     }
 
     #[test]
@@ -266,5 +366,26 @@ mod tests {
         fs::write(path.join("DDNet.exe"), executable_bytes).expect("测试可执行文件应写入成功");
         fs::write(path.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
         fs::create_dir(path.join("data")).expect("测试 data 目录应创建成功");
+    }
+
+    fn sample_update(asset_url: &str) -> ClientUpdateCheck {
+        ClientUpdateCheck {
+            client_id: "qmclient".to_string(),
+            channel: "..\\bad".to_string(),
+            current_version: None,
+            latest_version: "C:/escape".to_string(),
+            asset: UpdateAsset {
+                platform: "windows-x86_64".to_string(),
+                asset_url: asset_url.to_string(),
+                sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+                size: 1,
+            },
+            needs_update: true,
+            source_kind: UpdateSourceKind::Manifest,
+            action: UpdateAction::Download,
+            action_url: None,
+            message: None,
+        }
     }
 }

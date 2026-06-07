@@ -6,11 +6,20 @@ pub mod models;
 /// 客户端目录扫描与安装验证。
 pub mod client_scan;
 
+/// 内置 DDNet 兼容客户端目录。
+pub mod client_catalog;
+
 /// 客户端进程识别与启动。
 pub mod process;
 
 /// 更新 manifest 拉取与解析。
 pub mod manifest;
+
+/// 按客户端 catalog 分派更新来源。
+pub mod update_source;
+
+/// GitHub Release 更新源适配器。
+pub mod github_release;
 
 /// cfg bind 解析能力。
 pub mod cfg;
@@ -59,6 +68,7 @@ fn main() {
             commands::list_client_installations,
             commands::get_default_client,
             commands::launch_client,
+            commands::launch_default_client,
             commands::is_client_running,
             commands::load_manifest,
             commands::check_client_update,

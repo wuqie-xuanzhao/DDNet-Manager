@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { checkClientUpdate, getDefaultClient, installDownloadedUpdate, startUpdateDownload } from "../../lib/tauri";
 import type { ClientInstallation, ClientUpdateCheck, DownloadJob, NetworkRouteConfig, NetworkRouteMode } from "../../types";
 
-const MANIFEST_URL_PLACEHOLDER = "输入项目自维护 manifest 地址";
+const MANIFEST_URL_PLACEHOLDER = "自维护 manifest / 调试用途";
 
 function formatAssetSize(size: number) {
   if (size >= 1024 * 1024) {
@@ -41,6 +41,19 @@ function downloadStatusLabel(status: DownloadJob["status"]) {
       return "已取消";
     case "failed":
       return "失败";
+  }
+}
+
+function updateSourceLabel(source: ClientUpdateCheck["source_kind"]) {
+  switch (source) {
+    case "github_release":
+      return "GitHub Release";
+    case "website":
+      return "官网";
+    case "manifest":
+      return "Manifest";
+    case "none":
+      return "无自动来源";
   }
 }
 
@@ -90,6 +103,7 @@ function routeHostFromUrl(value: string) {
 
 export function UpdatePanel() {
   const [manifestUrl, setManifestUrl] = useState("");
+  const [useManifestSource, setUseManifestSource] = useState(false);
   const [channel, setChannel] = useState("stable");
   const [routeMode, setRouteMode] = useState<NetworkRouteMode>("direct");
   const [routeUrl, setRouteUrl] = useState("");
@@ -186,9 +200,8 @@ export function UpdatePanel() {
       setError("请先在客户端管理中保存默认客户端。");
       return;
     }
-    const trimmedManifestUrl = manifestUrl.trim();
-    if (!trimmedManifestUrl) {
-      setError("请先填写项目自维护的更新源地址。");
+    if (useManifestSource && !manifestUrl.trim()) {
+      setError("请先填写自维护 manifest 地址。");
       return;
     }
 
@@ -204,8 +217,9 @@ export function UpdatePanel() {
       const result = await checkClientUpdate({
         client_id: client.client_id,
         channel,
-        manifest_url: trimmedManifestUrl,
-        network_route: networkRoute
+        manifest_url: useManifestSource ? manifestUrl.trim() : null,
+        network_route: networkRoute,
+        use_manifest_source: useManifestSource
       });
       if (latestRequestIdRef.current !== requestId) {
         return;
@@ -229,9 +243,12 @@ export function UpdatePanel() {
     if (!client || !update) {
       return;
     }
-    const trimmedManifestUrl = manifestUrl.trim();
-    if (!trimmedManifestUrl) {
-      setError("请先填写项目自维护的更新源地址。");
+    if (update.action !== "download") {
+      setError(update.message ?? "该更新来源不提供自动下载。");
+      return;
+    }
+    if (useManifestSource && !manifestUrl.trim()) {
+      setError("请先填写自维护 manifest 地址。");
       return;
     }
 
@@ -242,8 +259,9 @@ export function UpdatePanel() {
       const nextJob = await startUpdateDownload({
         client_installation_id: client.id,
         channel: update.channel,
-        manifest_url: trimmedManifestUrl,
-        network_route: networkRoute
+        manifest_url: useManifestSource ? manifestUrl.trim() : null,
+        network_route: networkRoute,
+        use_manifest_source: useManifestSource
       });
       setJob(nextJob);
     } catch (err) {
@@ -278,23 +296,16 @@ export function UpdatePanel() {
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
-          <label className="block text-[11px] font-black tracking-[0.18em] text-[#59606d]" htmlFor="manifest-url-input">
-            更新源地址
-          </label>
-          <input
-            id="manifest-url-input"
-            value={manifestUrl}
-            onChange={(event) => {
-              resetResult();
-              setManifestUrl(event.target.value);
-            }}
-            disabled={isBusy}
-            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#7b808c] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
-            placeholder={MANIFEST_URL_PLACEHOLDER}
-            spellCheck={false}
-          />
+          <div className="text-[11px] font-black tracking-[0.18em] text-[#59606d]">更新源类型</div>
+          <div className="mt-3 rounded-[18px] bg-white/76 p-4">
+            <div className="text-sm font-black text-[var(--dm-ink)]">
+              {useManifestSource ? "ManifestSource" : "内置客户端更新源"}
+            </div>
+            <div className="mt-2 text-xs font-bold leading-6 text-[#59606d]">
+              普通流程会根据客户端类型自动选择 GitHub Release、官网或手动下载入口。
+            </div>
+          </div>
         </div>
-
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
           <label className="block text-[11px] font-black tracking-[0.18em] text-[#59606d]" htmlFor="channel-input">
             更新渠道
@@ -311,6 +322,35 @@ export function UpdatePanel() {
             spellCheck={false}
           />
         </div>
+      </div>
+
+      <div className="mt-4 rounded-[22px] bg-[var(--dm-soft)] p-4">
+        <button
+          type="button"
+          onClick={() => {
+            resetResult();
+            setUseManifestSource((value) => !value);
+          }}
+          disabled={isBusy}
+          className="flex w-full items-center justify-between text-left text-xs font-black text-[#59606d] disabled:cursor-not-allowed disabled:opacity-55"
+        >
+          <span>自维护 manifest / 调试用途</span>
+          <span>{useManifestSource ? "已启用" : "默认折叠"}</span>
+        </button>
+        {useManifestSource ? (
+          <input
+            id="manifest-url-input"
+            value={manifestUrl}
+            onChange={(event) => {
+              resetResult();
+              setManifestUrl(event.target.value);
+            }}
+            disabled={isBusy}
+            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#7b808c] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+            placeholder={MANIFEST_URL_PLACEHOLDER}
+            spellCheck={false}
+          />
+        ) : null}
       </div>
 
       <div className="mt-4 rounded-[22px] bg-[var(--dm-soft)] p-4">
@@ -371,7 +411,29 @@ export function UpdatePanel() {
 
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
           <div className="text-xs font-black text-[#59606d]">可用更新</div>
-          {update ? (
+          {update?.action === "open_url" ? (
+            <div className="mt-3 rounded-[18px] bg-white/78 p-4">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[#59606d]">
+                <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{updateSourceLabel(update.source_kind)}</span>
+                {update.latest_version ? (
+                  <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{update.latest_version}</span>
+                ) : null}
+              </div>
+              <div className="mt-3 text-sm font-bold leading-7 text-[#59606d]">
+                {update.message ?? "该更新来源需要打开上游页面手动处理。"}
+              </div>
+              {update.action_url ? (
+                <a
+                  href={update.action_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-4 inline-flex h-10 items-center rounded-[15px] bg-[var(--dm-ink)] px-4 text-sm font-black text-white transition hover:-translate-y-0.5"
+                >
+                  打开上游页面
+                </a>
+              ) : null}
+            </div>
+          ) : update ? (
             <div className="mt-3 rounded-[18px] bg-white/78 p-4">
               <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[#59606d]">
                 <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{update.channel}</span>

@@ -12,6 +12,25 @@ export type ClientHealth =
   | "missing_storage_cfg"
   | "missing_data_dir";
 
+export type ClientInstallSource = "official_download" | "steam" | "manual" | "manager";
+
+export type ClientConfidence = "verified" | "compatible" | "partial" | "unsupported";
+
+export type CompatibilityStatus = "supported" | "unsupported" | "risky" | "unknown" | "verified";
+
+export type CompatibilityReason = {
+  code: string;
+  message: string;
+};
+
+export type ClientCompatibility = {
+  status: CompatibilityStatus;
+  can_launch: boolean;
+  launch_verified: boolean;
+  reasons: CompatibilityReason[];
+  last_launch_result: string | null;
+};
+
 export type ClientInstallation = {
   id: string;
   client_id: string;
@@ -24,6 +43,12 @@ export type ClientInstallation = {
   version: string | null;
   is_default: boolean;
   health: ClientHealth;
+  missing_items: string[];
+  install_source: ClientInstallSource;
+  confidence: ClientConfidence;
+  manager_owned: boolean;
+  compatibility: ClientCompatibility;
+  upstream_url: string | null;
   last_scanned_at: string | null;
 };
 
@@ -74,6 +99,10 @@ export type ClientUpdateCheck = {
   latest_version: string;
   asset: UpdateAsset;
   needs_update: boolean;
+  source_kind: "github_release" | "website" | "manifest" | "none";
+  action: "download" | "open_url" | "none";
+  action_url: string | null;
+  message: string | null;
 };
 
 export type CheckClientUpdateRequest = {
@@ -83,6 +112,7 @@ export type CheckClientUpdateRequest = {
   manifest_url?: string | null;
   platform?: string | null;
   network_route?: NetworkRouteConfig | null;
+  use_manifest_source?: boolean;
 };
 
 export type DownloadJobStatus =
@@ -116,6 +146,7 @@ export type StartUpdateDownloadRequest = {
   manifest_url?: string | null;
   platform?: string | null;
   network_route?: NetworkRouteConfig | null;
+  use_manifest_source?: boolean;
 };
 
 export type BindRecord = {
