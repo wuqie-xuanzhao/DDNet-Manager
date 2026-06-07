@@ -1,112 +1,33 @@
-use crate::models::{ClientHealth, ClientInstallation};
-use serde::Serialize;
-use std::path::Path;
-use tauri::{AppHandle, Emitter};
+use crate::download::DownloadManager;
+use crate::models::{
+    CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
+    ClientUpdateSelector, DownloadJob, DownloadJobStatus, NetworkRouteConfig,
+    ScanClientInstallationsOptions, StartUpdateDownloadRequest, UpsertClientInstallationRequest,
+};
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Emitter, Manager, State};
 
-#[derive(Clone, Serialize)]
-/// 表示更新检查命令返回给前端的版本摘要。
-pub(crate) struct VersionInfo {
-    current_version: String,
-    latest_version: String,
-    needs_update: bool,
-    channel: String,
-    package_size_mb: f64,
-    notes: Vec<String>,
+type DownloadManagerState<'a> = State<'a, DownloadManager>;
+
+struct InstallContext<'a> {
+    app: &'a AppHandle,
+    manager: &'a DownloadManager,
+    registry: &'a crate::registry::ClientRegistry,
+    job_id: &'a str,
+    job: &'a DownloadJob,
 }
 
-#[derive(Clone, Serialize)]
-struct DownloadProgress {
-    progress: u8,
-    downloaded_mb: f64,
-    total_mb: f64,
-    speed_mb_s: f64,
-    status: String,
+struct DownloadTaskContext {
+    app: AppHandle,
+    manager: DownloadManager,
+    job: DownloadJob,
+    cache_path: PathBuf,
+    enabled_route_hosts: Vec<String>,
 }
 
-/// 返回首版启动器使用的默认模拟客户端安装记录。
-pub fn mocked_default_client() -> ClientInstallation {
-    ClientInstallation {
-        id: "qmclient-main".to_string(),
-        client_id: "qmclient".to_string(),
-        display_name: "QmClient".to_string(),
-        install_dir: "D:/Games/QmClient".to_string(),
-        executable_path: "D:/Games/QmClient/DDNet.exe".to_string(),
-        storage_cfg_path: "D:/Games/QmClient/storage.cfg".to_string(),
-        data_dir: "D:/Games/QmClient/data".to_string(),
-        user_data_dir: Some("C:/Users/Player/AppData/Roaming/DDNet".to_string()),
-        version: Some("18.8.0".to_string()),
-        is_default: true,
-        health: ClientHealth::Ok,
-    }
-}
-
-/// 返回首版启动器使用的模拟更新信息，后续会替换为 manifest 查询结果。
-#[tauri::command]
-pub async fn check_update() -> Result<VersionInfo, String> {
-    let default_client = mocked_default_client();
-
-    Ok(VersionInfo {
-        current_version: default_client
-            .version
-            .unwrap_or_else(|| "18.8.0".to_string()),
-        latest_version: "18.9.1".to_string(),
-        needs_update: true,
-        channel: "stable".to_string(),
-        package_size_mb: 936.0,
-        notes: vec![
-            "Refined launcher asset verification pipeline.".to_string(),
-            "Prepared DDNet client profile handoff metadata.".to_string(),
-            "Improved mirror selection diagnostics.".to_string(),
-        ],
-    })
-}
-
-/// 启动模拟下载任务，并通过窗口事件持续推送下载进度。
-#[tauri::command]
-pub async fn start_download(app: AppHandle) -> Result<(), String> {
-    tokio::spawn(async move {
-        let total_mb = 936.0_f64;
-
-        for progress in 0_u8..=100_u8 {
-            let progress_ratio = f64::from(progress) / 100.0;
-            let downloaded_mb = (total_mb * progress_ratio * 10.0).round() / 10.0;
-            let speed_wave = f64::from((progress % 17) as u16) * 0.37;
-            let speed_mb_s = ((7.8 + speed_wave) * 10.0).round() / 10.0;
-
-            let status = if progress < 18 {
-                "NEGOTIATING MIRROR"
-            } else if progress < 72 {
-                "STREAMING PACKAGE"
-            } else if progress < 96 {
-                "VERIFYING BLOCKS"
-            } else {
-                "FINALIZING"
-            };
-
-            let payload = DownloadProgress {
-                progress,
-                downloaded_mb,
-                total_mb,
-                speed_mb_s,
-                status: status.to_string(),
-            };
-
-            if let Err(error) = app.emit_to("main", "download-progress", payload) {
-                eprintln!("failed to emit download progress: {error}");
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(85)).await;
-        }
-    });
-
-    Ok(())
-}
-
-/// 接收前端启动请求，后续会替换为真实客户端进程拉起逻辑。
-#[tauri::command]
-pub fn launch_game() -> Result<(), String> {
-    println!("DDNet Manager launch request accepted. Preparing DDNet client handoff.");
-    Ok(())
+struct PreparedUpdateDownload {
+    job: DownloadJob,
+    enabled_route_hosts: Vec<String>,
 }
 
 /// 验证用户选择的客户端目录，并返回识别出的安装信息。
@@ -115,19 +36,438 @@ pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstalla
     crate::client_scan::validate_client_dir(Path::new(&path))
 }
 
+/// 扫描本机候选客户端安装目录。
+#[tauri::command]
+pub fn scan_client_installations(
+    app: AppHandle,
+    options: Option<ScanClientInstallationsOptions>,
+) -> Result<Vec<ClientInstallation>, String> {
+    let options = options.unwrap_or_default();
+    let use_everything = options.roots.is_empty();
+    let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
+        crate::client_scan::default_scan_roots()
+    } else {
+        options.roots.iter().map(PathBuf::from).collect()
+    };
+
+    if options.include_saved_paths {
+        roots.extend(
+            registry_for_app(&app)?
+                .list_client_installations()?
+                .into_iter()
+                .map(|client| PathBuf::from(client.install_dir)),
+        );
+    }
+
+    crate::client_scan::scan_client_installations(&crate::client_scan::ScanOptions {
+        roots,
+        include_saved_paths: options.include_saved_paths,
+        deep: options.deep,
+        use_everything,
+    })
+}
+
+/// 保存或更新客户端安装记录。
+#[tauri::command]
+pub fn upsert_client_installation(
+    app: AppHandle,
+    request: UpsertClientInstallationRequest,
+) -> Result<ClientInstallation, String> {
+    let mut client = crate::client_scan::validate_client_dir(Path::new(&request.install_dir))?;
+    client.is_default = request.is_default;
+    registry_for_app(&app)?.upsert_client_installation(&client)?;
+    Ok(client)
+}
+
+/// 从注册表移除客户端记录，不删除本地文件。
+#[tauri::command]
+pub fn remove_client_installation(app: AppHandle, id: String) -> Result<(), String> {
+    registry_for_app(&app)?.remove_client_installation(&id)
+}
+
+/// 设置默认启动客户端。
+#[tauri::command]
+pub fn set_default_client(app: AppHandle, id: String) -> Result<(), String> {
+    registry_for_app(&app)?.set_default_client(&id)
+}
+
+/// 读取所有已保存客户端安装记录。
+#[tauri::command]
+pub fn list_client_installations(app: AppHandle) -> Result<Vec<ClientInstallation>, String> {
+    registry_for_app(&app)?.list_client_installations()
+}
+
+/// 读取默认启动客户端。
+#[tauri::command]
+pub fn get_default_client(app: AppHandle) -> Result<Option<ClientInstallation>, String> {
+    registry_for_app(&app)?.get_default_client()
+}
+
 /// 启动指定路径的客户端可执行文件。
 #[tauri::command]
 pub fn launch_client(path: String) -> Result<(), String> {
     crate::process::launch_executable(&path)
 }
 
+/// 判断指定客户端可执行文件是否正在运行。
+#[tauri::command]
+pub fn is_client_running(path: String) -> Result<bool, String> {
+    crate::process::is_client_running(Path::new(&path))
+}
+
 /// 从指定 URL 加载更新 manifest，并返回已校验的 manifest 内容。
 #[tauri::command]
 pub async fn load_manifest(
     url: String,
-    proxy_base_url: Option<String>,
+    network_route: Option<NetworkRouteConfig>,
 ) -> Result<crate::models::UpdateManifest, String> {
-    crate::manifest::fetch_manifest(&url, proxy_base_url.as_deref()).await
+    crate::manifest::fetch_manifest_with_route(&url, network_route.as_ref()).await
+}
+
+/// 检查指定客户端和渠道是否存在可用更新。
+#[tauri::command]
+pub async fn check_client_update(
+    app: AppHandle,
+    request: CheckClientUpdateRequest,
+) -> Result<Option<ClientUpdateCheck>, String> {
+    let manifest = crate::manifest::fetch_manifest_with_route(
+        required_manifest_url(request.manifest_url.as_deref())?,
+        request.network_route.as_ref(),
+    )
+    .await?;
+    let selector = ClientUpdateSelector {
+        client_id: request.client_id,
+        channel: request.channel,
+        platform: request.platform.unwrap_or_else(current_platform),
+    };
+    let mut update = match crate::manifest::select_client_update(&manifest, &selector)? {
+        Some(update) => update,
+        None => return Ok(None),
+    };
+
+    let current_version = registry_for_app(&app)?
+        .list_client_installations()?
+        .into_iter()
+        .find(|client| client.client_id == selector.client_id && client.is_default)
+        .and_then(|client| client.version);
+    update.needs_update =
+        crate::version::is_update_needed(current_version.as_deref(), &update.latest_version);
+    update.current_version = current_version;
+
+    Ok(Some(update))
+}
+
+/// 创建下载任务并开始真实下载更新包。
+#[tauri::command]
+pub async fn start_update_download(
+    app: AppHandle,
+    manager: DownloadManagerState<'_>,
+    request: StartUpdateDownloadRequest,
+) -> Result<DownloadJob, String> {
+    let prepared = prepare_update_download_job(&app, request).await?;
+    let job = prepared.job;
+    let cache_path = PathBuf::from(&job.cache_path);
+    manager.insert(job.clone())?;
+    spawn_download_task(DownloadTaskContext {
+        app,
+        manager: manager.inner().clone(),
+        job: job.clone(),
+        cache_path,
+        enabled_route_hosts: prepared.enabled_route_hosts,
+    });
+
+    Ok(job)
+}
+
+async fn prepare_update_download_job(
+    app: &AppHandle,
+    request: StartUpdateDownloadRequest,
+) -> Result<PreparedUpdateDownload, String> {
+    let registry = registry_for_app(app)?;
+    let client = registry
+        .list_client_installations()?
+        .into_iter()
+        .find(|client| client.id == request.client_installation_id)
+        .ok_or_else(|| {
+            format!(
+                "client installation not found: {}",
+                request.client_installation_id
+            )
+        })?;
+    let manifest = crate::manifest::fetch_manifest_with_route(
+        required_manifest_url(request.manifest_url.as_deref())?,
+        request.network_route.as_ref(),
+    )
+    .await?;
+    let selector = ClientUpdateSelector {
+        client_id: client.client_id,
+        channel: request.channel,
+        platform: request.platform.unwrap_or_else(current_platform),
+    };
+    let mut update = crate::manifest::select_client_update(&manifest, &selector)?
+        .ok_or_else(|| "manifest has no matching update asset".to_string())?;
+    update.asset.asset_url = crate::manifest::build_asset_url_with_route(
+        &update.asset.asset_url,
+        request.network_route.as_ref(),
+    )?
+    .to_string();
+    let enabled_route_hosts = request
+        .network_route
+        .as_ref()
+        .map(|route| route.enabled_hosts.clone())
+        .unwrap_or_default();
+
+    let downloads_dir = app_cache_dir(app)?.join("downloads");
+    let mut job = crate::download::create_download_job(
+        &request.client_installation_id,
+        &update,
+        &downloads_dir,
+    );
+    job.status = DownloadJobStatus::Downloading;
+    Ok(PreparedUpdateDownload {
+        job,
+        enabled_route_hosts,
+    })
+}
+
+/// 返回调用方显式配置的自维护 manifest 地址，未配置时拒绝继续请求。
+pub(crate) fn required_manifest_url(input: Option<&str>) -> Result<&str, String> {
+    input
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| "manifest url is not configured".to_string())
+}
+
+fn spawn_download_task(context: DownloadTaskContext) {
+    let job_id = context.job.id.clone();
+    let job_for_task = context.job.clone();
+    let app = context.app;
+    let manager = context.manager;
+    let cache_path = context.cache_path;
+    let enabled_route_hosts = context.enabled_route_hosts;
+
+    tokio::spawn(async move {
+        let result = crate::download::download_asset_to_file(
+            crate::download::DownloadFileRequest {
+                asset_url: &job_for_task.asset_url,
+                cache_path: &cache_path,
+                expected_size: job_for_task.size,
+                enabled_route_hosts: &enabled_route_hosts,
+            },
+            |downloaded_bytes| {
+                let Ok(job) = manager.update(&job_id, |job| {
+                    job.downloaded_bytes = downloaded_bytes;
+                }) else {
+                    return false;
+                };
+                let keep_running = job.status != DownloadJobStatus::Canceled;
+                let _ = app.emit_to("main", "download-progress", job);
+                keep_running
+            },
+        )
+        .await
+        .and_then(|_| {
+            crate::download::verify_downloaded_file(
+                &cache_path,
+                &job_for_task.sha256,
+                job_for_task.size,
+            )
+        });
+
+        match result {
+            Ok(()) => {
+                if let Ok(job) = manager.update(&job_id, |job| {
+                    job.status = DownloadJobStatus::Verified;
+                    job.downloaded_bytes = job.size;
+                    job.error = None;
+                }) {
+                    let _ = app.emit_to("main", "download-completed", job);
+                }
+            }
+            Err(error) => {
+                if manager.get(&job_id).is_ok_and(|job| {
+                    job.is_some_and(|job| job.status == DownloadJobStatus::Canceled)
+                }) {
+                    return;
+                }
+                let _ = std::fs::remove_file(&cache_path);
+                if let Ok(job) = manager.update(&job_id, |job| {
+                    job.status = DownloadJobStatus::Failed;
+                    job.error = Some(error);
+                }) {
+                    let _ = app.emit_to("main", "download-failed", job);
+                }
+            }
+        }
+    });
+}
+
+/// 取消下载任务。
+#[tauri::command]
+pub fn cancel_download(
+    manager: DownloadManagerState<'_>,
+    job_id: String,
+) -> Result<DownloadJob, String> {
+    manager.cancel(&job_id)
+}
+
+/// 查询下载任务状态。
+#[tauri::command]
+pub fn get_download_job(
+    manager: DownloadManagerState<'_>,
+    job_id: String,
+) -> Result<Option<DownloadJob>, String> {
+    manager.get(&job_id)
+}
+
+/// 校验并安装已下载的更新包。
+#[tauri::command]
+pub fn install_downloaded_update(
+    app: AppHandle,
+    manager: DownloadManagerState<'_>,
+    job_id: String,
+) -> Result<DownloadJob, String> {
+    let job = manager
+        .get(&job_id)?
+        .ok_or_else(|| format!("download job not found: {job_id}"))?;
+    if job.status != DownloadJobStatus::Verified {
+        return Err(format!(
+            "download job must be verified before install: {:?}",
+            job.status
+        ));
+    }
+
+    let registry = registry_for_app(&app)?;
+    let mut client = load_install_target(&registry, &job)?;
+    run_install_transaction(
+        InstallContext {
+            app: &app,
+            manager: manager.inner(),
+            registry: &registry,
+            job_id: &job_id,
+            job: &job,
+        },
+        &mut client,
+    )
+}
+
+fn load_install_target(
+    registry: &crate::registry::ClientRegistry,
+    job: &DownloadJob,
+) -> Result<ClientInstallation, String> {
+    let mut client = registry
+        .list_client_installations()?
+        .into_iter()
+        .find(|client| client.id == job.client_installation_id)
+        .ok_or_else(|| {
+            format!(
+                "client installation not found: {}",
+                job.client_installation_id
+            )
+        })?;
+    let target_client = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
+    if target_client.health != ClientHealth::Ok {
+        return Err(format!(
+            "target client is not healthy before install: {:?}",
+            target_client.health
+        ));
+    }
+    if crate::process::is_client_running(Path::new(&target_client.executable_path))? {
+        return Err("target client is running; close it before install".to_string());
+    }
+    client.install_dir = target_client.install_dir;
+    client.executable_path = target_client.executable_path;
+    Ok(client)
+}
+
+fn run_install_transaction(
+    context: InstallContext<'_>,
+    client: &mut ClientInstallation,
+) -> Result<DownloadJob, String> {
+    let cache_path = PathBuf::from(&context.job.cache_path);
+    let install_id = format!("install-{}", context.job.id);
+    let cache_root = app_cache_dir(context.app)?;
+    let staging_dir = cache_root.join("staging").join(&install_id);
+    let rollback_dir =
+        crate::download::rollback_dir_for(Path::new(&client.install_dir), &install_id);
+
+    context.manager.update(context.job_id, |job| {
+        job.status = DownloadJobStatus::Installing;
+    })?;
+    context
+        .app
+        .emit_to("main", "install-progress", context.job_id)
+        .map_err(|error| format!("failed to emit install-progress: {error}"))?;
+
+    let install_result =
+        crate::download::verify_downloaded_file(&cache_path, &context.job.sha256, context.job.size)
+            .and_then(|_| crate::download::extract_zip_to_staging(&cache_path, &staging_dir))
+            .and_then(|_| crate::download::find_staged_client_dir(&staging_dir))
+            .and_then(|staged_client_dir| {
+                if crate::process::is_client_running(Path::new(&client.executable_path))? {
+                    return Err("target client is running; close it before install".to_string());
+                }
+                crate::download::install_staged_client(
+                    &staged_client_dir,
+                    Path::new(&client.install_dir),
+                    &rollback_dir,
+                )
+            });
+
+    match install_result {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(&staging_dir);
+            finish_install_success(context, client, &rollback_dir)
+        }
+        Err(error) => finish_install_failure(context, error),
+    }
+}
+
+fn finish_install_success(
+    context: InstallContext<'_>,
+    client: &mut ClientInstallation,
+    rollback_dir: &Path,
+) -> Result<DownloadJob, String> {
+    client.version = Some(context.job.version.clone());
+    client.health = ClientHealth::Ok;
+    if let Err(error) = context.registry.upsert_client_installation(client) {
+        let restore_message =
+            match crate::download::restore_rollback(Path::new(&client.install_dir), rollback_dir) {
+                Ok(()) => "rollback restored".to_string(),
+                Err(restore_error) => format!("rollback restore failed: {restore_error}"),
+            };
+        return finish_install_failure(
+            context,
+            format!(
+                "registry update failed after file replacement: {error}; {restore_message}; rollback_dir={}",
+                rollback_dir.display()
+            ),
+        );
+    }
+    let job = context.manager.update(context.job_id, |job| {
+        job.status = DownloadJobStatus::Completed;
+        job.error = None;
+    })?;
+    context
+        .app
+        .emit_to("main", "install-completed", &job)
+        .map_err(|error| format!("failed to emit install-completed: {error}"))?;
+    Ok(job)
+}
+
+fn finish_install_failure(
+    context: InstallContext<'_>,
+    error: String,
+) -> Result<DownloadJob, String> {
+    let job = context.manager.update(context.job_id, |job| {
+        job.status = DownloadJobStatus::Failed;
+        job.error = Some(error);
+    })?;
+    context
+        .app
+        .emit_to("main", "install-failed", &job)
+        .map_err(|emit_error| format!("failed to emit install-failed: {emit_error}"))?;
+    Ok(job)
 }
 
 /// 读取并分析指定 cfg 文件中的 bind、unbind、exec 与按键冲突信息。
@@ -149,50 +489,32 @@ pub fn render_manager_bind_cfg(commands: Vec<String>) -> Result<String, String> 
     Ok(crate::file_tx::render_manager_cfg(&commands))
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::models::ClientHealth;
+fn registry_for_app(app: &AppHandle) -> Result<crate::registry::ClientRegistry, String> {
+    let db_path = app_data_dir(app)?.join("ddnet-manager.sqlite");
+    crate::registry::ClientRegistry::open(&db_path)
+}
 
-    #[test]
-    fn mocked_default_client_returns_qmclient_with_ok_health() {
-        let client = super::mocked_default_client();
+fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve app data dir: {error}"))
+}
 
-        assert_eq!(client.client_id, "qmclient");
-        assert_eq!(client.health, ClientHealth::Ok);
-    }
+fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_cache_dir()
+        .map_err(|error| format!("failed to resolve app cache dir: {error}"))
+}
 
-    #[test]
-    fn render_manager_bind_cfg_rejects_multiline_command() {
-        let error = super::render_manager_bind_cfg(vec![
-            "bind f1 \"say hi\"\nbind f2 \"say bye\"".to_string()
-        ])
-        .expect_err("multiline should fail");
-
-        assert!(error.contains("must not contain newline"));
-    }
-
-    #[test]
-    fn render_manager_bind_cfg_rejects_manager_marker_injection() {
-        let error = super::render_manager_bind_cfg(vec![format!(
-            "bind f1 \"echo {}\"",
-            crate::file_tx::MANAGER_BEGIN
-        )])
-        .expect_err("marker should fail");
-
-        assert!(error.contains("must not contain manager markers"));
-    }
-
-    #[test]
-    fn render_manager_bind_cfg_returns_rendered_block_for_valid_commands() {
-        let output = super::render_manager_bind_cfg(vec![
-            " bind f1 \"say hi\" ".to_string(),
-            "bind mouse5 \"toggle cl_showfps 0 1\"".to_string(),
-        ])
-        .expect("valid commands");
-
-        assert_eq!(
-            output,
-            "# DDNET_MANAGER_BEGIN\n# This block is managed by DDNet Manager.\nbind f1 \"say hi\"\nbind mouse5 \"toggle cl_showfps 0 1\"\n# DDNET_MANAGER_END\n"
-        );
+fn current_platform() -> String {
+    if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        "windows-x86_64".to_string()
+    } else if cfg!(target_os = "windows") {
+        "windows".to_string()
+    } else {
+        std::env::consts::OS.to_string()
     }
 }
+
+#[cfg(test)]
+mod tests;

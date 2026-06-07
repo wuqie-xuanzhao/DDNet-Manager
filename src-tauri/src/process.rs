@@ -14,6 +14,12 @@ pub fn is_ddnet_process_name(name: &str) -> bool {
     matches!(name, "DDNet.exe" | "ddnet.exe" | "DDNet" | "ddnet")
 }
 
+/// 判断系统中是否存在正在运行的指定客户端可执行文件。
+pub fn is_client_running(path: &Path) -> Result<bool, String> {
+    let target = normalize_executable_path(path)?;
+    Ok(system_process_matches_path(&target))
+}
+
 /// 解析并校验客户端启动目标，确保只启动完整客户端目录内的 DDNet 可执行文件。
 pub fn resolve_launch_target(path: &Path) -> Result<LaunchTarget, String> {
     if !path.is_file() {
@@ -67,6 +73,33 @@ pub fn launch_executable(path: &str) -> Result<(), String> {
         .map_err(|error| format!("failed to launch {path}: {error}"))
 }
 
+fn normalize_executable_path(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_file() {
+        return Err(format!(
+            "client executable is not a file: {}",
+            path.display()
+        ));
+    }
+
+    std::fs::canonicalize(path)
+        .map_err(|error| format!("failed to canonicalize client executable: {error}"))
+}
+
+fn system_process_matches_path(target: &Path) -> bool {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+
+    system
+        .processes()
+        .values()
+        .filter_map(|process| process.exe())
+        .any(|path| process_path_matches(path, target))
+}
+
+fn process_path_matches(process_path: &Path, target: &Path) -> bool {
+    std::fs::canonicalize(process_path).is_ok_and(|path| path == target)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -103,6 +136,24 @@ mod tests {
         let result = super::resolve_launch_target(&install_dir.join("DDNet.exe"));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn is_client_running_rejects_missing_file() {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+
+        let result = super::is_client_running(&temp_dir.path().join("DDNet.exe"));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn is_client_running_matches_current_test_process_path() {
+        let current_exe = std::env::current_exe().expect("测试进程路径应可读取");
+
+        let running = super::is_client_running(&current_exe).expect("当前进程应可检测");
+
+        assert!(running);
     }
 
     #[test]

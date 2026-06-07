@@ -3,7 +3,15 @@ import { GameIcon, type GameIconName } from "@/components/icons/GameIcon";
 import { Badge } from "@/components/ui/badge";
 import type { ClientInstallation } from "@/types";
 
-export type ClientTypeId = "qmclient" | "ddnet" | "qmclient-nightly" | "third-party";
+export type ClientTypeId =
+  | "qmclient"
+  | "ddnet"
+  | "ddnet-steam"
+  | "qmclient-nightly"
+  | "taterclient"
+  | "bestclient"
+  | "cactusclient"
+  | "third-party";
 
 export type ClientType = {
   id: ClientTypeId;
@@ -25,7 +33,7 @@ type GamesPanelProps = {
 };
 
 function getPathText(client: ClientInstallation | null, clientPath: string, item: ClientType) {
-  if (item.id === "qmclient" && client?.install_dir) {
+  if (client?.install_dir && item.id === clientTypeIdFromClientId(client.client_id, client.install_dir)) {
     return client.install_dir;
   }
 
@@ -36,12 +44,35 @@ function getPathText(client: ClientInstallation | null, clientPath: string, item
   return item.pathHint;
 }
 
+function clientTypeIdFromClientId(clientId: string, installDir: string): ClientTypeId {
+  if (clientId === "ddnet_vanilla" && installDir.toLowerCase().includes("steamapps")) {
+    return "ddnet-steam";
+  }
+
+  switch (clientId) {
+    case "qmclient":
+      return "qmclient";
+    case "qmclient_nightly":
+      return "qmclient-nightly";
+    case "ddnet_vanilla":
+      return "ddnet";
+    case "taterclient":
+      return "taterclient";
+    case "bestclient":
+      return "bestclient";
+    case "cactusclient":
+      return "cactusclient";
+    default:
+      return "third-party";
+  }
+}
+
 export function GamesPanel(props: GamesPanelProps) {
   return (
     <section className="min-h-full">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-[11px] font-black tracking-[0.2em] text-[var(--dm-muted-ink)]">LIBRARY</div>
+          <div className="text-[11px] font-black tracking-[0.2em] text-[var(--dm-muted-ink)]">客户端列表</div>
           <h1 className="mt-2 text-4xl font-black tracking-[-0.06em] text-[var(--dm-ink)]">全部游戏</h1>
         </div>
         <div className="rounded-full border border-[var(--dm-border)] bg-white/70 px-4 py-2 text-xs font-black text-[var(--dm-muted-ink)] shadow-sm">

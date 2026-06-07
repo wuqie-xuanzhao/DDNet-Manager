@@ -21,8 +21,17 @@ pub mod workshop;
 /// 下载校验与下载事务基础能力。
 pub mod download;
 
+/// 网络路由候选选择与探测结果聚合。
+pub mod network_route;
+
+/// 客户端注册表持久化能力。
+pub mod registry;
+
 /// Manager 专用 cfg 文本生成与文件事务基础能力。
 pub mod file_tx;
+
+/// 版本号比较与更新判断。
+pub mod version;
 
 mod commands;
 
@@ -30,6 +39,7 @@ use tauri::Manager;
 
 fn main() {
     let run_result = tauri::Builder::default()
+        .manage(download::DownloadManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -41,12 +51,21 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::check_update,
-            commands::start_download,
-            commands::launch_game,
             commands::validate_client_dir,
+            commands::scan_client_installations,
+            commands::upsert_client_installation,
+            commands::remove_client_installation,
+            commands::set_default_client,
+            commands::list_client_installations,
+            commands::get_default_client,
             commands::launch_client,
+            commands::is_client_running,
             commands::load_manifest,
+            commands::check_client_update,
+            commands::start_update_download,
+            commands::cancel_download,
+            commands::get_download_job,
+            commands::install_downloaded_update,
             commands::analyze_cfg_file,
             commands::load_workshop_binds,
             commands::render_manager_bind_cfg

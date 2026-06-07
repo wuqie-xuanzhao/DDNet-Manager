@@ -1,15 +1,16 @@
-use crate::models::UpdateManifest;
+use crate::models::{
+    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, NetworkRouteMode, UpdateManifest,
+};
 use reqwest::Url;
 use std::net::{IpAddr, Ipv6Addr};
 use std::time::Duration;
 
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
-const TRUSTED_MANIFEST_HOSTS: &[&str] = &["ddrace.cn", "raw.githubusercontent.com"];
+const TRUSTED_MANIFEST_HOSTS: &[&str] = &["raw.githubusercontent.com"];
 const TRUSTED_ASSET_HOSTS: &[&str] = &[
     "github.com",
     "objects.githubusercontent.com",
     "raw.githubusercontent.com",
-    "ddrace.cn",
 ];
 
 /// 解析更新 manifest JSON，并校验基础结构约束。
@@ -31,25 +32,53 @@ pub fn parse_manifest(input: &str) -> Result<UpdateManifest, String> {
 }
 
 /// 构造并校验 manifest URL，确保只访问公开 HTTPS 地址。
-pub fn build_manifest_url(url: &str, proxy_base_url: Option<&str>) -> Result<Url, String> {
-    let final_url = match proxy_base_url {
-        Some(base) => format!("{}{}", base.trim_end_matches('/'), url),
-        None => url.to_string(),
-    };
-    let parsed =
-        Url::parse(&final_url).map_err(|error| format!("invalid manifest url: {error}"))?;
+pub fn build_manifest_url(url: &str) -> Result<Url, String> {
+    let parsed = Url::parse(url).map_err(|error| format!("invalid manifest url: {error}"))?;
 
     validate_manifest_url(&parsed)?;
 
     Ok(parsed)
 }
 
-/// 从远程地址拉取更新 manifest，并复用本地解析校验逻辑。
-pub async fn fetch_manifest(
+/// 根据显式网络路由配置构造并校验 manifest URL。
+pub fn build_manifest_url_with_route(
     url: &str,
-    proxy_base_url: Option<&str>,
-) -> Result<UpdateManifest, String> {
-    let final_url = build_manifest_url(url, proxy_base_url)?;
+    route: Option<&NetworkRouteConfig>,
+) -> Result<Url, String> {
+    let original = build_manifest_url(url)?;
+    let Some(route) = route else {
+        return Ok(original);
+    };
+
+    match route.mode {
+        NetworkRouteMode::Direct => Ok(original),
+        NetworkRouteMode::ProxyPrefix => build_proxy_prefix_url(&original, route),
+        NetworkRouteMode::MirrorTemplate => build_mirror_template_url(&original, route),
+    }
+}
+
+/// 根据显式网络路由配置构造并校验 asset URL。
+pub fn build_asset_url_with_route(
+    url: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<Url, String> {
+    let original =
+        Url::parse(url).map_err(|error| format!("invalid manifest asset_url: {error}"))?;
+    validate_asset_url(&original)?;
+    let Some(route) = route else {
+        return Ok(original);
+    };
+
+    match route.mode {
+        NetworkRouteMode::Direct => Ok(original),
+        NetworkRouteMode::ProxyPrefix => build_proxy_prefix_url(&original, route),
+        NetworkRouteMode::MirrorTemplate => build_mirror_template_url(&original, route),
+    }
+}
+
+/// 从远程地址拉取更新 manifest，并复用本地解析校验逻辑。
+pub async fn fetch_manifest(url: &str) -> Result<UpdateManifest, String> {
+    let final_url = build_manifest_url(url)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
@@ -65,6 +94,62 @@ pub async fn fetch_manifest(
     let text = read_limited_manifest_response(response).await?;
 
     parse_manifest(&text)
+}
+
+/// 使用显式网络路由配置从远程地址拉取更新 manifest。
+pub async fn fetch_manifest_with_route(
+    url: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<UpdateManifest, String> {
+    let final_url = build_manifest_url_with_route(url, route)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("failed to fetch manifest: {error}"))?;
+
+    let response = client
+        .get(final_url)
+        .send()
+        .await
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| format!("failed to fetch manifest: {error}"))?;
+    let text = read_limited_manifest_response(response).await?;
+
+    parse_manifest(&text)
+}
+
+/// 从已校验的 manifest 中选择指定客户端、渠道与平台的更新资产。
+pub fn select_client_update(
+    manifest: &UpdateManifest,
+    selector: &ClientUpdateSelector,
+) -> Result<Option<ClientUpdateCheck>, String> {
+    let Some(client) = manifest.clients.iter().find(|client| {
+        client.client_id == selector.client_id && client.channel == selector.channel
+    }) else {
+        return Ok(None);
+    };
+
+    let asset = client
+        .assets
+        .iter()
+        .find(|asset| asset.platform == selector.platform)
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "manifest has no asset for client {} channel {} platform {}",
+                selector.client_id, selector.channel, selector.platform
+            )
+        })?;
+
+    Ok(Some(ClientUpdateCheck {
+        client_id: client.client_id.clone(),
+        channel: client.channel.clone(),
+        current_version: None,
+        latest_version: client.version.clone(),
+        asset,
+        needs_update: true,
+    }))
 }
 
 fn validate_manifest_schema(manifest: &UpdateManifest) -> Result<(), String> {
@@ -131,6 +216,63 @@ fn validate_asset_url(url: &Url) -> Result<(), String> {
         TRUSTED_ASSET_HOSTS,
         "manifest asset_url host is not trusted",
     )
+}
+
+fn build_proxy_prefix_url(original: &Url, route: &NetworkRouteConfig) -> Result<Url, String> {
+    let prefix = route
+        .proxy_prefix_url
+        .as_deref()
+        .ok_or_else(|| "proxy prefix url is required".to_string())?;
+    let separator = if prefix.ends_with('/') { "" } else { "/" };
+    let final_url = format!(
+        "{prefix}{separator}{}",
+        percent_encode_url(original.as_str())
+    );
+    parse_network_route_url(&final_url, route)
+}
+
+fn build_mirror_template_url(original: &Url, route: &NetworkRouteConfig) -> Result<Url, String> {
+    let template = route
+        .mirror_template
+        .as_deref()
+        .ok_or_else(|| "mirror template is required".to_string())?;
+    if !template.contains("{url}") {
+        return Err("mirror template must contain {url}".to_string());
+    }
+
+    let final_url = template.replace("{url}", original.as_str());
+    parse_network_route_url(&final_url, route)
+}
+
+fn parse_network_route_url(input: &str, route: &NetworkRouteConfig) -> Result<Url, String> {
+    let url = Url::parse(input).map_err(|error| format!("invalid manifest url: {error}"))?;
+    let host = validate_public_https_url(&url)?;
+    validate_enabled_route_host(&host, &route.enabled_hosts)?;
+    Ok(url)
+}
+
+fn validate_enabled_route_host(host: &str, enabled_hosts: &[String]) -> Result<(), String> {
+    if enabled_hosts
+        .iter()
+        .any(|enabled| enabled.trim_end_matches('.').eq_ignore_ascii_case(host))
+    {
+        Ok(())
+    } else {
+        Err("network route host is not enabled".to_string())
+    }
+}
+
+fn percent_encode_url(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn validate_public_https_url(url: &Url) -> Result<String, String> {
@@ -227,329 +369,4 @@ async fn read_limited_manifest_response(mut response: reqwest::Response) -> Resu
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{build_manifest_url, parse_manifest};
-
-    const VALID_SHA256: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-    #[test]
-    fn parses_manifest_with_qmclient_asset() {
-        let manifest = parse_manifest(
-            r#"{
-                "schema_version": 1,
-                "clients": [
-                    {
-                        "client_id": "qmclient",
-                        "channel": "stable",
-                        "version": "18.9.1",
-                        "release_notes": "QmClient stable release",
-                        "assets": [
-                            {
-                                "platform": "windows-x86_64",
-                                "asset_url": "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip",
-                                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                                "size": 981467136
-                            }
-                        ]
-                    }
-                ]
-            }"#,
-        )
-        .expect("测试 manifest 应解析成功");
-
-        assert_eq!(manifest.schema_version, 1);
-        assert_eq!(manifest.clients[0].client_id, "qmclient");
-        assert_eq!(manifest.clients[0].assets[0].platform, "windows-x86_64");
-    }
-
-    #[test]
-    fn rejects_zero_schema_version() {
-        let error = parse_manifest(
-            r#"{
-                "schema_version": 0,
-                "clients": [
-                    {
-                        "client_id": "qmclient",
-                        "channel": "stable",
-                        "version": "18.9.1",
-                        "release_notes": "QmClient stable release",
-                        "assets": []
-                    }
-                ]
-            }"#,
-        )
-        .expect_err("schema_version 为 0 应被拒绝");
-
-        assert_eq!(error, "manifest schema_version must be greater than 0");
-    }
-
-    #[test]
-    fn rejects_empty_clients() {
-        let error = parse_manifest(
-            r#"{
-                "schema_version": 1,
-                "clients": []
-            }"#,
-        )
-        .expect_err("空 clients 应被拒绝");
-
-        assert_eq!(error, "manifest must contain at least one client");
-    }
-
-    #[test]
-    fn prefixes_invalid_json_errors() {
-        let error = parse_manifest("{").expect_err("非法 JSON 应被拒绝");
-
-        assert!(
-            error.starts_with("invalid manifest json:"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn build_manifest_url_accepts_public_https_url() {
-        let url = build_manifest_url("https://ddrace.cn/manifest.json", None)
-            .expect("可信 HTTPS URL 应被接受");
-
-        assert_eq!(url.as_str(), "https://ddrace.cn/manifest.json");
-    }
-
-    #[test]
-    fn build_manifest_url_rejects_untrusted_host() {
-        let error = build_manifest_url("https://example.com/manifest.json", None)
-            .expect_err("非 allowlist host 应被拒绝");
-
-        assert_eq!(error, "manifest url host is not trusted");
-    }
-
-    #[test]
-    fn build_manifest_url_rejects_http_url() {
-        let error = build_manifest_url("http://example.com/manifest.json", None)
-            .expect_err("HTTP URL 应被拒绝");
-
-        assert_eq!(error, "manifest url must use https");
-    }
-
-    #[test]
-    fn build_manifest_url_rejects_localhost_and_private_hosts() {
-        for url in [
-            "https://localhost/manifest.json",
-            "https://localhost./manifest.json",
-            "https://api.localhost/manifest.json",
-            "https://127.0.0.1/manifest.json",
-            "https://10.0.0.1/manifest.json",
-            "https://169.254.1.1/manifest.json",
-            "https://0.0.0.0/manifest.json",
-            "https://[::1]/manifest.json",
-            "https://[fc00::1]/manifest.json",
-            "https://[fe80::1]/manifest.json",
-            "https://[::ffff:127.0.0.1]/manifest.json",
-        ] {
-            assert!(
-                build_manifest_url(url, None).is_err(),
-                "{url} should be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn build_manifest_url_rejects_http_proxy_base_url() {
-        let error = build_manifest_url("/manifest.json", Some("http://proxy.example.com"))
-            .expect_err("HTTP 代理前缀应被拒绝");
-
-        assert_eq!(error, "manifest url must use https");
-    }
-
-    #[test]
-    fn build_manifest_url_rejects_untrusted_proxy_base_url() {
-        let error = build_manifest_url("/manifest.json", Some("https://example.com"))
-            .expect_err("非 allowlist 代理前缀应被拒绝");
-
-        assert_eq!(error, "manifest url host is not trusted");
-    }
-
-    #[test]
-    fn rejects_empty_assets() {
-        let error = parse_manifest(
-            r#"{
-                "schema_version": 1,
-                "clients": [
-                    {
-                        "client_id": "qmclient",
-                        "channel": "stable",
-                        "version": "18.9.1",
-                        "release_notes": "QmClient stable release",
-                        "assets": []
-                    }
-                ]
-            }"#,
-        )
-        .expect_err("空 assets 应被拒绝");
-
-        assert_eq!(error, "manifest client assets must not be empty");
-    }
-
-    #[test]
-    fn rejects_invalid_sha256() {
-        let error = parse_manifest(
-            r#"{
-                "schema_version": 1,
-                "clients": [
-                    {
-                        "client_id": "qmclient",
-                        "channel": "stable",
-                        "version": "18.9.1",
-                        "release_notes": "QmClient stable release",
-                        "assets": [
-                            {
-                                "platform": "windows-x86_64",
-                                "asset_url": "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip",
-                                "sha256": "not-a-sha256",
-                                "size": 981467136
-                            }
-                        ]
-                    }
-                ]
-            }"#,
-        )
-        .expect_err("非法 sha256 应被拒绝");
-
-        assert_eq!(error, "manifest asset sha256 must be 64 ASCII hex chars");
-    }
-
-    #[test]
-    fn rejects_http_asset_url() {
-        let error = parse_manifest(
-            r#"{
-                "schema_version": 1,
-                "clients": [
-                    {
-                        "client_id": "qmclient",
-                        "channel": "stable",
-                        "version": "18.9.1",
-                        "release_notes": "QmClient stable release",
-                        "assets": [
-                            {
-                                "platform": "windows-x86_64",
-                                "asset_url": "http://example.com/qmclient.zip",
-                                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                                "size": 981467136
-                            }
-                        ]
-                    }
-                ]
-            }"#,
-        )
-        .expect_err("HTTP asset_url 应被拒绝");
-
-        assert_eq!(error, "manifest url must use https");
-    }
-
-    #[test]
-    fn accepts_trusted_asset_url() {
-        let manifest = parse_manifest(&valid_manifest()).expect("可信 asset_url 应被接受");
-
-        assert_eq!(
-            manifest.clients[0].assets[0].asset_url,
-            "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip"
-        );
-    }
-
-    #[test]
-    fn rejects_untrusted_asset_url() {
-        let input = valid_manifest().replace(
-            r#""asset_url": "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip""#,
-            r#""asset_url": "https://example.com/qmclient.zip""#,
-        );
-        let error = parse_manifest(&input).expect_err("非 allowlist asset_url 应被拒绝");
-
-        assert_eq!(error, "manifest asset_url host is not trusted");
-    }
-
-    #[test]
-    fn rejects_empty_client_id() {
-        let input = valid_manifest().replace(r#""client_id": "qmclient""#, r#""client_id": """#);
-        let error = parse_manifest(&input).expect_err("空 client_id 应被拒绝");
-
-        assert_eq!(error, "manifest client_id must not be empty");
-    }
-
-    #[test]
-    fn rejects_empty_channel() {
-        let input = valid_manifest().replace(r#""channel": "stable""#, r#""channel": """#);
-        let error = parse_manifest(&input).expect_err("空 channel 应被拒绝");
-
-        assert_eq!(error, "manifest client channel must not be empty");
-    }
-
-    #[test]
-    fn rejects_empty_version() {
-        let input = valid_manifest().replace(r#""version": "18.9.1""#, r#""version": """#);
-        let error = parse_manifest(&input).expect_err("空 version 应被拒绝");
-
-        assert_eq!(error, "manifest client version must not be empty");
-    }
-
-    #[test]
-    fn rejects_empty_release_notes() {
-        let input = valid_manifest().replace(
-            r#""release_notes": "QmClient stable release""#,
-            r#""release_notes": """#,
-        );
-        let error = parse_manifest(&input).expect_err("空 release_notes 应被拒绝");
-
-        assert_eq!(error, "manifest client release_notes must not be empty");
-    }
-
-    #[test]
-    fn rejects_empty_platform() {
-        let input =
-            valid_manifest().replace(r#""platform": "windows-x86_64""#, r#""platform": """#);
-        let error = parse_manifest(&input).expect_err("空 platform 应被拒绝");
-
-        assert_eq!(error, "manifest asset platform must not be empty");
-    }
-
-    #[test]
-    fn rejects_empty_asset_url() {
-        let input = valid_manifest().replace(
-            r#""asset_url": "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip""#,
-            r#""asset_url": """#,
-        );
-        let error = parse_manifest(&input).expect_err("空 asset_url 应被拒绝");
-
-        assert_eq!(error, "manifest asset_url must not be empty");
-    }
-
-    #[test]
-    fn rejects_zero_asset_size() {
-        let input = valid_manifest().replace(r#""size": 981467136"#, r#""size": 0"#);
-        let error = parse_manifest(&input).expect_err("size 为 0 应被拒绝");
-
-        assert_eq!(error, "manifest asset size must be greater than 0");
-    }
-
-    fn valid_manifest() -> String {
-        format!(
-            r#"{{
-                "schema_version": 1,
-                "clients": [
-                    {{
-                        "client_id": "qmclient",
-                        "channel": "stable",
-                        "version": "18.9.1",
-                        "release_notes": "QmClient stable release",
-                        "assets": [
-                            {{
-                                "platform": "windows-x86_64",
-                                "asset_url": "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip",
-                                "sha256": "{VALID_SHA256}",
-                                "size": 981467136
-                            }}
-                        ]
-                    }}
-                ]
-            }}"#
-        )
-    }
-}
+mod tests;

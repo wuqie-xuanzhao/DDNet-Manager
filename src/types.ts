@@ -24,6 +24,27 @@ export type ClientInstallation = {
   version: string | null;
   is_default: boolean;
   health: ClientHealth;
+  last_scanned_at: string | null;
+};
+
+export type ScanClientInstallationsOptions = {
+  roots?: string[];
+  include_saved_paths?: boolean;
+  deep?: boolean;
+};
+
+export type UpsertClientInstallationRequest = {
+  install_dir: string;
+  is_default?: boolean;
+};
+
+export type NetworkRouteMode = "direct" | "proxy_prefix" | "mirror_template";
+
+export type NetworkRouteConfig = {
+  mode: NetworkRouteMode;
+  proxy_prefix_url?: string | null;
+  mirror_template?: string | null;
+  enabled_hosts?: string[];
 };
 
 export type UpdateAsset = {
@@ -44,6 +65,57 @@ export type ManifestClient = {
 export type UpdateManifest = {
   schema_version: number;
   clients: ManifestClient[];
+};
+
+export type ClientUpdateCheck = {
+  client_id: string;
+  channel: string;
+  current_version: string | null;
+  latest_version: string;
+  asset: UpdateAsset;
+  needs_update: boolean;
+};
+
+export type CheckClientUpdateRequest = {
+  client_id: string;
+  channel: string;
+  /** 项目自维护 manifest 地址；业务调用必须显式传入。 */
+  manifest_url?: string | null;
+  platform?: string | null;
+  network_route?: NetworkRouteConfig | null;
+};
+
+export type DownloadJobStatus =
+  | "pending"
+  | "downloading"
+  | "verified"
+  | "installing"
+  | "completed"
+  | "canceled"
+  | "failed";
+
+export type DownloadJob = {
+  id: string;
+  client_installation_id: string;
+  client_id: string;
+  channel: string;
+  version: string;
+  asset_url: string;
+  sha256: string;
+  size: number;
+  status: DownloadJobStatus;
+  downloaded_bytes: number;
+  cache_path: string;
+  error: string | null;
+};
+
+export type StartUpdateDownloadRequest = {
+  client_installation_id: string;
+  channel: string;
+  /** 项目自维护 manifest 地址；业务调用必须显式传入。 */
+  manifest_url?: string | null;
+  platform?: string | null;
+  network_route?: NetworkRouteConfig | null;
 };
 
 export type BindRecord = {

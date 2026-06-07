@@ -39,6 +39,178 @@ pub struct ClientInstallation {
     pub is_default: bool,
     /// 当前安装记录的健康状态。
     pub health: ClientHealth,
+    /// 最后一次扫描或验证该安装记录的 UTC 时间。
+    pub last_scanned_at: Option<String>,
+}
+
+/// 表示扫描客户端安装目录时使用的选项。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ScanClientInstallationsOptions {
+    /// 用户显式要求扫描的根目录。
+    #[serde(default)]
+    pub roots: Vec<String>,
+    /// 是否把注册表中已保存的历史路径也纳入扫描。
+    #[serde(default)]
+    pub include_saved_paths: bool,
+    /// 是否启用更深层级扫描。默认扫描保持轻量，不做全盘扫描。
+    #[serde(default)]
+    pub deep: bool,
+}
+
+/// 表示 manifest 或下载链路的网络路由模式。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkRouteMode {
+    /// 不使用代理或镜像，直接访问原始地址。
+    #[default]
+    Direct,
+    /// 使用代理前缀拼接原始 URL。
+    ProxyPrefix,
+    /// 使用包含 `{url}` 占位符的镜像模板构造访问 URL。
+    MirrorTemplate,
+}
+
+/// 表示用户显式启用的网络代理或镜像路由配置。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct NetworkRouteConfig {
+    /// 网络路由模式。
+    pub mode: NetworkRouteMode,
+    /// 代理前缀 URL，仅 `proxy_prefix` 模式使用。
+    pub proxy_prefix_url: Option<String>,
+    /// 镜像模板 URL，仅 `mirror_template` 模式使用。
+    pub mirror_template: Option<String>,
+    /// 显式启用的代理或镜像 host 列表。
+    #[serde(default)]
+    pub enabled_hosts: Vec<String>,
+}
+
+impl NetworkRouteConfig {
+    /// 创建直连网络路由配置。
+    pub fn direct() -> Self {
+        Self {
+            mode: NetworkRouteMode::Direct,
+            proxy_prefix_url: None,
+            mirror_template: None,
+            enabled_hosts: Vec::new(),
+        }
+    }
+}
+
+/// 表示保存客户端安装记录的请求。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UpsertClientInstallationRequest {
+    /// 客户端安装目录。
+    pub install_dir: String,
+    /// 是否保存为默认客户端。
+    #[serde(default)]
+    pub is_default: bool,
+}
+
+/// 表示后端为某个客户端选出的更新资产。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ClientUpdateCheck {
+    /// 客户端类型标识。
+    pub client_id: String,
+    /// 发布渠道标识。
+    pub channel: String,
+    /// 本地版本号，未知时为空。
+    pub current_version: Option<String>,
+    /// manifest 中匹配到的最新版本号。
+    pub latest_version: String,
+    /// 当前平台匹配到的更新资产。
+    pub asset: UpdateAsset,
+    /// 是否需要更新。版本未知时按需要更新处理。
+    pub needs_update: bool,
+}
+
+/// 表示检查客户端更新的请求。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CheckClientUpdateRequest {
+    /// 客户端类型标识。
+    pub client_id: String,
+    /// 发布渠道标识。
+    pub channel: String,
+    /// 项目自维护 manifest 地址；为空时后端会拒绝请求。
+    pub manifest_url: Option<String>,
+    /// 平台标识。为空时由后端根据当前平台推断。
+    pub platform: Option<String>,
+    /// 可选网络路由策略，用于代理或镜像 manifest 访问。
+    pub network_route: Option<NetworkRouteConfig>,
+}
+
+/// 表示从 manifest 中选择更新资产的条件。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClientUpdateSelector {
+    /// 客户端类型标识。
+    pub client_id: String,
+    /// 发布渠道标识。
+    pub channel: String,
+    /// 平台标识。
+    pub platform: String,
+}
+
+/// 表示下载任务当前状态。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadJobStatus {
+    /// 下载任务已创建但尚未开始。
+    Pending,
+    /// 正在下载远程资产。
+    Downloading,
+    /// 下载文件已通过 size 和 sha256 校验。
+    Verified,
+    /// 正在安装已下载资产。
+    Installing,
+    /// 安装已完成。
+    Completed,
+    /// 用户取消了下载任务。
+    Canceled,
+    /// 下载或安装失败。
+    Failed,
+}
+
+/// 表示一个更新下载任务。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct DownloadJob {
+    /// 下载任务 ID。
+    pub id: String,
+    /// 目标客户端安装记录 ID。
+    pub client_installation_id: String,
+    /// 客户端类型标识。
+    pub client_id: String,
+    /// 发布渠道标识。
+    pub channel: String,
+    /// 目标版本。
+    pub version: String,
+    /// 资产下载地址。
+    pub asset_url: String,
+    /// 期望 sha256。
+    pub sha256: String,
+    /// 期望文件大小。
+    pub size: u64,
+    /// 当前任务状态。
+    pub status: DownloadJobStatus,
+    /// 已下载字节数。
+    pub downloaded_bytes: u64,
+    /// 缓存文件路径。
+    pub cache_path: String,
+    /// 最近一次错误信息。
+    pub error: Option<String>,
+}
+
+/// 表示创建下载任务的请求。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct StartUpdateDownloadRequest {
+    /// 目标客户端安装记录 ID。
+    pub client_installation_id: String,
+    /// 发布渠道标识。
+    pub channel: String,
+    /// 项目自维护 manifest 地址；为空时后端会拒绝请求。
+    pub manifest_url: Option<String>,
+    /// 平台标识。为空时由后端根据当前平台推断。
+    pub platform: Option<String>,
+    /// 可选网络路由策略，用于代理或镜像 manifest 访问。
+    pub network_route: Option<NetworkRouteConfig>,
 }
 
 /// 表示 manifest 中一个可下载更新资产。
@@ -190,6 +362,7 @@ mod tests {
             version: Some("18.9.1".to_string()),
             is_default: true,
             health: ClientHealth::Ok,
+            last_scanned_at: Some("2026-06-06T12:00:00Z".to_string()),
         };
 
         let serialized = serde_json::to_value(installation).expect("测试序列化应成功");

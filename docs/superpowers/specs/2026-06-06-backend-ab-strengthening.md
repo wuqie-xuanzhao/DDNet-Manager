@@ -331,3 +331,24 @@ make check-lint
 - Everything 只能作为加速 provider，不能作为硬依赖。
 - zip 解压存在路径穿越风险，必须做路径归一化和目标目录边界校验。
 - 版本识别可能不可靠，不能为了 UI 好看伪造版本。
+
+## 实现复盘补遗
+
+以下补遗来自阶段 A+B 首轮实现与 code review，后续按本规格继续开发时应一并遵守。
+
+### 已补充到当前实现的约束
+
+- 网络路由必须同时覆盖 manifest 和 asset 下载。不能只让 manifest 走代理或镜像，最终下载 URL 也必须通过同一类 `direct`、`proxy_prefix` 或 `mirror_template` 规则生成。
+- 下载 URL 必须逐跳校验。GitHub Release asset 可能从 `github.com` 重定向到 `release-assets.githubusercontent.com`，下载 allowlist 需要包含当前真实使用的 GitHub Release 资产 host，但仍必须拒绝 localhost、私网 IP、link-local 地址和未显式启用的镜像 / 代理 host。
+- 镜像或代理 host 必须来自用户显式配置。前端传入网络路由时，应从用户填写的 HTTPS 地址提取 host，并通过 `enabled_hosts` 交给后端校验。
+- Windows 安装事务不能假设跨盘 `rename` 可用。若旧安装目录可能在 `D:/Games` 等非系统盘，rollback 目录应放在安装目录同级，或实现可靠的 copy fallback。
+- 安装文件替换成功但注册表更新失败时，必须尝试恢复 rollback，不能只把任务标记为 failed 后留下“文件已更新、注册表仍旧版本”的不一致状态。
+- Tauri 默认扫描入口需要保留 Everything provider 的启用意图。command 层即使预填默认扫描目录，也不能让后端误判为“用户传入了自定义 roots”，从而跳过 Everything。
+- MVP 前端提示文本必须从用户视角编写。更新页不应直接暴露 `client_id`、原始 asset URL、cache path、后端英文错误、内部事务名或调试口吻；需要展示“检查更新”“下载中”“文件已校验”“请先关闭客户端”等用户能直接理解的状态。
+
+### 后续仍需明确的约束
+
+- 当前 URL 安全校验只检查 URL 字面量中的 host / IP，不解析 DNS。若后续威胁模型要求防止公开域名解析到内网地址，需要在请求前增加 DNS 解析结果校验，或使用更严格的网络沙箱策略。
+- 下载任务当前可先作为进程内任务存在，但如果要支持应用重启后继续查看、恢复或清理下载任务，需要把 `DownloadJob`、安装事务和 rollback 记录持久化到 SQLite。
+- `ClientHealth` 如需准确表达多个缺失项，应从单一枚举扩展为结构化健康详情，例如 `health` + `missing_items`。当前单一状态只能表达优先级最高的一个缺失项。
+- 前端网络路由输入目前属于 MVP 最小入口。后续若提供全局设置，应统一到设置页保存，并让更新页只显示当前使用的下载方式，避免同一个配置在多个界面重复维护。

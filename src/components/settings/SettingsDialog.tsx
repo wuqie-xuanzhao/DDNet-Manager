@@ -236,13 +236,13 @@ export function SettingsDialog(props: SettingsDialogProps) {
       case "tools":
         return (
           <div className="grid gap-3 md:grid-cols-2">
-            {["扫描客户端", "打开日志", "清理缓存", "检查 Host"].map((item) => (
+            {["扫描客户端", "打开日志", "清理缓存", "网络设置"].map((item) => (
               <div key={item} className="rounded-[24px] bg-[var(--dm-soft)] p-4">
                 <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white text-[var(--dm-ink)]">
                   <GameIcon name="toolKit" className="size-5" />
                 </div>
                 <div className="mt-4 text-base font-black text-[var(--dm-ink)]">{item}</div>
-                <div className="mt-1 text-xs font-bold text-[var(--dm-muted-ink)]">未接入</div>
+                <div className="mt-1 text-xs font-bold text-[var(--dm-muted-ink)]">稍后支持</div>
               </div>
             ))}
           </div>

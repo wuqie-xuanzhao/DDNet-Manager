@@ -1,8 +1,9 @@
-import { startTransition, useRef, useState, type ReactNode } from "react";
+import { startTransition, useEffect, useRef, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import ddnetArt from "./assets/ddnet2.svg";
 import ddnetLogo from "./assets/logo.svg";
 import { BindsPanel } from "./components/binds/BindsPanel";
+import { ClientManager } from "./components/clients/ClientManager";
 import { GamesPanel, type ClientType, type ClientTypeId } from "./components/games/GamesPanel";
 import { GameIcon, type GameIconName } from "./components/icons/GameIcon";
 import { TitleBar } from "./components/layout/TitleBar";
@@ -11,7 +12,7 @@ import { ResourcePanel } from "./components/resources/ResourcePanel";
 import { SettingsDialog, type SettingsSectionId } from "./components/settings/SettingsDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { UpdatePanel } from "./components/update/UpdatePanel";
-import { launchClient, validateClientDir } from "./lib/tauri";
+import { getDefaultClient, launchClient, upsertClientInstallation, validateClientDir } from "./lib/tauri";
 import type { ClientHealth, ClientInstallation, LauncherState } from "./types";
 
 type AppView = "launch" | "games" | "update" | "resources" | "binds";
@@ -35,7 +36,7 @@ const clientTypes: ClientType[] = [
     id: "qmclient",
     name: "QmClient",
     subtitle: "主力客户端",
-    version: "Stable",
+    version: "稳定版",
     status: "已选",
     pathHint: "等待定位",
     icon: "gamepad",
@@ -44,29 +45,69 @@ const clientTypes: ClientType[] = [
   {
     id: "ddnet",
     name: "DDNet Vanilla",
-    subtitle: "官方客户端",
-    version: "Vanilla",
+    subtitle: "官网下载",
+    version: "官方版",
     status: "可添加",
     pathHint: "未定位",
     icon: "play",
     accent: "#6d7280"
   },
   {
+    id: "ddnet-steam",
+    name: "DDNet Steam",
+    subtitle: "Steam 安装",
+    version: "Steam",
+    status: "可扫描",
+    pathHint: "steamapps/common/DDNet",
+    icon: "folder",
+    accent: "#4e657a"
+  },
+  {
     id: "qmclient-nightly",
     name: "QmClient Nightly",
     subtitle: "测试通道",
-    version: "Nightly",
-    status: "占位",
-    pathHint: "未接入",
+    version: "测试版",
+    status: "暂未支持",
+    pathHint: "稍后支持",
     icon: "refresh",
     accent: "#59606d"
+  },
+  {
+    id: "taterclient",
+    name: "TaterClient",
+    subtitle: "TClient",
+    version: "第三方",
+    status: "可添加",
+    pathHint: "手动添加",
+    icon: "gamepad",
+    accent: "#5c6f58"
+  },
+  {
+    id: "bestclient",
+    name: "BestClient",
+    subtitle: "BestProjectTeam",
+    version: "第三方",
+    status: "可添加",
+    pathHint: "手动添加",
+    icon: "toolKit",
+    accent: "#755d67"
+  },
+  {
+    id: "cactusclient",
+    name: "Cactus Client",
+    subtitle: "cactuss.top",
+    version: "Third-party",
+    status: "可添加",
+    pathHint: "手动添加",
+    icon: "wrench",
+    accent: "#6f734e"
   },
   {
     id: "third-party",
     name: "第三方客户端",
     subtitle: "自定义",
-    version: "Custom",
-    status: "占位",
+    version: "自定义",
+    status: "可添加",
     pathHint: "手动添加",
     icon: "toolKit",
     accent: "#4f5663"
@@ -75,12 +116,12 @@ const clientTypes: ClientType[] = [
 
 function getUpdateRows(selectedClient: ClientInstallation | null) {
   return [
-    { icon: "cloudDownload" as const, label: "GitHub", value: "未检测", tone: "text-[#5f6673]" },
-    { icon: "settings" as const, label: "Host", value: "未启用", tone: "text-[#5f6673]" },
-    { icon: "folder" as const, label: "Manifest", value: "未刷新", tone: "text-[#5f6673]" },
+    { icon: "cloudDownload" as const, label: "下载源", value: "未检测", tone: "text-[#5f6673]" },
+    { icon: "settings" as const, label: "网络", value: "未启用", tone: "text-[#5f6673]" },
+    { icon: "folder" as const, label: "更新源", value: "未刷新", tone: "text-[#5f6673]" },
     {
       icon: "refresh" as const,
-      label: "Client",
+      label: "客户端",
       value: selectedClient?.version ? selectedClient.version : "未知",
       tone: "text-[#5f6673]"
     }
@@ -265,6 +306,56 @@ export default function App() {
 
   const selectedClientType = clientTypes.find((client) => client.id === selectedClientTypeId) ?? clientTypes[0];
 
+  const clientTypeIdFromInstallation = (client: ClientInstallation): ClientTypeId => {
+    if (client.client_id === "ddnet_vanilla" && client.install_dir.toLowerCase().includes("steamapps")) {
+      return "ddnet-steam";
+    }
+
+    switch (client.client_id) {
+      case "qmclient":
+        return "qmclient";
+      case "qmclient_nightly":
+        return "qmclient-nightly";
+      case "ddnet_vanilla":
+        return "ddnet";
+      case "taterclient":
+        return "taterclient";
+      case "bestclient":
+        return "bestclient";
+      case "cactusclient":
+        return "cactusclient";
+      default:
+        return "third-party";
+    }
+  };
+
+  useEffect(() => {
+    let alive = true;
+
+    void getDefaultClient()
+      .then((client) => {
+        if (!alive || !client) {
+          return;
+        }
+
+        setSelectedClient(client);
+        setClientPath(client.install_dir);
+        setSelectedClientTypeId(clientTypeIdFromInstallation(client));
+        setLauncherState(client.health === "ok" ? "ready" : "error");
+        setErrorMessage(client.health === "ok" ? null : `不可启动：${normalizeHealth(client.health)}。`);
+      })
+      .catch((error) => {
+        if (!alive) {
+          return;
+        }
+        setErrorMessage(error instanceof Error ? error.message : String(error));
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const markInvalid = (message: string, options?: { clearClient?: boolean }) => {
     if (options?.clearClient ?? true) {
       setSelectedClient(null);
@@ -293,16 +384,22 @@ export default function App() {
         return;
       }
 
-      setSelectedClient(installation);
-      setClientPath(installation.install_dir);
-
       if (installation.health !== "ok") {
+        setSelectedClient(installation);
+        setClientPath(installation.install_dir);
         markInvalid(`不可启动：${normalizeHealth(installation.health)}。`, {
           clearClient: false
         });
         return;
       }
 
+      const savedInstallation = await upsertClientInstallation({
+        install_dir: installation.install_dir,
+        is_default: true
+      });
+
+      setSelectedClient(savedInstallation);
+      setClientPath(savedInstallation.install_dir);
       setLauncherState("ready");
     } catch (error) {
       if (requestId !== validationRequestId.current) {
@@ -430,13 +527,16 @@ export default function App() {
     switch (activeView) {
       case "games":
         return (
-          <GamesPanel
-            clientTypes={clientTypes}
-            selectedClientTypeId={selectedClientTypeId}
-            selectedClient={selectedClient}
-            clientPath={clientPath}
-            onSelectClientType={selectClientType}
-          />
+          <div className="grid gap-6">
+            <GamesPanel
+              clientTypes={clientTypes}
+              selectedClientTypeId={selectedClientTypeId}
+              selectedClient={selectedClient}
+              clientPath={clientPath}
+              onSelectClientType={selectClientType}
+            />
+            <ClientManager />
+          </div>
         );
       case "update":
         return <UpdatePanel />;

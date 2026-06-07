@@ -69,7 +69,7 @@ export function ResourcePanel() {
 
       <div className="mt-5 rounded-[26px] bg-[var(--dm-soft)] p-4">
         <label className="block text-[11px] font-black tracking-[0.18em] text-[#59606d]" htmlFor="resource-dir-input">
-          Client Directory
+          客户端目录
         </label>
         <input
           id="resource-dir-input"
@@ -95,38 +95,38 @@ export function ResourcePanel() {
       <div className="mt-4 grid gap-4 xl:grid-cols-[240px_minmax(0,1fr)]">
         <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
           <div className="mb-3 flex items-center justify-between text-xs font-black text-[#59606d]">
-            <span>Health</span>
+            <span>状态</span>
             <span>{client?.health ?? "-"}</span>
           </div>
           <div className="grid gap-2 rounded-[20px] bg-white/76 p-3 text-sm font-bold text-[#3d4350]">
             <div className="flex items-center justify-between">
-              <span>Client</span>
+              <span>客户端类型</span>
               <span>{client?.client_id ?? "-"}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Display</span>
+              <span>显示名称</span>
               <span>{client?.display_name ?? "-"}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Default</span>
-              <span>{client ? (client.is_default ? "yes" : "no") : "-"}</span>
+              <span>默认客户端</span>
+              <span>{client ? (client.is_default ? "是" : "否") : "-"}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Version</span>
+              <span>版本</span>
               <span>{client?.version ?? "-"}</span>
             </div>
           </div>
         </div>
 
         <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
-          <div className="mb-3 text-xs font-black text-[#59606d]">Resolved Paths</div>
+          <div className="mb-3 text-xs font-black text-[#59606d]">识别到的路径</div>
           {client ? (
             <div className="dm-scroll grid max-h-[420px] gap-3 overflow-y-auto pr-1">
-              <ResourceField label="Install Dir" value={client.install_dir} />
-              <ResourceField label="Executable Path" value={client.executable_path} />
-              <ResourceField label="Storage CFG Path" value={client.storage_cfg_path} />
-              <ResourceField label="Data Dir" value={client.data_dir} />
-              <ResourceField label="User Data Dir" value={client.user_data_dir} />
+              <ResourceField label="安装目录" value={client.install_dir} />
+              <ResourceField label="启动程序" value={client.executable_path} />
+              <ResourceField label="storage.cfg" value={client.storage_cfg_path} />
+              <ResourceField label="资源目录" value={client.data_dir} />
+              <ResourceField label="用户数据目录" value={client.user_data_dir} />
             </div>
           ) : (
             <div className="rounded-[20px] border border-dashed border-[var(--dm-border)] bg-white/64 px-4 py-6 text-sm font-semibold text-[#59606d]">

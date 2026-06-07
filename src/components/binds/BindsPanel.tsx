@@ -86,7 +86,7 @@ export function BindsPanel() {
 
       <div className="mt-5 rounded-[26px] bg-[var(--dm-soft)] p-4">
         <label className="block text-[11px] font-black tracking-[0.18em] text-[#59606d]" htmlFor="binds-cfg-input">
-          CFG Path
+          cfg 文件路径
         </label>
         <input
           id="binds-cfg-input"
@@ -120,28 +120,28 @@ export function BindsPanel() {
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
           <div className="mb-3 flex items-center justify-between text-xs font-black text-[#59606d]">
-            <span>CFG Analysis</span>
+            <span>cfg 分析结果</span>
             <span>{analysis ? analysis.binds.length : 0}</span>
           </div>
           <div className="grid gap-2 rounded-[20px] bg-white/76 p-3 text-sm font-bold text-[#3d4350]">
             <div className="flex items-center justify-between">
-              <span>Binds</span>
+              <span>bind 数量</span>
               <span>{analysis?.binds.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Unbinds</span>
+              <span>unbind 数量</span>
               <span>{analysis?.unbinds.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Execs</span>
+              <span>exec 引用</span>
               <span>{analysis?.execs.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Conflicts</span>
+              <span>按键冲突</span>
               <span>{analysis?.conflicts.length ?? 0}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Missing Exec</span>
+              <span>缺失的 exec 文件</span>
               <span className="text-[#8f2f2f]">{analysis?.missing_exec_targets.length ?? 0}</span>
             </div>
           </div>
@@ -152,7 +152,7 @@ export function BindsPanel() {
 
         <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
           <div className="mb-3 flex items-center justify-between text-xs font-black text-[#59606d]">
-            <span>Workshop Preview</span>
+            <span>Workshop 数据</span>
             <span>{Math.min(workshop.length, 5)}</span>
           </div>
           <pre className="dm-scroll max-h-64 overflow-auto rounded-[20px] bg-white/78 p-3 text-xs leading-6 text-[#2f3440]">
@@ -164,13 +164,13 @@ export function BindsPanel() {
       {analysis ? (
         <div className="mt-4 grid gap-4 xl:grid-cols-2">
           <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
-            <div className="mb-3 text-xs font-black text-[#59606d]">Conflicts</div>
+            <div className="mb-3 text-xs font-black text-[#59606d]">按键冲突</div>
             <pre className="dm-scroll max-h-52 overflow-auto rounded-[20px] bg-white/78 p-3 text-xs leading-6 text-[#2f3440]">
               {JSON.stringify(analysis.conflicts, null, 2)}
             </pre>
           </div>
           <div className="rounded-[26px] bg-[var(--dm-soft)] p-4">
-            <div className="mb-3 text-xs font-black text-[#8f2f2f]">Missing Exec Targets</div>
+            <div className="mb-3 text-xs font-black text-[#8f2f2f]">缺失的 exec 文件</div>
             <pre className="dm-scroll max-h-52 overflow-auto rounded-[20px] bg-white/78 p-3 text-xs leading-6 text-[#2f3440]">
               {JSON.stringify(analysis.missing_exec_targets, null, 2)}
             </pre>
