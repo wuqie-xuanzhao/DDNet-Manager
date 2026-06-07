@@ -172,6 +172,47 @@ fn scan_client_installations_ignores_data_only_directories() {
 }
 
 #[test]
+fn scan_client_installations_ignores_dotnet_shared_app_directories() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let dotnet_shared_app_dir = temp_dir
+        .path()
+        .join("dotnet")
+        .join("shared")
+        .join("Microsoft.AspNetCore.App");
+    std::fs::create_dir_all(&dotnet_shared_app_dir).expect("测试 .NET shared 目录应创建成功");
+
+    let options = scan::ScanOptions {
+        roots: vec![temp_dir.path().to_path_buf()],
+        include_saved_paths: false,
+        deep: false,
+        use_everything: false,
+        excluded_paths: Vec::new(),
+    };
+    let installations = scan::scan_client_installations(&options).expect("扫描应成功");
+
+    assert!(installations.is_empty());
+}
+
+#[test]
+fn scan_client_installations_ignores_everything_candidates_without_executable() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let install_dir = temp_dir.path().join("QmClient");
+    std::fs::create_dir_all(install_dir.join("data")).expect("测试 data 目录应创建成功");
+    std::fs::write(install_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+
+    let options = scan::ScanOptions {
+        roots: vec![install_dir],
+        include_saved_paths: false,
+        deep: false,
+        use_everything: true,
+        excluded_paths: Vec::new(),
+    };
+    let installations = scan::scan_client_installations(&options).expect("扫描应成功");
+
+    assert!(installations.is_empty());
+}
+
+#[test]
 fn steam_libraryfolders_text_returns_ddnet_roots() {
     let roots = scan::steam_ddnet_roots_from_libraryfolders_text(
         r#"
@@ -308,11 +349,17 @@ fn everything_output_returns_parent_candidate_dirs() {
 
     assert_eq!(
         candidates,
-        vec![
-            std::path::Path::new("D:\\Games\\QmClient").to_path_buf(),
-            std::path::Path::new("E:\\DDNet").to_path_buf()
-        ]
+        vec![std::path::Path::new("D:\\Games\\QmClient").to_path_buf()]
     );
+}
+
+#[test]
+fn everything_output_ignores_non_executable_hits() {
+    let output = "E:\\DDNet\\storage.cfg\nE:\\DDNet\\settings_ddnet.cfg\n";
+
+    let candidates = scan::everything_candidate_dirs_from_output(output);
+
+    assert!(candidates.is_empty());
 }
 
 #[test]

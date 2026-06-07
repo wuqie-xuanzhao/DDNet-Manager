@@ -301,9 +301,7 @@ fn find_candidate_dirs(root: &Path, max_depth: usize) -> Result<Vec<PathBuf>, St
 }
 
 fn is_candidate_dir(path: &Path) -> bool {
-    is_macos_app_bundle(path)
-        || find_ddnet_executable(path).is_some()
-        || find_storage_cfg_path(path).is_file()
+    find_ddnet_executable(path).is_some()
 }
 
 fn find_ddnet_executable(path: &Path) -> Option<PathBuf> {
@@ -454,6 +452,9 @@ fn everything_candidate_dirs_from_output_with_exclusions(
         .filter(|line| !line.is_empty())
     {
         let path = PathBuf::from(line);
+        if !is_ddnet_executable_path(&path) {
+            continue;
+        }
         let Some(parent) = path.parent() else {
             continue;
         };
@@ -467,6 +468,16 @@ fn everything_candidate_dirs_from_output_with_exclusions(
     }
 
     candidates
+}
+
+fn is_ddnet_executable_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|file_name| file_name.to_str())
+        .is_some_and(|file_name| {
+            DDNET_EXECUTABLE_NAMES
+                .iter()
+                .any(|expected| file_name.eq_ignore_ascii_case(expected))
+        })
 }
 
 fn find_steam_library_ddnet_roots() -> Vec<PathBuf> {
