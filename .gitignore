@@ -3,5 +3,6 @@ dist/
 tmp/
 src-tauri/target/
 .superpowers/brainstorm/
+.codegraph/
 .DS_Store
 *.log

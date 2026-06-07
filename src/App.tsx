@@ -1,7 +1,6 @@
 import { startTransition, useEffect, useRef, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import ddnetArt from "./assets/ddnet2.svg";
-import ddnetLogo from "./assets/logo.svg";
 import { ClientManager } from "./components/clients/ClientManager";
 import { GamesPanel, type ClientType, type ClientTypeId } from "./components/games/GamesPanel";
 import { GameIcon, type GameIconName } from "./components/icons/GameIcon";
@@ -172,17 +171,8 @@ function ActivityBar(props: {
   return (
     <nav
       aria-label="主模块导航"
-      className="relative z-50 flex h-full w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-[var(--dm-border)] bg-[var(--dm-sidebar)] px-2 py-4 text-[var(--dm-ink)] shadow-[18px_0_50px_rgba(47,52,64,0.08)] backdrop-blur-2xl"
+      className="relative z-50 flex h-full w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-[var(--dm-border)] bg-[var(--dm-sidebar)] px-2 py-4 pt-8 text-[var(--dm-ink)] shadow-[18px_0_50px_rgba(47,52,64,0.08)] backdrop-blur-2xl"
     >
-      <button
-        type="button"
-        aria-label="返回启动页"
-        onClick={() => props.onChangeView("launch")}
-        className="mb-5 grid h-12 w-12 place-items-center overflow-hidden rounded-2xl border border-[var(--dm-border)] bg-white shadow-[0_14px_30px_rgba(47,52,64,0.08)] transition hover:-translate-y-0.5"
-      >
-        <img src={ddnetLogo} alt="DDNet Manager" className="h-8 w-8" />
-      </button>
-
       <div className="flex flex-1 flex-col gap-2">
         {navItems.map((item) => {
           const active = props.activeView === item.id;
