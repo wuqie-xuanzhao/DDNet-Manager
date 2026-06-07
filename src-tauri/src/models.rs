@@ -216,6 +216,60 @@ impl NetworkRouteConfig {
     }
 }
 
+/// 表示 DDNet Manager 的 MVP 应用设置。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct AppSettings {
+    /// 用户显式启用的网络代理或镜像路由。
+    pub network_route: Option<NetworkRouteConfig>,
+    /// 扫描时排除的路径列表。
+    #[serde(default)]
+    pub scan_excluded_paths: Vec<String>,
+    /// 是否启用 Everything provider 作为扫描加速。
+    #[serde(default)]
+    pub use_everything: bool,
+    /// GitHub API token，高级设置，仅用于提高 API 限额。
+    pub github_token: Option<String>,
+    /// 高级 manifest 调试入口地址。
+    pub advanced_manifest_url: Option<String>,
+}
+
+/// 表示一次 Manager-owned 安装历史的最终状态。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallHistoryStatus {
+    /// 安装事务已成功完成。
+    Completed,
+    /// 安装事务失败，错误信息记录在 `error` 中。
+    Failed,
+}
+
+/// 表示一条已完成或失败的安装历史记录。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct InstallHistoryRecord {
+    /// 安装历史记录 ID。
+    pub id: String,
+    /// 关联的下载任务 ID。
+    pub job_id: String,
+    /// 目标客户端安装记录 ID。
+    pub client_installation_id: String,
+    /// 客户端类型标识。
+    pub client_id: String,
+    /// 目标版本。
+    pub version: String,
+    /// 本次安装使用的资产 URL。
+    pub asset_url: String,
+    /// 安装包类型，例如 zip、tar.xz 或 dmg。
+    pub package_kind: String,
+    /// 安装最终状态。
+    pub status: InstallHistoryStatus,
+    /// 若存在旧安装，记录可用于诊断的回滚路径。
+    pub rollback_path: Option<String>,
+    /// 失败时的错误信息。
+    pub error: Option<String>,
+    /// 安装完成或失败的 UTC 时间。
+    pub completed_at: Option<String>,
+}
+
 /// 表示保存客户端安装记录的请求。
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UpsertClientInstallationRequest {

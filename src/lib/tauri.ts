@@ -2,15 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CfgAnalysis,
   CheckClientUpdateRequest,
+  AppSettings,
   ClientInstallation,
   ClientUpdateCheck,
   DownloadJob,
+  InstallHistoryRecord,
   NetworkRouteConfig,
   ScanClientInstallationsOptions,
   StartUpdateDownloadRequest,
   UpdateManifest,
-  UpsertClientInstallationRequest,
-  WorkshopBind
+  UpsertClientInstallationRequest
 } from "../types";
 
 export function validateClientDir(path: string): Promise<ClientInstallation> {
@@ -39,6 +40,18 @@ export function listClientInstallations(): Promise<ClientInstallation[]> {
 
 export function getDefaultClient(): Promise<ClientInstallation | null> {
   return invoke<ClientInstallation | null>("get_default_client");
+}
+
+export function loadAppSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>("load_app_settings");
+}
+
+export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
+  return invoke<AppSettings>("save_app_settings", { settings });
+}
+
+export function listInstallHistory(clientInstallationId: string): Promise<InstallHistoryRecord[]> {
+  return invoke<InstallHistoryRecord[]>("list_install_history", { clientInstallationId });
 }
 
 export function loadManifest(
@@ -78,12 +91,4 @@ export function launchDefaultClient(): Promise<void> {
 
 export function isClientRunning(path: string): Promise<boolean> {
   return invoke<boolean>("is_client_running", { path });
-}
-
-export function analyzeCfgFile(path: string): Promise<CfgAnalysis> {
-  return invoke<CfgAnalysis>("analyze_cfg_file", { path });
-}
-
-export function loadWorkshopBinds(url: string): Promise<WorkshopBind[]> {
-  return invoke<WorkshopBind[]>("load_workshop_binds", { url });
 }

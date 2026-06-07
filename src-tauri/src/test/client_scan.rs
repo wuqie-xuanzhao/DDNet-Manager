@@ -144,6 +144,7 @@ fn scan_client_installations_finds_candidates_under_roots() {
         include_saved_paths: false,
         deep: false,
         use_everything: false,
+        excluded_paths: Vec::new(),
     };
     let installations = scan::scan_client_installations(&options).expect("扫描应成功");
 
@@ -163,6 +164,7 @@ fn scan_client_installations_ignores_data_only_directories() {
         include_saved_paths: false,
         deep: false,
         use_everything: false,
+        excluded_paths: Vec::new(),
     };
     let installations = scan::scan_client_installations(&options).expect("扫描应成功");
 
@@ -240,12 +242,62 @@ fn scan_client_installations_finds_lowercase_ddnet_executable() {
         include_saved_paths: false,
         deep: false,
         use_everything: false,
+        excluded_paths: Vec::new(),
     };
     let installations = scan::scan_client_installations(&options).expect("扫描应成功");
 
     assert_eq!(installations.len(), 1);
     assert_eq!(installations[0].health, crate::models::ClientHealth::Ok);
     assert!(installations[0].executable_path.ends_with("ddnet.exe"));
+}
+
+#[test]
+fn scan_client_installations_respects_excluded_paths() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let install_dir = temp_dir.path().join("Ignored").join("QmClient");
+    std::fs::create_dir_all(&install_dir).expect("测试安装目录应创建成功");
+    std::fs::write(install_dir.join("DDNet.exe"), b"").expect("测试可执行文件应写入成功");
+    std::fs::write(install_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+    std::fs::create_dir(install_dir.join("data")).expect("测试 data 目录应创建成功");
+
+    let options = scan::ScanOptions {
+        roots: vec![temp_dir.path().to_path_buf()],
+        include_saved_paths: false,
+        deep: false,
+        use_everything: false,
+        excluded_paths: vec![temp_dir.path().join("Ignored")],
+    };
+    let installations = scan::scan_client_installations(&options).expect("扫描应成功");
+
+    assert!(installations.is_empty());
+}
+
+#[test]
+fn excluded_paths_match_directory_boundaries() {
+    let excluded = vec![std::path::PathBuf::from("D:/Games/Qm")];
+
+    assert!(scan::is_excluded_path(
+        std::path::Path::new("D:/Games/Qm/DDNet"),
+        &excluded
+    ));
+    assert!(!scan::is_excluded_path(
+        std::path::Path::new("D:/Games/QmClient"),
+        &excluded
+    ));
+}
+
+#[test]
+fn everything_candidates_respect_excluded_paths() {
+    let output = "D:\\Games\\QmClient\\DDNet.exe\nD:\\Archive\\DDNet\\DDNet.exe\n";
+    let candidates = scan::everything_candidate_dirs_from_output_with_exclusions(
+        output,
+        &[std::path::PathBuf::from("D:/Archive")],
+    );
+
+    assert_eq!(
+        candidates,
+        vec![std::path::Path::new("D:\\Games\\QmClient").to_path_buf()]
+    );
 }
 
 #[test]

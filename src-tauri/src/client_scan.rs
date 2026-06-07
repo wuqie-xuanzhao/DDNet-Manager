@@ -30,6 +30,8 @@ pub struct ScanOptions {
     pub deep: bool,
     /// 是否启用 Everything provider 作为扫描加速。
     pub use_everything: bool,
+    /// 用户配置的扫描排除路径。
+    pub excluded_paths: Vec<PathBuf>,
 }
 
 struct CommonScanRootEnv<'a> {
@@ -97,6 +99,9 @@ pub fn scan_client_installations(options: &ScanOptions) -> Result<Vec<ClientInst
         }
 
         for candidate in find_candidate_dirs(&root, max_depth)? {
+            if is_excluded_path(&candidate, &options.excluded_paths) {
+                continue;
+            }
             let installation = validate_client_dir(&candidate)?;
             if seen_ids.insert(installation.id.clone()) {
                 installations.push(installation);
@@ -109,6 +114,9 @@ pub fn scan_client_installations(options: &ScanOptions) -> Result<Vec<ClientInst
             if !candidate.is_dir() {
                 continue;
             }
+            if is_excluded_path(&candidate, &options.excluded_paths) {
+                continue;
+            }
             let installation = validate_client_dir(&candidate)?;
             if seen_ids.insert(installation.id.clone()) {
                 installations.push(installation);
@@ -118,6 +126,18 @@ pub fn scan_client_installations(options: &ScanOptions) -> Result<Vec<ClientInst
 
     installations.sort_by(|left, right| left.install_dir.cmp(&right.install_dir));
     Ok(installations)
+}
+
+fn is_excluded_path(candidate: &Path, excluded_paths: &[PathBuf]) -> bool {
+    let normalized_candidate = normalize_id_seed(&normalize_path(candidate));
+    excluded_paths.iter().any(|excluded| {
+        let normalized_excluded = normalize_id_seed(&normalize_path(excluded));
+        if normalized_excluded.is_empty() {
+            return false;
+        }
+        normalized_candidate == normalized_excluded
+            || normalized_candidate.starts_with(&format!("{normalized_excluded}/"))
+    })
 }
 
 /// 返回 Windows 优先的轻量默认扫描根。
@@ -418,6 +438,13 @@ fn run_everything_query(es_path: &Path, query: &str) -> Option<String> {
 }
 
 fn everything_candidate_dirs_from_output(output: &str) -> Vec<PathBuf> {
+    everything_candidate_dirs_from_output_with_exclusions(output, &[])
+}
+
+fn everything_candidate_dirs_from_output_with_exclusions(
+    output: &str,
+    excluded_paths: &[PathBuf],
+) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
 
@@ -431,6 +458,9 @@ fn everything_candidate_dirs_from_output(output: &str) -> Vec<PathBuf> {
             continue;
         };
         let candidate = parent.to_path_buf();
+        if is_excluded_path(&candidate, excluded_paths) {
+            continue;
+        }
         if seen.insert(normalize_path(&candidate)) {
             candidates.push(candidate);
         }

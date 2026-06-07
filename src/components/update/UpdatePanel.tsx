@@ -1,6 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
-import { checkClientUpdate, getDefaultClient, installDownloadedUpdate, startUpdateDownload } from "../../lib/tauri";
+import { checkClientUpdate, getDefaultClient, installDownloadedUpdate, loadAppSettings, startUpdateDownload } from "../../lib/tauri";
 import type { ClientInstallation, ClientUpdateCheck, DownloadJob, NetworkRouteConfig, NetworkRouteMode } from "../../types";
 
 const MANIFEST_URL_PLACEHOLDER = "自维护 manifest / 调试用途";
@@ -116,10 +116,18 @@ export function UpdatePanel() {
 
   useEffect(() => {
     let alive = true;
-    void getDefaultClient()
-      .then((nextClient) => {
-        if (alive) {
-          setClient(nextClient);
+    void Promise.all([getDefaultClient(), loadAppSettings()])
+      .then(([nextClient, settings]) => {
+        if (!alive) {
+          return;
+        }
+        setClient(nextClient);
+        if (settings.advanced_manifest_url) {
+          setManifestUrl(settings.advanced_manifest_url);
+        }
+        if (settings.network_route) {
+          setRouteMode(settings.network_route.mode);
+          setRouteUrl(settings.network_route.proxy_prefix_url ?? settings.network_route.mirror_template ?? "");
         }
       })
       .catch((err) => {

@@ -1,4 +1,4 @@
-.PHONY: install dev build preview check check-lint check-lint-fix fmt test rust-test rust-check tauri-dev tauri-build clean
+.PHONY: install dev build preview check check-lint check-lint-fix fmt test rust-test rust-check tauri-dev tauri-dev-smoke tauri-build clean
 
 SHELL := powershell.exe
 .SHELLFLAGS := -NoProfile -ExecutionPolicy Bypass -Command
@@ -41,6 +41,9 @@ rust-check:
 
 tauri-dev:
 	$(BUN) run tauri dev
+
+tauri-dev-smoke:
+	New-Item -ItemType Directory -Force tmp | Out-Null; $(BUN) run tauri dev 1> tmp/tauri-dev-smoke.out.log 2> tmp/tauri-dev-smoke.err.log
 
 tauri-build:
 	$(BUN) run tauri build

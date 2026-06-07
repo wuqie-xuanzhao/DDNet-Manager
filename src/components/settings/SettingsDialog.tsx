@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 import { GameIcon, type GameIconName } from "@/components/icons/GameIcon";
 import { Button } from "@/components/ui/button";
 import type { ClientType } from "@/components/games/GamesPanel";
-import type { LauncherState } from "@/types";
+import type { AppSettings, LauncherState, NetworkRouteMode } from "@/types";
 
 export type SettingsSectionId = "general" | "download" | "appearance" | "tools" | "about";
 
@@ -21,8 +21,13 @@ type SettingsDialogProps = {
   selectedClientType: ClientType;
   backgroundMode: "default" | "custom";
   errorMessage: string | null;
+  settings: AppSettings;
+  settingsState: "idle" | "loading" | "saving" | "saved" | "error";
+  settingsError: string | null;
   onClose: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
+  onSettingsChange: (settings: AppSettings) => void;
+  onSaveSettings: () => Promise<void>;
   onClientPathChange: (value: string) => void;
   onBrowse: () => Promise<void>;
   onValidate: () => Promise<void>;
@@ -66,6 +71,36 @@ function TogglePill(props: { checked: boolean; label: string }) {
       </span>
     </div>
   );
+}
+
+function routeHostFromUrl(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function networkRouteUrl(settings: AppSettings) {
+  return settings.network_route?.proxy_prefix_url ?? settings.network_route?.mirror_template ?? "";
+}
+
+function updateNetworkRoute(settings: AppSettings, mode: NetworkRouteMode, rawUrl: string): AppSettings {
+  const trimmedUrl = rawUrl.trim();
+  if (mode === "direct") {
+    return { ...settings, network_route: null };
+  }
+
+  const host = routeHostFromUrl(trimmedUrl);
+  return {
+    ...settings,
+    network_route: {
+      mode,
+      proxy_prefix_url: mode === "proxy_prefix" ? trimmedUrl : null,
+      mirror_template: mode === "mirror_template" ? trimmedUrl : null,
+      enabled_hosts: host ? [host] : []
+    }
+  };
 }
 
 export function SettingsDialog(props: SettingsDialogProps) {
@@ -173,23 +208,71 @@ export function SettingsDialog(props: SettingsDialogProps) {
       case "download":
         return (
           <div className="space-y-4">
-            <SettingCard title="下载速度">
+            <SettingCard title="网络">
               <div className="grid gap-3">
-                <label className="flex items-center gap-3 rounded-[22px] bg-white/70 px-4 py-3 text-sm font-bold text-[var(--dm-ink)]">
-                  <span className="grid h-6 w-6 place-items-center rounded-full border-2 border-[var(--dm-ink)]">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[var(--dm-ink)]" />
-                  </span>
-                  无限制
-                </label>
-                <label className="flex items-center gap-3 rounded-[22px] bg-white/70 px-4 py-3 text-sm font-bold text-[var(--dm-muted-ink)]">
-                  <span className="h-6 w-6 rounded-full border-2 border-[var(--dm-border)]" />
-                  速度上限
-                  <span className="ml-auto font-black text-[var(--dm-ink)]">4096 KB/S</span>
-                </label>
+                <div className="flex flex-wrap gap-2">
+                  {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
+                    const active = (props.settings.network_route?.mode ?? "direct") === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => props.onSettingsChange(updateNetworkRoute(props.settings, mode, networkRouteUrl(props.settings)))}
+                        className={`h-10 rounded-[15px] border px-4 text-xs font-black transition hover:-translate-y-0.5 ${
+                          active
+                            ? "border-[var(--dm-ink)] bg-[var(--dm-ink)] text-white"
+                            : "border-[var(--dm-border)] bg-white text-[var(--dm-muted-ink)]"
+                        }`}
+                      >
+                        {mode === "direct" ? "直连" : mode === "proxy_prefix" ? "代理前缀" : "镜像模板"}
+                      </button>
+                    );
+                  })}
+                </div>
+                {(props.settings.network_route?.mode ?? "direct") !== "direct" ? (
+                  <input
+                    value={networkRouteUrl(props.settings)}
+                    onChange={(event) =>
+                      props.onSettingsChange(
+                        updateNetworkRoute(
+                          props.settings,
+                          props.settings.network_route?.mode ?? "proxy_prefix",
+                          event.target.value
+                        )
+                      )
+                    }
+                    placeholder={props.settings.network_route?.mode === "mirror_template" ? "https://mirror.example/{url}" : "https://proxy.example/"}
+                    className="h-12 min-w-0 rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+                  />
+                ) : null}
               </div>
             </SettingCard>
-            <SettingCard title="游戏更新">
-              <TogglePill checked label="启动时继续下载" />
+            <SettingCard title="高级更新源">
+              <input
+                value={props.settings.advanced_manifest_url ?? ""}
+                onChange={(event) =>
+                  props.onSettingsChange({
+                    ...props.settings,
+                    advanced_manifest_url: event.target.value.trim() ? event.target.value : null
+                  })
+                }
+                placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
+                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+              />
+            </SettingCard>
+            <SettingCard title="GitHub">
+              <input
+                value={props.settings.github_token ?? ""}
+                onChange={(event) =>
+                  props.onSettingsChange({
+                    ...props.settings,
+                    github_token: event.target.value.trim() ? event.target.value : null
+                  })
+                }
+                placeholder="GitHub token"
+                type="password"
+                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+              />
             </SettingCard>
           </div>
         );
@@ -235,16 +318,32 @@ export function SettingsDialog(props: SettingsDialogProps) {
         );
       case "tools":
         return (
-          <div className="grid gap-3 md:grid-cols-2">
-            {["扫描客户端", "打开日志", "清理缓存", "网络设置"].map((item) => (
-              <div key={item} className="rounded-[24px] bg-[var(--dm-soft)] p-4">
-                <div className="grid h-10 w-10 place-items-center rounded-2xl bg-white text-[var(--dm-ink)]">
-                  <GameIcon name="toolKit" className="size-5" />
-                </div>
-                <div className="mt-4 text-base font-black text-[var(--dm-ink)]">{item}</div>
-                <div className="mt-1 text-xs font-bold text-[var(--dm-muted-ink)]">稍后支持</div>
+          <div className="space-y-4">
+            <SettingCard title="扫描">
+              <div className="grid gap-3">
+                <button
+                  type="button"
+                  onClick={() => props.onSettingsChange({ ...props.settings, use_everything: !props.settings.use_everything })}
+                  className="text-left"
+                >
+                  <TogglePill checked={props.settings.use_everything} label="使用 Everything 加速扫描" />
+                </button>
+                <textarea
+                  value={props.settings.scan_excluded_paths.join("\n")}
+                  onChange={(event) =>
+                    props.onSettingsChange({
+                      ...props.settings,
+                      scan_excluded_paths: event.target.value
+                        .split(/\r?\n/)
+                        .map((line) => line.trim())
+                        .filter(Boolean)
+                    })
+                  }
+                  placeholder="每行一个排除路径"
+                  className="min-h-28 w-full resize-none rounded-[18px] border border-[var(--dm-border)] bg-white px-4 py-3 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+                />
               </div>
-            ))}
+            </SettingCard>
           </div>
         );
       case "about":
@@ -327,6 +426,19 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 >
                   ×
                 </Button>
+              </div>
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-[18px] bg-[var(--dm-soft)] px-4 py-3">
+                <div className="text-xs font-bold text-[var(--dm-muted-ink)]">
+                  {props.settingsError ?? (props.settingsState === "saved" ? "设置已保存" : "设置变更会写入本机注册表")}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void props.onSaveSettings()}
+                  disabled={props.settingsState === "saving" || props.settingsState === "loading"}
+                  className="h-9 rounded-[14px] bg-[var(--dm-ink)] px-4 text-xs font-black text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+                >
+                  {props.settingsState === "saving" ? "保存中" : "保存"}
+                </button>
               </div>
               {renderSection()}
             </div>

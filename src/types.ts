@@ -72,6 +72,30 @@ export type NetworkRouteConfig = {
   enabled_hosts?: string[];
 };
 
+export type AppSettings = {
+  network_route: NetworkRouteConfig | null;
+  scan_excluded_paths: string[];
+  use_everything: boolean;
+  github_token: string | null;
+  advanced_manifest_url: string | null;
+};
+
+export type InstallHistoryStatus = "completed" | "failed";
+
+export type InstallHistoryRecord = {
+  id: string;
+  job_id: string;
+  client_installation_id: string;
+  client_id: string;
+  version: string;
+  asset_url: string;
+  package_kind: string;
+  status: InstallHistoryStatus;
+  rollback_path: string | null;
+  error: string | null;
+  completed_at: string | null;
+};
+
 export type UpdateAsset = {
   platform: string;
   asset_url: string;

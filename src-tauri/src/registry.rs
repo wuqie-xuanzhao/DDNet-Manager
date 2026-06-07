@@ -1,6 +1,27 @@
-use crate::models::ClientInstallation;
+use crate::models::{AppSettings, ClientInstallation, CompatibilityStatus, InstallHistoryRecord};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
+
+/// 表示一次启动探测写回请求。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchProbeStatus {
+    /// 已观察到目标客户端进程。
+    Verified,
+    /// 启动命令已发出，但限定时间内未观察到进程，不能据此判定失败。
+    Unobserved,
+    /// 启动后进程提前退出。
+    Exited,
+}
+
+/// 表示一次启动探测写回请求。
+pub struct LaunchProbeRecord<'a> {
+    /// 客户端安装记录 ID。
+    pub client_installation_id: &'a str,
+    /// 受控启动探测状态。
+    pub status: LaunchProbeStatus,
+    /// 启动探测结果摘要。
+    pub message: &'a str,
+}
 
 /// 管理 DDNet 兼容客户端安装记录的 SQLite 注册表。
 pub struct ClientRegistry {
@@ -168,6 +189,165 @@ impl ClientRegistry {
             .map_err(|error| format!("failed to remove client installation: {error}"))
     }
 
+    /// 读取应用设置。未保存过设置时返回默认值。
+    pub fn load_app_settings(&self) -> Result<AppSettings, String> {
+        let value = self
+            .conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'settings' LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("failed to query app settings: {error}"))?;
+
+        value
+            .map(|json| {
+                serde_json::from_str(&json)
+                    .map_err(|error| format!("failed to parse app settings: {error}"))
+            })
+            .transpose()
+            .map(|settings| settings.unwrap_or_default())
+    }
+
+    /// 保存应用设置，并覆盖当前运行时使用的配置快照。
+    pub fn save_app_settings(&self, settings: &AppSettings) -> Result<(), String> {
+        let value = serde_json::to_string(settings)
+            .map_err(|error| format!("failed to serialize app settings: {error}"))?;
+        self.conn
+            .execute(
+                "INSERT INTO app_settings (key, value) VALUES ('settings', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![value],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("failed to save app settings: {error}"))
+    }
+
+    /// 记录一次已完成或失败的 Manager-owned 安装事务。
+    pub fn record_install_history(&self, record: &InstallHistoryRecord) -> Result<(), String> {
+        let status = serde_json::to_string(&record.status)
+            .map_err(|error| format!("failed to serialize install status: {error}"))?;
+        self.conn
+            .execute(
+                "INSERT INTO install_history (
+                    id, job_id, client_installation_id, client_id, version, asset_url,
+                    package_kind, status, rollback_path, error, completed_at, record_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                ON CONFLICT(id) DO UPDATE SET
+                    job_id = excluded.job_id,
+                    client_installation_id = excluded.client_installation_id,
+                    client_id = excluded.client_id,
+                    version = excluded.version,
+                    asset_url = excluded.asset_url,
+                    package_kind = excluded.package_kind,
+                    status = excluded.status,
+                    rollback_path = excluded.rollback_path,
+                    error = excluded.error,
+                    completed_at = excluded.completed_at,
+                    record_json = excluded.record_json",
+                params![
+                    record.id,
+                    record.job_id,
+                    record.client_installation_id,
+                    record.client_id,
+                    record.version,
+                    record.asset_url,
+                    record.package_kind,
+                    status,
+                    record.rollback_path,
+                    record.error,
+                    record.completed_at,
+                    serde_json::to_string(record).map_err(|error| {
+                        format!("failed to serialize install history: {error}")
+                    })?
+                ],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("failed to record install history: {error}"))
+    }
+
+    /// 返回指定客户端的安装历史，最新记录排在前面。
+    pub fn list_install_history(
+        &self,
+        client_installation_id: &str,
+    ) -> Result<Vec<InstallHistoryRecord>, String> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT record_json
+                 FROM install_history
+                 WHERE client_installation_id = ?1
+                 ORDER BY completed_at DESC, id DESC",
+            )
+            .map_err(|error| format!("failed to query install history: {error}"))?;
+        let rows = statement
+            .query_map(params![client_installation_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| format!("failed to read install history: {error}"))?;
+        let mut history = Vec::new();
+        for row in rows {
+            let record_json =
+                row.map_err(|error| format!("failed to read install history row: {error}"))?;
+            history.push(
+                serde_json::from_str(&record_json)
+                    .map_err(|error| format!("failed to parse install history: {error}"))?,
+            );
+        }
+        Ok(history)
+    }
+
+    /// 写回一次受控启动探测结果。
+    pub fn record_launch_probe_result(&self, record: LaunchProbeRecord<'_>) -> Result<(), String> {
+        let mut client = self
+            .client_installation_by_id(record.client_installation_id)?
+            .ok_or_else(|| {
+                format!(
+                    "client installation not found: {}",
+                    record.client_installation_id
+                )
+            })?;
+        client.compatibility.launch_verified = record.status == LaunchProbeStatus::Verified;
+        client.compatibility.last_launch_result = Some(record.message.to_string());
+        match record.status {
+            LaunchProbeStatus::Verified => {
+                client.compatibility.status = CompatibilityStatus::Verified;
+                client.compatibility.can_launch = true;
+            }
+            LaunchProbeStatus::Unobserved => {}
+            LaunchProbeStatus::Exited => {
+                client.compatibility.status = CompatibilityStatus::Risky;
+            }
+        }
+        self.upsert_client_installation(&client)
+    }
+
+    /// 按安装记录 ID 读取客户端记录。
+    pub fn client_installation_by_id(
+        &self,
+        id: &str,
+    ) -> Result<Option<ClientInstallation>, String> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT client_json, is_default FROM client_installations WHERE id = ?1 LIMIT 1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .optional()
+            .map_err(|error| format!("failed to query client installation: {error}"))?;
+
+        row.map(|(client_json, is_default)| {
+            let mut client: ClientInstallation = serde_json::from_str(&client_json)
+                .map_err(|error| format!("failed to parse client installation: {error}"))?;
+            client.is_default = is_default;
+            normalize_client_installation(&mut client);
+            Ok(client)
+        })
+        .transpose()
+    }
+
     fn init_schema(&self) -> Result<(), String> {
         self.conn
             .execute_batch(
@@ -195,6 +375,20 @@ impl ClientRegistry {
                     scanned_at TEXT NOT NULL,
                     root TEXT NOT NULL,
                     candidate_count INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS install_history (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    job_id TEXT NOT NULL,
+                    client_installation_id TEXT NOT NULL,
+                    client_id TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    asset_url TEXT NOT NULL,
+                    package_kind TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    rollback_path TEXT,
+                    error TEXT,
+                    completed_at TEXT,
+                    record_json TEXT NOT NULL
                 );",
             )
             .map_err(|error| format!("failed to initialize registry schema: {error}"))

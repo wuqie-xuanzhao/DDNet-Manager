@@ -1,6 +1,9 @@
 use crate::models::{
-    ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
+    AppSettings, ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource,
+    ClientInstallation, CompatibilityStatus, InstallHistoryRecord, InstallHistoryStatus,
+    NetworkRouteConfig, NetworkRouteMode,
 };
+use crate::registry::LaunchProbeStatus;
 
 fn test_client(id: &str, is_default: bool) -> ClientInstallation {
     ClientInstallation {
@@ -129,4 +132,127 @@ fn registry_normalizes_legacy_ddnet_vanilla_records() {
         .expect("旧记录应读取成功");
 
     assert_eq!(clients[0].client_id, "ddnet");
+}
+
+#[test]
+fn registry_persists_app_settings() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
+    let settings = AppSettings {
+        network_route: Some(NetworkRouteConfig {
+            mode: NetworkRouteMode::ProxyPrefix,
+            proxy_prefix_url: Some("https://proxy.example/".to_string()),
+            mirror_template: None,
+            enabled_hosts: vec!["proxy.example".to_string()],
+        }),
+        scan_excluded_paths: vec!["D:/Archive".to_string()],
+        use_everything: true,
+        github_token: Some("ghp_test".to_string()),
+        advanced_manifest_url: Some(
+            "https://gitee.com/example/manifest/raw/main/ddnet.json".to_string(),
+        ),
+    };
+
+    registry
+        .save_app_settings(&settings)
+        .expect("设置应持久化成功");
+    let reloaded = crate::registry::ClientRegistry::open(&db_path)
+        .expect("注册表应重新打开成功")
+        .load_app_settings()
+        .expect("设置应读取成功");
+
+    assert_eq!(reloaded, settings);
+}
+
+#[test]
+fn registry_records_install_history() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
+    let record = InstallHistoryRecord {
+        id: "install-download-1".to_string(),
+        job_id: "download-1".to_string(),
+        client_installation_id: "qmclient-main".to_string(),
+        client_id: "qmclient".to_string(),
+        version: "2.62.4".to_string(),
+        asset_url:
+            "https://github.com/wxj881027/QmClient/releases/download/v2.62.4/QmClient-windows.zip"
+                .to_string(),
+        package_kind: "zip".to_string(),
+        status: InstallHistoryStatus::Completed,
+        rollback_path: Some("D:/Games/QmClient.rollback".to_string()),
+        error: None,
+        completed_at: Some("2026-06-07T12:00:00Z".to_string()),
+    };
+
+    registry
+        .record_install_history(&record)
+        .expect("安装历史应持久化成功");
+    let history = registry
+        .list_install_history("qmclient-main")
+        .expect("安装历史应读取成功");
+
+    assert_eq!(history, vec![record]);
+}
+
+#[test]
+fn registry_updates_launch_probe_result_on_client_json() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
+
+    registry
+        .upsert_client_installation(&test_client("qmclient-main", true))
+        .expect("客户端应保存成功");
+    registry
+        .record_launch_probe_result(crate::registry::LaunchProbeRecord {
+            client_installation_id: "qmclient-main",
+            status: LaunchProbeStatus::Verified,
+            message: "进程已启动",
+        })
+        .expect("启动探测结果应写回成功");
+
+    let client = registry
+        .get_default_client()
+        .expect("默认客户端应读取成功")
+        .expect("默认客户端应存在");
+
+    assert_eq!(client.compatibility.status, CompatibilityStatus::Verified);
+    assert!(client.compatibility.launch_verified);
+    assert_eq!(
+        client.compatibility.last_launch_result.as_deref(),
+        Some("进程已启动")
+    );
+}
+
+#[test]
+fn registry_records_unobserved_launch_without_downgrading_status() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
+
+    registry
+        .upsert_client_installation(&test_client("qmclient-main", true))
+        .expect("客户端应保存成功");
+    registry
+        .record_launch_probe_result(crate::registry::LaunchProbeRecord {
+            client_installation_id: "qmclient-main",
+            status: LaunchProbeStatus::Unobserved,
+            message: "未在限定时间内观察到进程",
+        })
+        .expect("启动探测结果应写回成功");
+
+    let client = registry
+        .get_default_client()
+        .expect("默认客户端应读取成功")
+        .expect("默认客户端应存在");
+
+    assert_eq!(client.compatibility.status, CompatibilityStatus::Unknown);
+    assert!(!client.compatibility.launch_verified);
+    assert!(client.compatibility.can_launch);
+    assert_eq!(
+        client.compatibility.last_launch_result.as_deref(),
+        Some("未在限定时间内观察到进程")
+    );
 }

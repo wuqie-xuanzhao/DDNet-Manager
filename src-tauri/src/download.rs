@@ -878,6 +878,16 @@ fn failed_restore_dir_for(install_dir: &Path) -> PathBuf {
 }
 
 impl PackageKind {
+    /// 返回安装包类型用于持久化和诊断的稳定名称。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PackageKind::Zip => "zip",
+            PackageKind::TarXz => "tar.xz",
+            PackageKind::Dmg => "dmg",
+            PackageKind::Unknown => "unknown",
+        }
+    }
+
     fn cache_suffix(self) -> &'static str {
         match self {
             PackageKind::Zip => ".zip",

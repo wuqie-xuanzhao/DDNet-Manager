@@ -70,6 +70,9 @@ fn main() {
             commands::set_default_client,
             commands::list_client_installations,
             commands::get_default_client,
+            commands::load_app_settings,
+            commands::save_app_settings,
+            commands::list_install_history,
             commands::launch_client,
             commands::launch_default_client,
             commands::is_client_running,
@@ -78,10 +81,7 @@ fn main() {
             commands::start_update_download,
             commands::cancel_download,
             commands::get_download_job,
-            commands::install_downloaded_update,
-            commands::analyze_cfg_file,
-            commands::load_workshop_binds,
-            commands::render_manager_bind_cfg
+            commands::install_downloaded_update
         ])
         .run(tauri::generate_context!());
 

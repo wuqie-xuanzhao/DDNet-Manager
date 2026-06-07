@@ -1,11 +1,15 @@
 use crate::download::DownloadManager;
 use crate::models::{
-    CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck, DownloadJob,
-    DownloadJobStatus, NetworkRouteConfig, ScanClientInstallationsOptions,
-    StartUpdateDownloadRequest, UpdateAction, UpsertClientInstallationRequest,
+    AppSettings, CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
+    DownloadJob, DownloadJobStatus, InstallHistoryRecord, InstallHistoryStatus, NetworkRouteConfig,
+    ScanClientInstallationsOptions, StartUpdateDownloadRequest, UpdateAction,
+    UpsertClientInstallationRequest,
 };
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 type DownloadManagerState<'a> = State<'a, DownloadManager>;
 
@@ -28,6 +32,14 @@ struct DownloadTaskContext {
 struct PreparedUpdateDownload {
     job: DownloadJob,
     enabled_route_hosts: Vec<String>,
+}
+
+struct InstallHistoryInput<'a> {
+    job: &'a DownloadJob,
+    client: &'a ClientInstallation,
+    rollback_dir: &'a Path,
+    status: InstallHistoryStatus,
+    error: Option<String>,
 }
 
 /// 验证用户选择的客户端目录，并返回识别出的安装信息。
@@ -58,12 +70,18 @@ pub fn scan_client_installations(
                 .map(|client| PathBuf::from(client.install_dir)),
         );
     }
+    let settings = registry_for_app(&app)?.load_app_settings()?;
 
     crate::client_scan::scan_client_installations(&crate::client_scan::ScanOptions {
         roots,
         include_saved_paths: options.include_saved_paths,
         deep: options.deep,
-        use_everything,
+        use_everything: use_everything && settings.use_everything,
+        excluded_paths: settings
+            .scan_excluded_paths
+            .iter()
+            .map(PathBuf::from)
+            .collect(),
     })
 }
 
@@ -112,7 +130,8 @@ pub fn launch_client(path: String) -> Result<(), String> {
 /// 重新验证并启动默认客户端。
 #[tauri::command]
 pub fn launch_default_client(app: AppHandle) -> Result<(), String> {
-    let client = registry_for_app(&app)?
+    let registry = registry_for_app(&app)?;
+    let client = registry
         .get_default_client()?
         .ok_or_else(|| "default client is not configured".to_string())?;
     let verified = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
@@ -126,7 +145,38 @@ pub fn launch_default_client(app: AppHandle) -> Result<(), String> {
         return Err("default client is not compatible with this machine".to_string());
     }
 
-    crate::process::launch_executable(&verified.executable_path)
+    let probe = crate::process::launch_executable_with_probe(
+        &verified.executable_path,
+        Duration::from_secs(2),
+    )?;
+    registry.record_launch_probe_result(crate::registry::LaunchProbeRecord {
+        client_installation_id: &client.id,
+        status: probe.status,
+        message: &probe.message,
+    })?;
+    Ok(())
+}
+
+/// 读取 MVP 应用设置。
+#[tauri::command]
+pub fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
+    registry_for_app(&app)?.load_app_settings()
+}
+
+/// 保存 MVP 应用设置，并立即成为后续后端命令使用的配置。
+#[tauri::command]
+pub fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
+    registry_for_app(&app)?.save_app_settings(&settings)?;
+    Ok(settings)
+}
+
+/// 读取指定客户端的安装历史。
+#[tauri::command]
+pub fn list_install_history(
+    app: AppHandle,
+    client_installation_id: String,
+) -> Result<Vec<InstallHistoryRecord>, String> {
+    registry_for_app(&app)?.list_install_history(&client_installation_id)
 }
 
 /// 判断指定客户端可执行文件是否正在运行。
@@ -350,7 +400,13 @@ pub fn install_downloaded_update(
     }
 
     let registry = registry_for_app(&app)?;
-    let mut client = load_install_target(&registry, &job)?;
+    let mut client = match load_install_target(&registry, &job) {
+        Ok(client) => client,
+        Err(error) => {
+            record_install_prepare_failure(&registry, &job, &error);
+            return Err(error);
+        }
+    };
     run_install_transaction(
         InstallContext {
             app: &app,
@@ -361,6 +417,27 @@ pub fn install_downloaded_update(
         },
         &mut client,
     )
+}
+
+fn record_install_prepare_failure(
+    registry: &crate::registry::ClientRegistry,
+    job: &DownloadJob,
+    error: &str,
+) {
+    let Ok(Some(client)) = registry.client_installation_by_id(&job.client_installation_id) else {
+        return;
+    };
+    let rollback_dir = crate::download::rollback_dir_for(
+        Path::new(&client.install_dir),
+        &format!("install-{}", job.id),
+    );
+    let _ = registry.record_install_history(&install_history_record(InstallHistoryInput {
+        job,
+        client: &client,
+        rollback_dir: &rollback_dir,
+        status: InstallHistoryStatus::Failed,
+        error: Some(error.to_string()),
+    }));
 }
 
 fn load_install_target(
@@ -465,6 +542,15 @@ fn finish_install_success(
             ),
         );
     }
+    context
+        .registry
+        .record_install_history(&install_history_record(InstallHistoryInput {
+            job: context.job,
+            client,
+            rollback_dir,
+            status: InstallHistoryStatus::Completed,
+            error: None,
+        }))?;
     let job = context.manager.update(context.job_id, |job| {
         job.status = DownloadJobStatus::Completed;
         job.error = None;
@@ -480,6 +566,21 @@ fn finish_install_failure(
     context: InstallContext<'_>,
     error: String,
 ) -> Result<DownloadJob, String> {
+    if let Ok(client) = load_install_target(context.registry, context.job) {
+        let rollback_dir = crate::download::rollback_dir_for(
+            Path::new(&client.install_dir),
+            &format!("install-{}", context.job.id),
+        );
+        let _ = context
+            .registry
+            .record_install_history(&install_history_record(InstallHistoryInput {
+                job: context.job,
+                client: &client,
+                rollback_dir: &rollback_dir,
+                status: InstallHistoryStatus::Failed,
+                error: Some(error.clone()),
+            }));
+    }
     let job = context.manager.update(context.job_id, |job| {
         job.status = DownloadJobStatus::Failed;
         job.error = Some(error);
@@ -491,23 +592,26 @@ fn finish_install_failure(
     Ok(job)
 }
 
-/// 读取并分析指定 cfg 文件中的 bind、unbind、exec 与按键冲突信息。
-#[tauri::command]
-pub fn analyze_cfg_file(path: String) -> Result<crate::models::CfgAnalysis, String> {
-    crate::cfg::analyze_cfg_file(Path::new(&path))
-}
-
-/// 从指定 URL 加载 Workshop 公开 bind 列表。
-#[tauri::command]
-pub async fn load_workshop_binds(url: String) -> Result<Vec<crate::models::WorkshopBind>, String> {
-    crate::workshop::fetch_workshop_binds(&url).await
-}
-
-/// 渲染 DDNet Manager 专用的 bind 配置区块文本。
-#[tauri::command]
-pub fn render_manager_bind_cfg(commands: Vec<String>) -> Result<String, String> {
-    crate::file_tx::validate_manager_commands(&commands)?;
-    Ok(crate::file_tx::render_manager_cfg(&commands))
+fn install_history_record(input: InstallHistoryInput<'_>) -> InstallHistoryRecord {
+    let completed_at = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .ok()
+        .or_else(|| Some("1970-01-01T00:00:00Z".to_string()));
+    InstallHistoryRecord {
+        id: format!("install-{}", input.job.id),
+        job_id: input.job.id.clone(),
+        client_installation_id: input.client.id.clone(),
+        client_id: input.job.client_id.clone(),
+        version: input.job.version.clone(),
+        asset_url: input.job.asset_url.clone(),
+        package_kind: crate::download::package_kind_for_asset_url(&input.job.asset_url)
+            .as_str()
+            .to_string(),
+        status: input.status,
+        rollback_path: Some(input.rollback_dir.to_string_lossy().replace('\\', "/")),
+        error: input.error,
+        completed_at,
+    }
 }
 
 fn registry_for_app(app: &AppHandle) -> Result<crate::registry::ClientRegistry, String> {

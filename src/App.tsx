@@ -2,21 +2,20 @@ import { startTransition, useEffect, useRef, useState, type ReactNode } from "re
 import { open } from "@tauri-apps/plugin-dialog";
 import ddnetArt from "./assets/ddnet2.svg";
 import ddnetLogo from "./assets/logo.svg";
-import { BindsPanel } from "./components/binds/BindsPanel";
 import { ClientManager } from "./components/clients/ClientManager";
 import { GamesPanel, type ClientType, type ClientTypeId } from "./components/games/GamesPanel";
 import { GameIcon, type GameIconName } from "./components/icons/GameIcon";
 import { TitleBar } from "./components/layout/TitleBar";
 import { LaunchPanel } from "./components/launch/LaunchPanel";
-import { ResourcePanel } from "./components/resources/ResourcePanel";
 import { SettingsDialog, type SettingsSectionId } from "./components/settings/SettingsDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
 import { UpdatePanel } from "./components/update/UpdatePanel";
-import { getDefaultClient, launchDefaultClient, upsertClientInstallation, validateClientDir } from "./lib/tauri";
-import type { ClientHealth, ClientInstallation, LauncherState } from "./types";
+import { getDefaultClient, launchDefaultClient, loadAppSettings, saveAppSettings, upsertClientInstallation, validateClientDir } from "./lib/tauri";
+import type { AppSettings, ClientHealth, ClientInstallation, LauncherState } from "./types";
 
-type AppView = "launch" | "games" | "update" | "resources" | "binds";
+type AppView = "launch" | "games" | "update";
 type BackgroundMode = "default" | "custom";
+type SettingsSaveState = "idle" | "loading" | "saving" | "saved" | "error";
 
 type NavItem = {
   id: AppView;
@@ -111,6 +110,14 @@ const clientTypes: ClientType[] = [
     accent: "#4f5663"
   }
 ];
+
+const defaultAppSettings: AppSettings = {
+  network_route: null,
+  scan_excluded_paths: [],
+  use_everything: false,
+  github_token: null,
+  advanced_manifest_url: null
+};
 
 function getUpdateRows(selectedClient: ClientInstallation | null) {
   return [
@@ -300,6 +307,9 @@ export default function App() {
   const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("default");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("general");
+  const [appSettings, setAppSettings] = useState<AppSettings>(defaultAppSettings);
+  const [settingsState, setSettingsState] = useState<SettingsSaveState>("idle");
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const validationRequestId = useRef(0);
 
   const selectedClientType = clientTypes.find((client) => client.id === selectedClientTypeId) ?? clientTypes[0];
@@ -352,6 +362,32 @@ export default function App() {
           return;
         }
         setErrorMessage(error instanceof Error ? error.message : String(error));
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    setSettingsState("loading");
+
+    void loadAppSettings()
+      .then((settings) => {
+        if (!alive) {
+          return;
+        }
+        setAppSettings(settings);
+        setSettingsState("idle");
+        setSettingsError(null);
+      })
+      .catch((error) => {
+        if (!alive) {
+          return;
+        }
+        setSettingsState("error");
+        setSettingsError(error instanceof Error ? error.message : String(error));
       });
 
     return () => {
@@ -512,6 +548,24 @@ export default function App() {
     startTransition(() => setActiveSettingsSection(section));
   };
 
+  const handleSettingsChange = (settings: AppSettings) => {
+    setAppSettings(settings);
+    setSettingsState("idle");
+    setSettingsError(null);
+  };
+
+  const handleSaveSettings = async () => {
+    setSettingsState("saving");
+    setSettingsError(null);
+    try {
+      setAppSettings(await saveAppSettings(appSettings));
+      setSettingsState("saved");
+    } catch (error) {
+      setSettingsState("error");
+      setSettingsError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const selectClientType = (id: ClientTypeId) => {
     if (id === selectedClientTypeId) {
       return;
@@ -543,10 +597,6 @@ export default function App() {
         );
       case "update":
         return <UpdatePanel />;
-      case "resources":
-        return <ResourcePanel />;
-      case "binds":
-        return <BindsPanel />;
       case "launch":
         return (
           <LaunchPanel
@@ -583,8 +633,13 @@ export default function App() {
         selectedClientType={selectedClientType}
         backgroundMode={backgroundMode}
         errorMessage={errorMessage}
+        settings={appSettings}
+        settingsState={settingsState}
+        settingsError={settingsError}
         onClose={() => setIsSettingsOpen(false)}
         onSectionChange={changeSettingsSection}
+        onSettingsChange={handleSettingsChange}
+        onSaveSettings={handleSaveSettings}
         onClientPathChange={handleClientPathChange}
         onBrowse={handleBrowse}
         onValidate={handleValidate}
