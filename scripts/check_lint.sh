@@ -353,6 +353,9 @@ hdr "=== C4. unwrap/expect 使用 (非测试模块 → WARN) ==="
 unwrap_warn=0
 while IFS= read -r f; do
     rel="${f#$PROJECT_ROOT/}"
+    if [[ "$rel" == src-tauri/src/test/* ]]; then
+        continue
+    fi
     hits=$(awk '
     function clean(line) {
         gsub(/\/\/.*$/, "", line)

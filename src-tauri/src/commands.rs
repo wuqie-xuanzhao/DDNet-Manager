@@ -411,24 +411,29 @@ fn run_install_transaction(
         .emit_to("main", "install-progress", context.job_id)
         .map_err(|error| format!("failed to emit install-progress: {error}"))?;
 
-    let install_result = crate::download::auto_install_guard(
-        crate::download::package_kind_for_asset_url(&context.job.asset_url),
-    )
-    .and_then(|_| {
-        crate::download::verify_downloaded_file(&cache_path, &context.job.sha256, context.job.size)
-    })
-    .and_then(|_| crate::download::extract_zip_to_staging(&cache_path, &staging_dir))
-    .and_then(|_| crate::download::find_staged_client_dir(&staging_dir))
-    .and_then(|staged_client_dir| {
-        if crate::process::is_client_running(Path::new(&client.executable_path))? {
-            return Err("target client is running; close it before install".to_string());
-        }
-        crate::download::install_staged_client(
-            &staged_client_dir,
-            Path::new(&client.install_dir),
-            &rollback_dir,
-        )
-    });
+    let package_kind = crate::download::package_kind_for_asset_url(&context.job.asset_url);
+    let install_result = crate::download::auto_install_guard(package_kind)
+        .and_then(|_| {
+            crate::download::verify_downloaded_file(
+                &cache_path,
+                &context.job.sha256,
+                context.job.size,
+            )
+        })
+        .and_then(|_| {
+            crate::download::extract_package_to_staging(&cache_path, &staging_dir, package_kind)
+        })
+        .and_then(|_| crate::download::find_staged_client_dir(&staging_dir))
+        .and_then(|staged_client_dir| {
+            if crate::process::is_client_running(Path::new(&client.executable_path))? {
+                return Err("target client is running; close it before install".to_string());
+            }
+            crate::download::install_staged_client(
+                &staged_client_dir,
+                Path::new(&client.install_dir),
+                &rollback_dir,
+            )
+        });
 
     match install_result {
         Ok(()) => {
@@ -523,4 +528,5 @@ fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[cfg(test)]
+#[path = "test/commands.rs"]
 mod tests;

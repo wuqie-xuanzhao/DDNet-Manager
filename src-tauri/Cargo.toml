@@ -27,6 +27,8 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 time = { version = "0.3.44", features = ["formatting"] }
 zip = "6.0.0"
 sysinfo = "0.39.3"
+tar = "0.4.44"
+xz2 = "0.1.7"
 
 [build-dependencies]
 tauri-build = { version = "2.6.2", features = [] }

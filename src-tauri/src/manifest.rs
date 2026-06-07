@@ -12,6 +12,7 @@ const TRUSTED_ASSET_HOSTS: &[&str] = &[
     "github.com",
     "objects.githubusercontent.com",
     "raw.githubusercontent.com",
+    "ddnet.org",
 ];
 
 /// 解析更新 manifest JSON，并校验基础结构约束。
@@ -374,4 +375,5 @@ async fn read_limited_manifest_response(mut response: reqwest::Response) -> Resu
 }
 
 #[cfg(test)]
+#[path = "test/manifest.rs"]
 mod tests;

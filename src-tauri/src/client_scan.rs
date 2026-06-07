@@ -597,4 +597,5 @@ fn current_utc_rfc3339() -> String {
 }
 
 #[cfg(test)]
+#[path = "test/client_scan.rs"]
 mod tests;

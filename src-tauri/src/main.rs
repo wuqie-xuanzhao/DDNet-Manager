@@ -21,6 +21,9 @@ pub mod update_source;
 /// GitHub Release 更新源适配器。
 pub mod github_release;
 
+/// DDNet 官方下载页与 sha256sums 适配器。
+pub mod ddnet_source;
+
 /// cfg bind 解析能力。
 pub mod cfg;
 

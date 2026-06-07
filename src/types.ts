@@ -99,7 +99,12 @@ export type ClientUpdateCheck = {
   latest_version: string;
   asset: UpdateAsset;
   needs_update: boolean;
-  source_kind: "github_release" | "website" | "manifest" | "none";
+  source_kind:
+    | "github_release"
+    | "website"
+    | "ddnet_official"
+    | "manifest"
+    | "none";
   action: "download" | "open_url" | "none";
   action_url: string | null;
   message: string | null;

@@ -91,20 +91,20 @@ async fn check_catalog_update(
                 }
             }
         }
-        crate::client_catalog::UpdateSourceDescriptor::DdnetOfficial => Ok(Some(manual_update(
-            ManualUpdateInput {
+        crate::client_catalog::UpdateSourceDescriptor::DdnetOfficial => {
+            let Some(asset) = crate::ddnet_source::check_official_download(&input.platform).await?
+            else {
+                return Ok(None);
+            };
+            Ok(Some(download_update(DownloadUpdateInput {
                 client_id: "ddnet".to_string(),
                 channel: input.request.channel.clone(),
-                latest_version: String::new(),
-                platform: input.platform,
-                source_kind: UpdateSourceKind::Website,
-                action_url: input.entry.upstream_url.map(str::to_string),
-                message:
-                    "DDNet 官方二进制更新源需要解析官网 sha256sums.txt，当前请打开官网下载页手动处理。"
-                        .to_string(),
-            },
-            input.current_version,
-        ))),
+                current_version: input.current_version,
+                latest_version: asset.version.clone(),
+                asset: asset.into(),
+                source_kind: UpdateSourceKind::DdnetOfficial,
+            })))
+        }
         crate::client_catalog::UpdateSourceDescriptor::Website { url } => Ok(Some(manual_update(
             ManualUpdateInput {
                 client_id: input.entry.client_id.to_string(),
@@ -196,13 +196,21 @@ fn empty_asset(platform: &str) -> UpdateAsset {
 }
 
 fn current_platform() -> String {
-    if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
-        "windows-x86_64".to_string()
-    } else if cfg!(target_os = "windows") {
-        "windows".to_string()
-    } else if cfg!(target_os = "macos") {
-        "macos".to_string()
-    } else {
-        std::env::consts::OS.to_string()
+    platform_from_os_arch(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn platform_from_os_arch(os: &str, arch: &str) -> String {
+    match os {
+        "windows" if arch == "x86_64" => "windows-x86_64".to_string(),
+        "windows" if arch == "aarch64" => "windows-arm64".to_string(),
+        "windows" if arch == "x86" => "windows-x86".to_string(),
+        "windows" => "windows".to_string(),
+        "macos" => "macos".to_string(),
+        "linux" => format!("linux-{arch}"),
+        other => other.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "test/update_source.rs"]
+mod tests;
