@@ -127,6 +127,35 @@ fn build_manifest_url_rejects_localhost_and_private_hosts() {
 }
 
 #[test]
+fn build_manifest_url_allows_local_smoke_hosts_when_enabled() {
+    crate::local_smoke::with_local_smoke_test_env(true, || {
+        for url in [
+            "http://localhost/manifest.json",
+            "https://localhost/manifest.json",
+            "http://127.0.0.1/manifest.json",
+            "https://10.0.0.1/manifest.json",
+            "http://[::1]/manifest.json",
+            "https://[fc00::1]/manifest.json",
+            "https://169.254.1.1/manifest.json",
+        ] {
+            let parsed =
+                build_manifest_url(url).expect("显式开启 local smoke 后应允许本地 manifest 地址");
+            assert_eq!(parsed.as_str(), url);
+        }
+    });
+}
+
+#[test]
+fn build_manifest_url_still_rejects_public_http_when_local_smoke_enabled() {
+    crate::local_smoke::with_local_smoke_test_env(true, || {
+        let error = build_manifest_url("http://example.com/manifest.json")
+            .expect_err("local smoke 开关不应放通公网 HTTP manifest 地址");
+
+        assert_eq!(error, "manifest url must use https");
+    });
+}
+
+#[test]
 fn build_manifest_url_with_route_rejects_ambiguous_numeric_hosts_even_when_enabled() {
     for host in ["127.1", "2130706433", "0177.0.0.1"] {
         let route = NetworkRouteConfig {
@@ -238,6 +267,21 @@ fn build_asset_url_with_proxy_prefix_uses_enabled_route_host() {
             url.as_str(),
             "https://proxy.invalid/proxy/https%3A%2F%2Fgithub.com%2Fddnet%2Fddnet%2Freleases%2Fdownload%2Fv1%2Fqmclient.zip"
         );
+}
+
+#[test]
+fn build_asset_url_allows_local_smoke_hosts_when_enabled() {
+    crate::local_smoke::with_local_smoke_test_env(true, || {
+        for url in [
+            "http://127.0.0.1/qmclient.zip",
+            "https://localhost/qmclient.zip",
+            "http://[::1]/qmclient.zip",
+        ] {
+            let parsed = build_asset_url_with_route(url, None)
+                .expect("显式开启 local smoke 后应允许本地 asset 地址");
+            assert_eq!(parsed.as_str(), url);
+        }
+    });
 }
 
 #[test]

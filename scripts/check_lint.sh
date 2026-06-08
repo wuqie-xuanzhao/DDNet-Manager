@@ -14,8 +14,20 @@ RUST_SRC_DIR="$PROJECT_ROOT/src-tauri/src"
 CARGO_MANIFEST="$PROJECT_ROOT/src-tauri/Cargo.toml"
 CARGO_LOCK="$PROJECT_ROOT/src-tauri/Cargo.lock"
 
-MAX_FILE_LINES=600
-HARD_MAX_FILE_LINES=1000
+PLACEHOLDER_PATTERN="$(
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s' \
+        'TO''DO' \
+        'FIX''ME' \
+        'T''BD' \
+        '待''实现' \
+        '未''实现' \
+        '临时''实现' \
+        'to''do!\(' \
+        'un''implemented!\(' \
+        'panic!\("TO''DO'
+)"
+MAX_RUST_FILE_LINES=600
+HARD_MAX_RUST_FILE_LINES=1000
 MAX_FUNCTION_LINES=80
 MAX_FUNCTION_PARAMS=4
 
@@ -113,13 +125,20 @@ all_source_for_placeholder_scan() {
         git diff --name-only "$DIFF_REF" 2>/dev/null |
             while IFS= read -r f; do
                 [[ -f "$PROJECT_ROOT/$f" ]] && printf '%s\n' "$PROJECT_ROOT/$f"
-            done | grep -E '\.(rs|ts|tsx|js|jsx)$' || true
+            done | grep -E '(\.(rs|ts|tsx|js|jsx|sh|ps1|yml|yaml|json)$|(^|/)Makefile$)' || true
     else
-        find "$PROJECT_ROOT/src" "$PROJECT_ROOT/src-tauri/src" \
+        scan_dirs=()
+        for dir in "$PROJECT_ROOT/src" "$PROJECT_ROOT/src-tauri/src" "$PROJECT_ROOT/scripts" "$PROJECT_ROOT/.github"; do
+            [[ -d "$dir" ]] && scan_dirs+=("$dir")
+        done
+        find "${scan_dirs[@]}" \
             -type f \
-            \( -name '*.rs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' \) \
+            \( -name '*.rs' -o -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.sh' -o -name '*.ps1' -o -name '*.yml' -o -name '*.yaml' -o -name '*.json' \) \
             -not -path '*/target/*' \
-            -not -path '*/dist/*'
+            -not -path '*/dist/*' \
+            -not -path '*/node_modules/*'
+        find "$PROJECT_ROOT" -maxdepth 1 -type f \
+            \( -name '*.ts' -o -name '*.js' -o -name '*.json' -o -name 'Makefile' \)
     fi
 }
 
@@ -245,23 +264,41 @@ else
     fail "TypeScript 类型检查存在错误"
 fi
 
+hdr "=== B3. 前端单元测试 (Vitest) ==="
+frontend_test_log="$(make_temp)"
+if (cd "$PROJECT_ROOT" && "$BUN_BIN" run test) >"$frontend_test_log" 2>&1; then
+    pass "前端单元测试全部通过"
+else
+    show_log_tail "$frontend_test_log" 80
+    fail "前端单元测试存在失败"
+fi
+
+hdr "=== B4. 前端 ESLint ==="
+frontend_lint_log="$(make_temp)"
+if (cd "$PROJECT_ROOT" && "$BUN_BIN" run lint) >"$frontend_lint_log" 2>&1; then
+    pass "前端 ESLint 零告警"
+else
+    show_log_tail "$frontend_lint_log" 80
+    fail "前端 ESLint 存在告警或错误"
+fi
+
 hdr "=== C 组：Rust 结构性扫描 ==="
 
-hdr "=== C1. 单文件行数 (WARN > $MAX_FILE_LINES | FAIL >= $HARD_MAX_FILE_LINES) ==="
+hdr "=== C1. Rust 单文件行数 (WARN > $MAX_RUST_FILE_LINES | FAIL >= $HARD_MAX_RUST_FILE_LINES) ==="
 oversized=0
 while IFS= read -r f; do
     lines=$(wc -l < "$f")
     rel="${f#$PROJECT_ROOT/}"
-    if (( lines >= HARD_MAX_FILE_LINES )); then
-        fail "$rel — ${lines} 行 (>= ${HARD_MAX_FILE_LINES})"
+    if (( lines >= HARD_MAX_RUST_FILE_LINES )); then
+        fail "$rel — ${lines} 行 (>= ${HARD_MAX_RUST_FILE_LINES})"
         ((oversized++)) || true
-    elif (( lines > MAX_FILE_LINES )); then
-        warn "$rel — ${lines} 行 (> ${MAX_FILE_LINES})"
+    elif (( lines > MAX_RUST_FILE_LINES )); then
+        warn "$rel — ${lines} 行 (> ${MAX_RUST_FILE_LINES})"
         ((oversized++)) || true
     fi
 done < <(all_rs)
 if (( oversized == 0 )); then
-    pass "所有 Rust 文件 <= ${MAX_FILE_LINES} 行"
+    pass "所有 Rust 文件 <= ${MAX_RUST_FILE_LINES} 行"
 fi
 
 hdr "=== C2. 单函数行数 (> $MAX_FUNCTION_LINES 行 → WARN) ==="
@@ -548,15 +585,15 @@ hdr "=== D 组：AI 占位符与假实现扫描 ==="
 placeholder_fail=0
 while IFS= read -r f; do
     rel="${f#$PROJECT_ROOT/}"
-    hits=$(grep -n -I -E 'TODO|FIXME|TBD|待实现|未实现|临时实现|todo!\(|unimplemented!\(|panic!\("TODO' "$f" 2>/dev/null || true)
+    hits=$(grep -n -I -E "$PLACEHOLDER_PATTERN" "$f" 2>/dev/null || true)
     if [[ -n "$hits" ]]; then
-        fail "$rel — 发现占位符/假实现标记:"
+        fail "$rel — 发现占位标记或假实现:"
         echo "$hits" | sed 's/^/      /'
         ((placeholder_fail++)) || true
     fi
 done < <(all_source_for_placeholder_scan)
 if (( placeholder_fail == 0 )); then
-    pass "未发现 TODO/FIXME/TBD 等占位符或假实现标记"
+    pass "未发现占位标记或假实现"
 fi
 
 hdr "=== 汇总 ==="

@@ -3,7 +3,8 @@ import { useEffect, useRef } from "react";
 import { GameIcon, type GameIconName } from "@/components/icons/GameIcon";
 import { Button } from "@/components/ui/button";
 import type { ClientType } from "@/components/games/GamesPanel";
-import type { AppSettings, LauncherState, NetworkRouteMode } from "@/types";
+import { networkRouteUrl, updateNetworkRoute } from "@/lib/settings";
+import type { AppSettings, LauncherState } from "@/types";
 
 export type SettingsSectionId = "general" | "download" | "appearance" | "tools" | "about";
 
@@ -16,6 +17,7 @@ type SettingsSection = {
 type SettingsDialogProps = {
   open: boolean;
   activeSection: SettingsSectionId;
+  tauriRuntime: boolean;
   launcherState: LauncherState;
   clientPath: string;
   selectedClientType: ClientType;
@@ -73,40 +75,11 @@ function TogglePill(props: { checked: boolean; label: string }) {
   );
 }
 
-function routeHostFromUrl(value: string) {
-  try {
-    return new URL(value).hostname;
-  } catch {
-    return "";
-  }
-}
-
-function networkRouteUrl(settings: AppSettings) {
-  return settings.network_route?.proxy_prefix_url ?? settings.network_route?.mirror_template ?? "";
-}
-
-function updateNetworkRoute(settings: AppSettings, mode: NetworkRouteMode, rawUrl: string): AppSettings {
-  const trimmedUrl = rawUrl.trim();
-  if (mode === "direct") {
-    return { ...settings, network_route: null };
-  }
-
-  const host = routeHostFromUrl(trimmedUrl);
-  return {
-    ...settings,
-    network_route: {
-      mode,
-      proxy_prefix_url: mode === "proxy_prefix" ? trimmedUrl : null,
-      mirror_template: mode === "mirror_template" ? trimmedUrl : null,
-      enabled_hosts: host ? [host] : []
-    }
-  };
-}
-
 export function SettingsDialog(props: SettingsDialogProps) {
   const dialogRef = useRef<HTMLElement>(null);
   const { onClose, open } = props;
-  const canValidate = props.clientPath.trim().length > 0 && props.launcherState !== "validating" && props.launcherState !== "launching";
+  const canBrowse = props.tauriRuntime;
+  const canValidate = canBrowse && props.clientPath.trim().length > 0 && props.launcherState !== "validating" && props.launcherState !== "launching";
 
   useEffect(() => {
     if (!open) {
@@ -170,6 +143,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
             <SettingCard title="客户端">
               <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                 <input
+                  aria-label="客户端安装目录"
                   value={props.clientPath}
                   onChange={(event) => props.onClientPathChange(event.target.value)}
                   placeholder="C:/Games/QmClient"
@@ -178,7 +152,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 <button
                   type="button"
                   onClick={() => void props.onBrowse()}
-                  className="h-12 rounded-[18px] border border-[var(--dm-border)] bg-white px-5 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 hover:bg-[var(--dm-paper)]"
+                  disabled={!canBrowse}
+                  className="h-12 rounded-[18px] border border-[var(--dm-border)] bg-white px-5 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 hover:bg-[var(--dm-paper)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:bg-white"
                 >
                   定位
                 </button>
@@ -199,8 +174,34 @@ export function SettingsDialog(props: SettingsDialogProps) {
             </SettingCard>
             <SettingCard title="启动">
               <div className="grid gap-3 md:grid-cols-2">
-                <TogglePill checked label="启动后关闭面板" />
-                <TogglePill checked={false} label="自动检查更新" />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={props.settings.close_panel_after_launch}
+                  onClick={() =>
+                    props.onSettingsChange({
+                      ...props.settings,
+                      close_panel_after_launch: !props.settings.close_panel_after_launch
+                    })
+                  }
+                  className="text-left"
+                >
+                  <TogglePill checked={props.settings.close_panel_after_launch} label="启动后关闭面板" />
+                </button>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={props.settings.auto_check_updates}
+                  onClick={() =>
+                    props.onSettingsChange({
+                      ...props.settings,
+                      auto_check_updates: !props.settings.auto_check_updates
+                    })
+                  }
+                  className="text-left"
+                >
+                  <TogglePill checked={props.settings.auto_check_updates} label="自动检查更新" />
+                </button>
               </div>
             </SettingCard>
           </div>
@@ -231,6 +232,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 </div>
                 {(props.settings.network_route?.mode ?? "direct") !== "direct" ? (
                   <input
+                    aria-label={props.settings.network_route?.mode === "mirror_template" ? "镜像模板地址" : "代理前缀地址"}
                     value={networkRouteUrl(props.settings)}
                     onChange={(event) =>
                       props.onSettingsChange(
@@ -249,6 +251,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
             </SettingCard>
             <SettingCard title="高级更新源">
               <input
+                aria-label="高级更新源 manifest 地址"
                 value={props.settings.advanced_manifest_url ?? ""}
                 onChange={(event) =>
                   props.onSettingsChange({
@@ -262,17 +265,16 @@ export function SettingsDialog(props: SettingsDialogProps) {
             </SettingCard>
             <SettingCard title="GitHub">
               <input
-                value={props.settings.github_token ?? ""}
-                onChange={(event) =>
-                  props.onSettingsChange({
-                    ...props.settings,
-                    github_token: event.target.value.trim() ? event.target.value : null
-                  })
-                }
+                value=""
+                onChange={() => undefined}
                 placeholder="GitHub token"
                 type="password"
+                aria-label="GitHub token 不会保存"
                 className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
               />
+              <div className="mt-2 text-xs font-bold leading-5 text-[var(--dm-muted-ink)]">
+                Token 仅作为后续凭证存储入口预留，当前不会写入本机设置。
+              </div>
             </SettingCard>
           </div>
         );
@@ -323,20 +325,25 @@ export function SettingsDialog(props: SettingsDialogProps) {
               <div className="grid gap-3">
                 <button
                   type="button"
+                  role="switch"
+                  aria-checked={props.settings.use_everything}
                   onClick={() => props.onSettingsChange({ ...props.settings, use_everything: !props.settings.use_everything })}
                   className="text-left"
                 >
                   <TogglePill checked={props.settings.use_everything} label="使用 Everything 加速扫描" />
                 </button>
                 <textarea
+                  aria-label="扫描排除路径列表"
                   value={props.settings.scan_excluded_paths.join("\n")}
                   onChange={(event) =>
                     props.onSettingsChange({
                       ...props.settings,
                       scan_excluded_paths: event.target.value
                         .split(/\r?\n/)
-                        .map((line) => line.trim())
-                        .filter(Boolean)
+                        .flatMap((line) => {
+                          const trimmed = line.trim();
+                          return trimmed ? [trimmed] : [];
+                        })
                     })
                   }
                   placeholder="每行一个排除路径"

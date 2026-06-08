@@ -1,3 +1,4 @@
+use crate::local_smoke;
 use crate::models::{
     ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, NetworkRouteMode, UpdateAction,
     UpdateManifest, UpdateSourceKind,
@@ -35,6 +36,10 @@ pub fn parse_manifest(input: &str) -> Result<UpdateManifest, String> {
 
 /// 构造并校验 manifest URL，确保只访问公开 HTTPS 地址。
 pub fn build_manifest_url(url: &str) -> Result<Url, String> {
+    if local_smoke::has_ambiguous_numeric_url_host(url) {
+        return Err("manifest url host must be public".to_string());
+    }
+
     let parsed = Url::parse(url).map_err(|error| format!("invalid manifest url: {error}"))?;
 
     validate_manifest_url(&parsed)?;
@@ -64,6 +69,10 @@ pub fn build_asset_url_with_route(
     url: &str,
     route: Option<&NetworkRouteConfig>,
 ) -> Result<Url, String> {
+    if local_smoke::has_ambiguous_numeric_url_host(url) {
+        return Err("manifest url host must be public".to_string());
+    }
+
     let original =
         Url::parse(url).map_err(|error| format!("invalid manifest asset_url: {error}"))?;
     validate_asset_url(&original)?;
@@ -207,6 +216,13 @@ fn is_sha256_hex(value: &str) -> bool {
 }
 
 fn validate_manifest_url(url: &Url) -> Result<(), String> {
+    if url
+        .host_str()
+        .is_some_and(|host| local_smoke::allows_local_smoke_url(url.scheme(), host))
+    {
+        return Ok(());
+    }
+
     let host = validate_public_https_url(url)?;
     validate_trusted_host(
         &host,
@@ -216,6 +232,13 @@ fn validate_manifest_url(url: &Url) -> Result<(), String> {
 }
 
 fn validate_asset_url(url: &Url) -> Result<(), String> {
+    if url
+        .host_str()
+        .is_some_and(|host| local_smoke::allows_local_smoke_url(url.scheme(), host))
+    {
+        return Ok(());
+    }
+
     let host = validate_public_https_url(url)?;
     validate_trusted_host(
         &host,
@@ -251,6 +274,10 @@ fn build_mirror_template_url(original: &Url, route: &NetworkRouteConfig) -> Resu
 }
 
 fn parse_network_route_url(input: &str, route: &NetworkRouteConfig) -> Result<Url, String> {
+    if local_smoke::has_ambiguous_numeric_url_host(input) {
+        return Err("manifest url host must be public".to_string());
+    }
+
     let url = Url::parse(input).map_err(|error| format!("invalid manifest url: {error}"))?;
     let host = validate_public_https_url(&url)?;
     validate_enabled_route_host(&host, &route.enabled_hosts)?;
@@ -290,7 +317,10 @@ fn validate_public_https_url(url: &Url) -> Result<String, String> {
         .host_str()
         .ok_or_else(|| "manifest url must include host".to_string())?;
     let lower_host = host.trim_end_matches('.').to_ascii_lowercase();
-    if lower_host == "localhost" || lower_host.ends_with(".localhost") {
+    if lower_host == "localhost"
+        || lower_host.ends_with(".localhost")
+        || local_smoke::is_ambiguous_numeric_host(host)
+    {
         return Err("manifest url host must be public".to_string());
     }
 

@@ -117,3 +117,18 @@ svg {
 ::selection {
   background: transparent;
 }
+
+@keyframes download-bob {
+  0%,
+  100% {
+    transform: translateY(-2px);
+  }
+
+  45% {
+    transform: translateY(4px);
+  }
+
+  70% {
+    transform: translateY(0);
+  }
+}

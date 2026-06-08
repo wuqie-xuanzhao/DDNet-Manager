@@ -1,7 +1,6 @@
 use super::{
-    BindConflict, CfgAnalysis, CfgExecRecord, CfgUnbindRecord, ClientCompatibility,
-    ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation, CompatibilityStatus,
-    WorkshopBind,
+    ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
+    CompatibilityStatus, DownloadCacheState, DownloadJob, DownloadJobRecovery, DownloadJobStatus,
 };
 
 #[test]
@@ -53,112 +52,35 @@ fn serializes_client_installation_with_snake_case_fields_and_ok_health() {
 }
 
 #[test]
-fn serializes_client_installation_with_mvp_metadata() {
-    let installation = ClientInstallation {
-        id: "ddnet-main".to_string(),
-        client_id: "ddnet".to_string(),
-        display_name: "DDNet".to_string(),
-        install_dir: "D:/SteamLibrary/steamapps/common/DDNet".to_string(),
-        executable_path: "D:/SteamLibrary/steamapps/common/DDNet/DDNet.exe".to_string(),
-        storage_cfg_path: "D:/SteamLibrary/steamapps/common/DDNet/storage.cfg".to_string(),
-        data_dir: "D:/SteamLibrary/steamapps/common/DDNet/data".to_string(),
-        user_data_dir: None,
-        version: Some("19.8.2".to_string()),
-        is_default: true,
-        health: ClientHealth::Ok,
-        missing_items: Vec::new(),
-        install_source: ClientInstallSource::Steam,
-        confidence: ClientConfidence::Verified,
-        manager_owned: false,
-        compatibility: ClientCompatibility {
-            status: CompatibilityStatus::Supported,
-            can_launch: true,
-            launch_verified: false,
-            reasons: Vec::new(),
-            last_launch_result: None,
+fn serializes_download_job_recovery_with_snake_case_cache_state() {
+    let recovery = DownloadJobRecovery {
+        job: DownloadJob {
+            id: "download-1".to_string(),
+            client_installation_id: "qmclient-main".to_string(),
+            client_id: "qmclient".to_string(),
+            channel: "stable".to_string(),
+            version: "2.62.4".to_string(),
+            asset_url:
+                "https://github.com/wxj881027/QmClient/releases/download/v2.62.4/QmClient-windows.zip"
+                    .to_string(),
+            sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            size: 1024,
+            status: DownloadJobStatus::Verified,
+            downloaded_bytes: 1024,
+            cache_path: "D:/Cache/download-1.zip".to_string(),
+            error: None,
         },
-        upstream_url: Some("https://store.steampowered.com/app/412220/DDNet/".to_string()),
-        last_scanned_at: Some("2026-06-07T12:00:00Z".to_string()),
+        cache_state: DownloadCacheState::Verified,
+        can_install: true,
+        can_retry: false,
+        user_message: "缓存文件已校验，可直接安装。".to_string(),
     };
 
-    let serialized = serde_json::to_value(installation).expect("测试序列化应成功");
+    let serialized = serde_json::to_value(recovery).expect("恢复摘要序列化应成功");
 
-    assert_eq!(serialized["client_id"], "ddnet");
-    assert_eq!(serialized["install_source"], "steam");
-    assert_eq!(serialized["confidence"], "verified");
-    assert_eq!(serialized["manager_owned"], false);
-    assert_eq!(serialized["compatibility"]["status"], "supported");
-}
-
-#[test]
-fn serializes_workshop_bind_with_snake_case_fields() {
-    let bind = WorkshopBind {
-        id: "bind-1".to_string(),
-        category: "基础".to_string(),
-        title: "防自杀".to_string(),
-        command: "bind mouse3 \"kill\"".to_string(),
-        description: "测试".to_string(),
-        command_variants: vec!["bind mouse3 \"echo Kill; kill\"".to_string()],
-        variant_labels: vec!["带提示".to_string()],
-        is_bindable: true,
-    };
-
-    let serialized = serde_json::to_value(bind).expect("测试序列化应成功");
-
-    assert_eq!(
-        serialized["command_variants"][0],
-        "bind mouse3 \"echo Kill; kill\""
-    );
-    assert_eq!(serialized["variant_labels"][0], "带提示");
-    assert_eq!(serialized["is_bindable"], true);
-    assert!(serialized.get("commandVariants").is_none());
-    assert!(serialized.get("variantLabels").is_none());
-    assert!(serialized.get("isBindable").is_none());
-}
-
-#[test]
-fn serializes_cfg_analysis_related_types_with_snake_case_fields() {
-    let analysis = CfgAnalysis {
-        binds: vec![],
-        unbinds: vec![CfgUnbindRecord {
-            key: "mouse3".to_string(),
-            source_file: "settings_ddnet.cfg".to_string(),
-            line: 4,
-        }],
-        execs: vec![CfgExecRecord {
-            target: "extra.cfg".to_string(),
-            source_file: "settings_ddnet.cfg".to_string(),
-            line: 3,
-            resolved_path: Some("C:/DDNet/extra.cfg".to_string()),
-            missing: false,
-        }],
-        conflicts: vec![BindConflict {
-            key: "f1".to_string(),
-            records: vec![],
-        }],
-        missing_exec_targets: vec![CfgExecRecord {
-            target: "missing.cfg".to_string(),
-            source_file: "settings_ddnet.cfg".to_string(),
-            line: 8,
-            resolved_path: Some("C:/DDNet/missing.cfg".to_string()),
-            missing: true,
-        }],
-    };
-
-    let serialized = serde_json::to_value(analysis).expect("测试序列化应成功");
-
-    assert_eq!(
-        serialized["unbinds"][0]["source_file"],
-        "settings_ddnet.cfg"
-    );
-    assert_eq!(
-        serialized["execs"][0]["resolved_path"],
-        "C:/DDNet/extra.cfg"
-    );
-    assert_eq!(serialized["execs"][0]["missing"], false);
-    assert_eq!(serialized["conflicts"][0]["key"], "f1");
-    assert_eq!(
-        serialized["missing_exec_targets"][0]["target"],
-        "missing.cfg"
-    );
+    assert_eq!(serialized["cache_state"], "verified");
+    assert_eq!(serialized["can_install"], true);
+    assert_eq!(serialized["can_retry"], false);
+    assert_eq!(serialized["job"]["status"], "verified");
 }

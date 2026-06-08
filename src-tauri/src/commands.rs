@@ -1,10 +1,12 @@
 use crate::download::DownloadManager;
 use crate::models::{
     AppSettings, CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
-    DownloadJob, DownloadJobStatus, InstallHistoryRecord, InstallHistoryStatus, NetworkRouteConfig,
+    DownloadJob, DownloadJobRecovery, DownloadJobStatus, InstallHistoryRecord,
+    InstallHistoryStatus, LocalSmokeResultReport, NetworkRouteConfig,
     ScanClientInstallationsOptions, StartUpdateDownloadRequest, UpdateAction,
     UpsertClientInstallationRequest,
 };
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -41,6 +43,8 @@ struct InstallHistoryInput<'a> {
     status: InstallHistoryStatus,
     error: Option<String>,
 }
+
+const LOCAL_SMOKE_RESULT_PATH_ENV: &str = "DDNET_MANAGER_LOCAL_SMOKE_RESULT_PATH";
 
 /// 验证用户选择的客户端目录，并返回识别出的安装信息。
 #[tauri::command]
@@ -92,6 +96,11 @@ pub fn upsert_client_installation(
     request: UpsertClientInstallationRequest,
 ) -> Result<ClientInstallation, String> {
     let mut client = crate::client_scan::validate_client_dir(Path::new(&request.install_dir))?;
+    if request.is_default
+        && crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir))
+    {
+        return Err("local smoke client cannot be saved as default".to_string());
+    }
     client.is_default = request.is_default;
     registry_for_app(&app)?.upsert_client_installation(&client)?;
     Ok(client)
@@ -170,6 +179,12 @@ pub fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSet
     Ok(settings)
 }
 
+/// 在 debug + 显式 env 开关下，把本地 smoke 自动验收结果写回脚本约定路径。
+#[tauri::command]
+pub fn report_local_smoke_result(result: LocalSmokeResultReport) -> Result<(), String> {
+    write_local_smoke_result_report(&result)
+}
+
 /// 读取指定客户端的安装历史。
 #[tauri::command]
 pub fn list_install_history(
@@ -226,6 +241,8 @@ pub async fn start_update_download(
     let prepared = prepare_update_download_job(&app, request).await?;
     let job = prepared.job;
     let cache_path = PathBuf::from(&job.cache_path);
+    let registry = registry_for_app(&app)?;
+    registry.upsert_download_job(&job)?;
     manager.insert(job.clone())?;
     spawn_download_task(DownloadTaskContext {
         app,
@@ -300,6 +317,57 @@ pub(crate) fn request_requires_manifest_url(request: &CheckClientUpdateRequest) 
     request.use_manifest_source
 }
 
+/// 返回本地 smoke 结果文件路径，要求显式通过环境变量配置。
+pub(crate) fn required_local_smoke_result_path() -> Result<PathBuf, String> {
+    std::env::var(LOCAL_SMOKE_RESULT_PATH_ENV)
+        .ok()
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "local smoke result path is not configured".to_string())
+}
+
+/// 返回本地 smoke 结果写入使用的同目录临时文件路径。
+pub(crate) fn local_smoke_result_temp_path(output_path: &Path) -> Result<PathBuf, String> {
+    let file_name = output_path
+        .file_name()
+        .ok_or_else(|| "local smoke result path must include a file name".to_string())?;
+    let mut temp_file_name = file_name.to_os_string();
+    temp_file_name.push(".tmp");
+
+    Ok(output_path.with_file_name(temp_file_name))
+}
+
+/// 将本地 smoke 验收结果写入 JSON 文件，仅允许在已启用 local smoke 时调用。
+pub(crate) fn write_local_smoke_result_report(
+    result: &LocalSmokeResultReport,
+) -> Result<(), String> {
+    if !crate::local_smoke::is_local_smoke_enabled() {
+        return Err("local smoke reporting is not enabled".to_string());
+    }
+
+    let output_path = required_local_smoke_result_path()?;
+    if let Some(parent) = output_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create local smoke result dir: {error}"))?;
+    }
+
+    let payload = serde_json::to_string_pretty(result)
+        .map_err(|error| format!("failed to serialize local smoke result: {error}"))?;
+    let temp_path = local_smoke_result_temp_path(&output_path)?;
+    fs::write(&temp_path, payload).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        format!("failed to write local smoke result: {error}")
+    })?;
+    fs::rename(&temp_path, &output_path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        format!("failed to replace local smoke result: {error}")
+    })
+}
+
 fn spawn_download_task(context: DownloadTaskContext) {
     let job_id = context.job.id.clone();
     let job_for_task = context.job.clone();
@@ -322,6 +390,7 @@ fn spawn_download_task(context: DownloadTaskContext) {
                 }) else {
                     return false;
                 };
+                persist_download_job_snapshot(&app, &job);
                 let keep_running = job.status != DownloadJobStatus::Canceled;
                 let _ = app.emit_to("main", "download-progress", job);
                 keep_running
@@ -343,7 +412,20 @@ fn spawn_download_task(context: DownloadTaskContext) {
                     job.downloaded_bytes = job.size;
                     job.error = None;
                 }) {
-                    let _ = app.emit_to("main", "download-completed", job);
+                    match persist_download_job_snapshot_result(&app, &job) {
+                        Ok(()) => {
+                            let _ = app.emit_to("main", "download-completed", job);
+                        }
+                        Err(error) => {
+                            if let Ok(job) = manager.update(&job_id, |job| {
+                                job.status = DownloadJobStatus::Failed;
+                                job.error = Some(error);
+                            }) {
+                                persist_download_job_snapshot(&app, &job);
+                                let _ = app.emit_to("main", "download-failed", job);
+                            }
+                        }
+                    }
                 }
             }
             Err(error) => {
@@ -357,6 +439,7 @@ fn spawn_download_task(context: DownloadTaskContext) {
                     job.status = DownloadJobStatus::Failed;
                     job.error = Some(error);
                 }) {
+                    persist_download_job_snapshot(&app, &job);
                     let _ = app.emit_to("main", "download-failed", job);
                 }
             }
@@ -367,19 +450,34 @@ fn spawn_download_task(context: DownloadTaskContext) {
 /// 取消下载任务。
 #[tauri::command]
 pub fn cancel_download(
+    app: AppHandle,
     manager: DownloadManagerState<'_>,
     job_id: String,
 ) -> Result<DownloadJob, String> {
-    manager.cancel(&job_id)
+    let job = manager.cancel(&job_id)?;
+    persist_download_job_snapshot(&app, &job);
+    Ok(job)
 }
 
 /// 查询下载任务状态。
 #[tauri::command]
 pub fn get_download_job(
+    app: AppHandle,
     manager: DownloadManagerState<'_>,
     job_id: String,
 ) -> Result<Option<DownloadJob>, String> {
-    manager.get(&job_id)
+    let registry = registry_for_app(&app)?;
+    load_download_job_snapshot(manager.inner(), &registry, &job_id)
+}
+
+/// 返回指定客户端当前可恢复的下载任务摘要。
+#[tauri::command]
+pub fn list_download_job_recoveries(
+    app: AppHandle,
+    client_installation_id: Option<String>,
+) -> Result<Vec<DownloadJobRecovery>, String> {
+    let registry = registry_for_app(&app)?;
+    list_download_job_recoveries_from_registry(&registry, client_installation_id.as_deref())
 }
 
 /// 校验并安装已下载的更新包。
@@ -389,17 +487,26 @@ pub fn install_downloaded_update(
     manager: DownloadManagerState<'_>,
     job_id: String,
 ) -> Result<DownloadJob, String> {
-    let job = manager
-        .get(&job_id)?
+    let registry = registry_for_app(&app)?;
+    let job = load_download_job_snapshot(manager.inner(), &registry, &job_id)?
         .ok_or_else(|| format!("download job not found: {job_id}"))?;
-    if job.status != DownloadJobStatus::Verified {
+    if !matches!(
+        job.status,
+        DownloadJobStatus::Verified | DownloadJobStatus::Failed
+    ) {
         return Err(format!(
             "download job must be verified before install: {:?}",
             job.status
         ));
     }
+    let recovery = crate::download::build_download_job_recovery(&job)?;
+    if !recovery.can_install {
+        return Err(format!(
+            "download job cache is not installable: {:?}",
+            recovery.cache_state
+        ));
+    }
 
-    let registry = registry_for_app(&app)?;
     let mut client = match load_install_target(&registry, &job) {
         Ok(client) => client,
         Err(error) => {
@@ -480,9 +587,7 @@ fn run_install_transaction(
     let rollback_dir =
         crate::download::rollback_dir_for(Path::new(&client.install_dir), &install_id);
 
-    context.manager.update(context.job_id, |job| {
-        job.status = DownloadJobStatus::Installing;
-    })?;
+    enter_installing_snapshot(context.manager, context.registry, context.job_id)?;
     context
         .app
         .emit_to("main", "install-progress", context.job_id)
@@ -542,7 +647,8 @@ fn finish_install_success(
             ),
         );
     }
-    context
+    let job = complete_download_job_snapshot(context.manager, context.registry, context.job_id)?;
+    let _ = context
         .registry
         .record_install_history(&install_history_record(InstallHistoryInput {
             job: context.job,
@@ -550,11 +656,7 @@ fn finish_install_success(
             rollback_dir,
             status: InstallHistoryStatus::Completed,
             error: None,
-        }))?;
-    let job = context.manager.update(context.job_id, |job| {
-        job.status = DownloadJobStatus::Completed;
-        job.error = None;
-    })?;
+        }));
     context
         .app
         .emit_to("main", "install-completed", &job)
@@ -585,6 +687,7 @@ fn finish_install_failure(
         job.status = DownloadJobStatus::Failed;
         job.error = Some(error);
     })?;
+    context.registry.upsert_download_job(&job)?;
     context
         .app
         .emit_to("main", "install-failed", &job)
@@ -617,6 +720,82 @@ fn install_history_record(input: InstallHistoryInput<'_>) -> InstallHistoryRecor
 fn registry_for_app(app: &AppHandle) -> Result<crate::registry::ClientRegistry, String> {
     let db_path = app_data_dir(app)?.join("ddnet-manager.sqlite");
     crate::registry::ClientRegistry::open(&db_path)
+}
+
+fn persist_download_job_snapshot(app: &AppHandle, job: &DownloadJob) {
+    if let Ok(registry) = registry_for_app(app) {
+        let _ = registry.upsert_download_job(job);
+    }
+}
+
+fn persist_download_job_snapshot_result(app: &AppHandle, job: &DownloadJob) -> Result<(), String> {
+    registry_for_app(app)?.upsert_download_job(job)
+}
+
+/// 将下载任务切换为安装中状态，并在文件替换前持久化该快照。
+pub(crate) fn enter_installing_snapshot(
+    manager: &DownloadManager,
+    registry: &crate::registry::ClientRegistry,
+    job_id: &str,
+) -> Result<DownloadJob, String> {
+    let previous = manager
+        .get(job_id)?
+        .ok_or_else(|| format!("download job not found: {job_id}"))?;
+    let job = manager.update(job_id, |job| {
+        job.status = DownloadJobStatus::Installing;
+    })?;
+    if let Err(error) = registry.upsert_download_job(&job) {
+        let rollback_result = manager.update(job_id, |job| {
+            *job = previous;
+        });
+        if let Err(rollback_error) = rollback_result {
+            return Err(format!(
+                "{error}; failed to restore in-memory download job: {rollback_error}"
+            ));
+        }
+        return Err(error);
+    }
+    Ok(job)
+}
+
+/// 将下载任务切换为已完成状态，并在安装历史写入前持久化主状态。
+pub(crate) fn complete_download_job_snapshot(
+    manager: &DownloadManager,
+    registry: &crate::registry::ClientRegistry,
+    job_id: &str,
+) -> Result<DownloadJob, String> {
+    let job = manager.update(job_id, |job| {
+        job.status = DownloadJobStatus::Completed;
+        job.error = None;
+    })?;
+    registry.upsert_download_job(&job)?;
+    Ok(job)
+}
+
+fn load_download_job_snapshot(
+    manager: &DownloadManager,
+    registry: &crate::registry::ClientRegistry,
+    job_id: &str,
+) -> Result<Option<DownloadJob>, String> {
+    if let Some(job) = manager.get(job_id)? {
+        return Ok(Some(job));
+    }
+    let Some(job) = registry.download_job_by_id(job_id)? else {
+        return Ok(None);
+    };
+    manager.insert(job.clone())?;
+    Ok(Some(job))
+}
+
+fn list_download_job_recoveries_from_registry(
+    registry: &crate::registry::ClientRegistry,
+    client_installation_id: Option<&str>,
+) -> Result<Vec<DownloadJobRecovery>, String> {
+    registry
+        .list_download_jobs(client_installation_id)?
+        .into_iter()
+        .map(|job| crate::download::build_download_job_recovery(&job))
+        .collect()
 }
 
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {

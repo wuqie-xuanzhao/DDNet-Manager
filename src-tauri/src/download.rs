@@ -1,4 +1,7 @@
-use crate::models::{ClientUpdateCheck, DownloadJob, DownloadJobStatus};
+use crate::local_smoke;
+use crate::models::{
+    ClientUpdateCheck, DownloadCacheState, DownloadJob, DownloadJobRecovery, DownloadJobStatus,
+};
 use reqwest::Url;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -25,9 +28,9 @@ const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &[
 pub enum PackageKind {
     /// zip 压缩包，当前支持自动解压安装。
     Zip,
-    /// Linux tar.xz 压缩包，当前仅允许手动安装。
+    /// Linux tar.xz 压缩包，支持进入 Manager-owned 解包安装闭环。
     TarXz,
-    /// macOS dmg 镜像包，当前仅允许手动安装。
+    /// macOS dmg 镜像包，仅在 macOS hdiutil 可用时支持自动安装。
     Dmg,
     /// 未识别后缀，保守禁止自动安装。
     Unknown,
@@ -93,6 +96,89 @@ impl DownloadManager {
             job.status = DownloadJobStatus::Canceled;
         })
     }
+}
+
+/// 表示下载任务恢复后可执行动作的判断结果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DownloadJobRecoveryDecision {
+    /// 当前是否允许直接安装缓存文件。
+    pub can_install: bool,
+    /// 当前是否建议重新下载。
+    pub can_retry: bool,
+}
+
+impl DownloadJobRecoveryDecision {
+    /// 根据任务状态与缓存状态推导恢复动作。
+    pub fn from_cache_state(status: DownloadJobStatus, cache_state: DownloadCacheState) -> Self {
+        let verified = cache_state == DownloadCacheState::Verified;
+        let terminal = matches!(
+            status,
+            DownloadJobStatus::Verified | DownloadJobStatus::Failed
+        );
+        let completed = status == DownloadJobStatus::Completed;
+        Self {
+            can_install: verified && terminal,
+            can_retry: !verified || !(terminal || completed),
+        }
+    }
+}
+
+/// 基于下载任务当前缓存文件构建恢复摘要。
+pub fn build_download_job_recovery(job: &DownloadJob) -> Result<DownloadJobRecovery, String> {
+    let cache_state = detect_download_cache_state(job)?;
+    let permanent_install_failure = is_permanent_install_failure(job.error.as_deref());
+    let decision = if permanent_install_failure && cache_state == DownloadCacheState::Verified {
+        DownloadJobRecoveryDecision {
+            can_install: false,
+            can_retry: false,
+        }
+    } else {
+        DownloadJobRecoveryDecision::from_cache_state(job.status.clone(), cache_state.clone())
+    };
+    Ok(DownloadJobRecovery {
+        job: job.clone(),
+        cache_state: cache_state.clone(),
+        can_install: decision.can_install,
+        can_retry: decision.can_retry,
+        user_message: recovery_message(cache_state, permanent_install_failure),
+    })
+}
+
+fn detect_download_cache_state(job: &DownloadJob) -> Result<DownloadCacheState, String> {
+    let cache_path = Path::new(&job.cache_path);
+    if !cache_path.exists() {
+        return Ok(DownloadCacheState::Missing);
+    }
+    if verify_downloaded_file(cache_path, &job.sha256, job.size).is_ok() {
+        return Ok(DownloadCacheState::Verified);
+    }
+    if matches!(
+        job.status,
+        DownloadJobStatus::Pending | DownloadJobStatus::Downloading
+    ) && job.downloaded_bytes < job.size
+    {
+        return Ok(DownloadCacheState::Present);
+    }
+    Ok(DownloadCacheState::Corrupted)
+}
+
+fn is_permanent_install_failure(error: Option<&str>) -> bool {
+    error.is_some_and(|error| {
+        error.contains("unknown package type requires manual install")
+            || error.contains("requires macOS hdiutil")
+    })
+}
+
+fn recovery_message(cache_state: DownloadCacheState, permanent_install_failure: bool) -> String {
+    if permanent_install_failure {
+        return "缓存文件已校验，但当前平台或包类型不支持自动安装，请改用手动安装。".to_string();
+    }
+    String::from(match cache_state {
+        DownloadCacheState::Missing => "缓存文件不存在，请重新下载更新包。",
+        DownloadCacheState::Present => "缓存文件未完成校验，建议重新下载后再安装。",
+        DownloadCacheState::Verified => "缓存文件已校验，可直接安装。",
+        DownloadCacheState::Corrupted => "缓存文件校验失败，请重新下载更新包。",
+    })
 }
 
 /// 计算输入字节的 SHA-256 小写十六进制摘要。
@@ -740,27 +826,38 @@ pub(crate) fn validate_download_url_with_hosts(
     url: &str,
     enabled_route_hosts: &[String],
 ) -> Result<(), String> {
-    let parsed = Url::parse(url).map_err(|error| format!("invalid download url: {error}"))?;
-    if parsed.scheme() != "https" {
-        return Err("download url must use https".to_string());
+    if local_smoke::has_ambiguous_numeric_url_host(url) {
+        return Err("download url host must be public".to_string());
     }
+
+    let parsed = Url::parse(url).map_err(|error| format!("invalid download url: {error}"))?;
+    let scheme = parsed.scheme();
     let host = parsed
         .host_str()
-        .ok_or_else(|| "download url must include host".to_string())?
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if host == "localhost" || host.ends_with(".localhost") {
+        .ok_or_else(|| "download url must include host".to_string())?;
+    if local_smoke::is_ambiguous_numeric_host(host) {
+        return Err("download url host must be public".to_string());
+    }
+    if local_smoke::allows_local_smoke_url(scheme, host) {
+        return Ok(());
+    }
+    if scheme != "https" {
+        return Err("download url must use https".to_string());
+    }
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    if normalized_host == "localhost" || normalized_host.ends_with(".localhost") {
         return Err("download url host must be public".to_string());
     }
     let ip_host = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = ip_host.parse::<IpAddr>() {
         validate_public_ip(ip)?;
     }
-    if !TRUSTED_DOWNLOAD_HOSTS.contains(&host.as_str())
-        && !enabled_route_hosts
-            .iter()
-            .any(|enabled| enabled.trim_end_matches('.').eq_ignore_ascii_case(&host))
-    {
+    let route_host_enabled = enabled_route_hosts.iter().any(|enabled| {
+        enabled
+            .trim_end_matches('.')
+            .eq_ignore_ascii_case(&normalized_host)
+    });
+    if !TRUSTED_DOWNLOAD_HOSTS.contains(&normalized_host.as_str()) && !route_host_enabled {
         return Err("download url host is not trusted".to_string());
     }
     Ok(())
@@ -832,7 +929,6 @@ fn validate_public_ip(ip: IpAddr) -> Result<(), String> {
 fn is_ipv6_unique_local(ip: &Ipv6Addr) -> bool {
     (ip.segments()[0] & 0xfe00) == 0xfc00
 }
-
 fn is_ipv6_unicast_link_local(ip: &Ipv6Addr) -> bool {
     (ip.segments()[0] & 0xffc0) == 0xfe80
 }

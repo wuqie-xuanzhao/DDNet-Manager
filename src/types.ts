@@ -52,6 +52,16 @@ export type ClientInstallation = {
   last_scanned_at: string | null;
 };
 
+export type LaunchReadiness = {
+  client: ClientInstallation | null;
+  can_launch: boolean;
+  running: boolean;
+  status_label: string;
+  user_message: string;
+  blocking_reasons: string[];
+  checked_at: string | null;
+};
+
 export type ScanClientInstallationsOptions = {
   roots?: string[];
   include_saved_paths?: boolean;
@@ -76,8 +86,23 @@ export type AppSettings = {
   network_route: NetworkRouteConfig | null;
   scan_excluded_paths: string[];
   use_everything: boolean;
-  github_token: string | null;
+  close_panel_after_launch: boolean;
+  auto_check_updates: boolean;
   advanced_manifest_url: string | null;
+};
+
+export type LocalSmokeResultStatus = "succeeded" | "failed";
+
+export type LocalSmokeResultReport = {
+  status: LocalSmokeResultStatus;
+  stage: string;
+  message?: string | null;
+};
+
+export type LocalSmokeAutomationConfig = {
+  clientInstallDir: string;
+  manifestUrl: string;
+  closeWindowOnFinish: boolean;
 };
 
 export type InstallHistoryStatus = "completed" | "failed";
@@ -168,6 +193,16 @@ export type DownloadJob = {
   error: string | null;
 };
 
+export type DownloadCacheState = "missing" | "present" | "verified" | "corrupted";
+
+export type DownloadJobRecovery = {
+  job: DownloadJob;
+  cache_state: DownloadCacheState;
+  can_install: boolean;
+  can_retry: boolean;
+  user_message: string;
+};
+
 export type StartUpdateDownloadRequest = {
   client_installation_id: string;
   channel: string;
@@ -176,51 +211,4 @@ export type StartUpdateDownloadRequest = {
   platform?: string | null;
   network_route?: NetworkRouteConfig | null;
   use_manifest_source?: boolean;
-};
-
-export type BindRecord = {
-  key: string;
-  command: string;
-  source_file: string;
-  line: number;
-  managed_by_manager: boolean;
-  matched_workshop_id: string | null;
-};
-
-export type CfgExecRecord = {
-  target: string;
-  source_file: string;
-  line: number;
-  resolved_path: string | null;
-  missing: boolean;
-};
-
-export type CfgUnbindRecord = {
-  key: string;
-  source_file: string;
-  line: number;
-};
-
-export type BindConflict = {
-  key: string;
-  records: BindRecord[];
-};
-
-export type CfgAnalysis = {
-  binds: BindRecord[];
-  unbinds: CfgUnbindRecord[];
-  execs: CfgExecRecord[];
-  conflicts: BindConflict[];
-  missing_exec_targets: CfgExecRecord[];
-};
-
-export type WorkshopBind = {
-  id: string;
-  category: string;
-  title: string;
-  command: string;
-  description: string;
-  command_variants: string[];
-  variant_labels: string[];
-  is_bindable: boolean;
 };

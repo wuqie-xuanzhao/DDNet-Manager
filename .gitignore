@@ -2,6 +2,8 @@ node_modules/
 dist/
 tmp/
 src-tauri/target/
+.claude/worktrees/
+.playwright-mcp/
 .superpowers/brainstorm/
 .codegraph/
 .DS_Store

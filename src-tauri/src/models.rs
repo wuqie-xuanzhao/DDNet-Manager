@@ -129,11 +129,11 @@ pub struct ClientInstallation {
     pub install_dir: String,
     /// 客户端可执行文件路径。
     pub executable_path: String,
-    /// 客户端 storage.cfg 路径。
+    /// 客户端 storage.cfg 路径，用于安装结构健康检查。
     pub storage_cfg_path: String,
-    /// 客户端资源数据目录。
+    /// 客户端 data 目录路径，用于安装结构健康检查。
     pub data_dir: String,
-    /// 客户端用户数据目录，未发现时为空。
+    /// 客户端用户数据目录，未发现时为空。当前仅作为诊断信息返回。
     pub user_data_dir: Option<String>,
     /// 客户端版本号，未识别时为空。
     pub version: Option<String>,
@@ -217,7 +217,7 @@ impl NetworkRouteConfig {
 }
 
 /// 表示 DDNet Manager 的 MVP 应用设置。
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct AppSettings {
     /// 用户显式启用的网络代理或镜像路由。
     pub network_route: Option<NetworkRouteConfig>,
@@ -227,10 +227,53 @@ pub struct AppSettings {
     /// 是否启用 Everything provider 作为扫描加速。
     #[serde(default)]
     pub use_everything: bool,
-    /// GitHub API token，高级设置，仅用于提高 API 限额。
-    pub github_token: Option<String>,
+    /// 启动客户端后是否最小化 Manager 面板。
+    #[serde(default = "default_close_panel_after_launch")]
+    pub close_panel_after_launch: bool,
+    /// 应用启动后是否自动检查默认客户端更新。
+    #[serde(default)]
+    pub auto_check_updates: bool,
     /// 高级 manifest 调试入口地址。
     pub advanced_manifest_url: Option<String>,
+}
+
+/// 表示本地 smoke 自动验收最终结果。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalSmokeResultStatus {
+    /// 自动验收已经通过。
+    Succeeded,
+    /// 自动验收在某个阶段失败。
+    Failed,
+}
+
+/// 表示本地 smoke 自动验收写回脚本的结构化结果。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LocalSmokeResultReport {
+    /// 最终结果状态。
+    pub status: LocalSmokeResultStatus,
+    /// 稳定阶段标识，例如 check、download、install。
+    pub stage: String,
+    /// 供脚本和日志展示的补充信息。
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            network_route: None,
+            scan_excluded_paths: Vec::new(),
+            use_everything: false,
+            close_panel_after_launch: default_close_panel_after_launch(),
+            auto_check_updates: false,
+            advanced_manifest_url: None,
+        }
+    }
+}
+
+fn default_close_panel_after_launch() -> bool {
+    true
 }
 
 /// 表示一次 Manager-owned 安装历史的最终状态。
@@ -387,6 +430,35 @@ pub struct DownloadJob {
     pub error: Option<String>,
 }
 
+/// 表示下载缓存文件当前可恢复状态。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadCacheState {
+    /// 缓存文件不存在。
+    Missing,
+    /// 缓存文件存在，但尚未处于可直接安装的已校验状态。
+    Present,
+    /// 缓存文件存在且已通过 size 与 sha256 校验。
+    Verified,
+    /// 缓存文件存在，但校验失败或已损坏。
+    Corrupted,
+}
+
+/// 表示一个更新下载任务在重启后的恢复摘要。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct DownloadJobRecovery {
+    /// 原始下载任务快照。
+    pub job: DownloadJob,
+    /// 当前缓存文件状态。
+    pub cache_state: DownloadCacheState,
+    /// 当前是否允许直接进入安装。
+    pub can_install: bool,
+    /// 当前是否建议用户重新下载。
+    pub can_retry: bool,
+    /// 可直接展示给用户的恢复提示。
+    pub user_message: String,
+}
+
 /// 表示创建下载任务的请求。
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct StartUpdateDownloadRequest {
@@ -440,97 +512,6 @@ pub struct UpdateManifest {
     pub schema_version: u32,
     /// manifest 中包含的客户端发布列表。
     pub clients: Vec<ManifestClient>,
-}
-
-/// 表示从 DDNet / QmClient 配置中解析出的一条 bind 记录。
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct BindRecord {
-    /// 绑定按键。
-    pub key: String,
-    /// 绑定命令内容。
-    pub command: String,
-    /// 记录来源配置文件路径。
-    pub source_file: String,
-    /// 记录所在源码行号。
-    pub line: usize,
-    /// 是否由 DDNet Manager 管理。
-    pub managed_by_manager: bool,
-    /// 匹配到的 Workshop 条目 ID。
-    pub matched_workshop_id: Option<String>,
-}
-
-/// 表示 cfg 中一条 exec 记录及其解析结果。
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct CfgExecRecord {
-    /// exec 指令声明的目标文件。
-    pub target: String,
-    /// 记录来源配置文件路径。
-    pub source_file: String,
-    /// 记录所在源码行号。
-    pub line: usize,
-    /// 解析得到的目标文件路径，无法解析时为空。
-    pub resolved_path: Option<String>,
-    /// 目标文件是否缺失。
-    pub missing: bool,
-}
-
-/// 表示 cfg 中一条 unbind 记录。
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct CfgUnbindRecord {
-    /// 解绑按键。
-    pub key: String,
-    /// 记录来源配置文件路径。
-    pub source_file: String,
-    /// 记录所在源码行号。
-    pub line: usize,
-}
-
-/// 表示同一个按键存在多条 bind 记录时的冲突集合。
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct BindConflict {
-    /// 冲突按键。
-    pub key: String,
-    /// 参与冲突的 bind 记录列表。
-    pub records: Vec<BindRecord>,
-}
-
-/// 表示 cfg 深度分析结果。
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct CfgAnalysis {
-    /// 解析到的 bind 记录。
-    pub binds: Vec<BindRecord>,
-    /// 解析到的 unbind 记录。
-    pub unbinds: Vec<CfgUnbindRecord>,
-    /// 解析到的 exec 记录。
-    pub execs: Vec<CfgExecRecord>,
-    /// 按键冲突记录。
-    pub conflicts: Vec<BindConflict>,
-    /// 缺失的 exec 目标记录。
-    pub missing_exec_targets: Vec<CfgExecRecord>,
-}
-
-/// 表示从 Workshop 公开 JSON 映射出的一条 bind 条目。
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct WorkshopBind {
-    /// Workshop 条目的唯一标识。
-    pub id: String,
-    /// Workshop 条目的分类名称。
-    pub category: String,
-    /// Workshop 条目的标题。
-    pub title: String,
-    /// Workshop 条目的默认命令文本。
-    pub command: String,
-    /// Workshop 条目的说明文本。
-    pub description: String,
-    /// Workshop 条目的命令变体列表。
-    #[serde(default, alias = "commandVariants")]
-    pub command_variants: Vec<String>,
-    /// Workshop 条目的变体标签列表。
-    #[serde(default, alias = "variantLabels")]
-    pub variant_labels: Vec<String>,
-    /// Workshop 条目是否允许直接绑定。
-    #[serde(default, alias = "isBindable")]
-    pub is_bindable: bool,
 }
 
 #[cfg(test)]

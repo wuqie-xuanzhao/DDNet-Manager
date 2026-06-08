@@ -10,17 +10,16 @@ DDNet Manager 是面向 DDNet / QmClient 玩家的第三方游戏启动器与管
 
 - 发现和注册本机 DDNet / QmClient 客户端。
 - 通过自维护 manifest 管理 QmClient 下载、更新、校验和回滚。
-- 区分客户端安装目录、用户数据目录、资源目录。
-- 分析和安全写入 DDNet / QmClient Binds 配置。
-- 消费 `https://ddrace.cn/bind` 的公开 Workshop 数据。
+- 提供客户端启动、默认客户端选择、安装记录和更新历史管理。
+- 管理下载任务、安装事务、失败恢复和必要的回滚信息。
 
 非目标：
 
 - 不把 QmClient 开发仓库的 Release 目录当成用户更新源。
 - 不替代 QmClient 的 CMake / 发布流程。
 - 不默认修改系统 hosts。
-- 不在游戏客户端运行时写 cfg 文件。
-- 不实现完整 Workshop 社区客户端。
+- 不对接 DDNet / QmClient Binds 配置分析或写入。
+- 不接入资源管理或 Workshop 数据，包括 `https://ddrace.cn/bind`。
 
 ## 技术栈
 
@@ -120,13 +119,17 @@ useEffect(() => {
 }, []);
 ```
 
-当前已有命令仍是首版 mock / stub：
+当前后端 IPC 已进入 MVP 基础能力阶段，不再是首版 mock / stub。当前注册面按能力分组如下：
 
-| 命令 | 用途 | 当前状态 |
+| 分组 | 命令 | 当前状态 |
 | --- | --- | --- |
-| `check_update` | 返回 `VersionInfo` | Mock，待接入自维护 manifest |
-| `start_download` | 通过 `download-progress` 事件推送模拟进度 | 模拟，待接入真实下载事务 |
-| `launch_game` | 启动 DDNet 客户端 | 存根，待接入本地客户端注册表 |
+| 客户端目录与注册表 | `validate_client_dir`、`scan_client_installations`、`upsert_client_installation`、`remove_client_installation`、`set_default_client`、`list_client_installations`、`get_default_client` | 已接入本地目录验证、候选扫描、SQLite 注册表和默认客户端管理 |
+| 启动与运行检测 | `launch_client`、`launch_default_client`、`is_client_running` | 已接入进程启动、默认客户端复检和运行状态检测基础 |
+| 设置与历史 | `load_app_settings`、`save_app_settings`、`list_install_history` | 已接入 SQLite 设置快照和安装历史读取 |
+| 更新与 manifest | `load_manifest`、`check_client_update` | 已接入 manifest 校验、catalog/update source 分派和更新判断基础 |
+| 下载与安装 | `start_update_download`、`cancel_download`、`get_download_job`、`install_downloaded_update` | 已接入真实下载任务、进度事件、size/sha256 校验、staging、安装事务和回滚记录基础 |
+
+当前主要待成熟化边界：下载任务跨进程持久化/恢复、真实 Tauri 端到端验证、错误类型产品化、跨平台安装事务和启动兼容性诊断。
 
 添加新 IPC 时必须同步：
 
@@ -142,9 +145,9 @@ useEffect(() => {
 1. `models.rs`：IPC 领域类型。
 2. `commands.rs`：Tauri command 聚合层。
 3. `client_scan.rs`：本地客户端识别。
-4. `manifest.rs` / `download.rs`：更新源、下载、校验。
-5. `cfg.rs` / `file_tx.rs`：Binds 解析、差异、备份、回滚。
-6. `workshop.rs`：Workshop 静态 JSON adapter。
+4. `registry.rs`：客户端安装记录、默认客户端和安装历史持久化。
+5. `manifest.rs` / `update_source.rs`：更新源选择、manifest 拉取和更新判断。
+6. `download.rs`：下载、校验、解压、安装事务和失败恢复。
 7. `process.rs`：启动与运行中检测。
 
 不要使用 `mod.rs`。模块组织使用 `name.rs` + `name/` 子目录模式。
@@ -159,8 +162,6 @@ useEffect(() => {
 4. 启动页 → `src/components/launch/`
 5. 客户端管理 → `src/components/clients/`
 6. 更新管理 → `src/components/update/`
-7. 资源位置 → `src/components/resources/`
-8. Binds 管理 → `src/components/binds/`
 
 `src/index.css` 只放 Tailwind 指令、全局变量和 `dm-*` 工具类。组件级样式使用 Tailwind 原子类。
 
@@ -170,9 +171,8 @@ useEffect(() => {
 - 自维护 manifest 是更新权威源，GitHub 只承载下载资产。
 - 默认网络策略是代理 / 镜像 URL，不默认修改 hosts。
 - Everything / `es.exe` 只能作为可选扫描加速 provider，不能成为硬依赖。
-- 客户端运行中禁止写 cfg，只允许只读分析和生成待应用计划。
-- Binds 默认写入 Manager 专用 cfg，并使用可识别标记区块。
-- 直接编辑 settings / autoexec 必须由用户显式选择，且写入前必须备份和展示 diff。
+- 当前范围不实现 Workshop、Binds 配置分析/写入或资源管理对接。
+- 下载和安装必须考虑校验、临时文件、失败恢复和已有安装不被破坏。
 
 ## 设计约束
 
@@ -272,13 +272,13 @@ git commit -m "docs(agent): 同步项目代理规则"
 
 ## 子代理规则
 
+注意: 如果当前上下文是干净且比较短的话，不用派发子代理进行审查。
 用户明确要求“子代理”或任务影响核心逻辑时，才派发子代理。小任务不用审查，但以下情况完成后必须派只读子代理审查：
 
 - 修改 Tauri IPC 契约、`generate_handler!` 注册面或前端 IPC 封装。
-- 修改 Rust 下载、更新、文件写入、cfg 解析、进程检测等核心逻辑。
+- 修改 Rust 下载、更新、文件写入、进程检测等核心逻辑。
 - 修改 `Makefile`、`scripts/check_lint.sh`、门禁策略或代理规则。
-- 修改 Binds 写入策略、安全保护或回滚链路。
-- 修改会影响用户数据目录、安装目录、资源目录识别的逻辑。
+- 修改会影响客户端安装目录识别、默认客户端选择或安装历史记录的逻辑。
 
 子代理要求：
 

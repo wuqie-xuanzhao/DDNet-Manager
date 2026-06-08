@@ -1,52 +1,65 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Settings, X } from "lucide-react";
+import { Hexagon, Minus, X } from "lucide-react";
 
-const appWindow = getCurrentWindow();
+function currentWindow() {
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
+}
 
 type TitleBarProps = {
   onOpenSettings: () => void;
 };
 
+function minimizeWindow() {
+  void currentWindow()?.minimize();
+}
+
+function closeWindow() {
+  void currentWindow()?.close();
+}
+
 export function TitleBar(props: TitleBarProps) {
-  const minimize = () => {
-    void appWindow.minimize();
-  };
-
-  const close = () => {
-    void appWindow.close();
-  };
-
   return (
     <div
       data-tauri-drag-region
-      className="absolute left-0 top-0 z-50 flex h-11 w-full items-center justify-between border-b border-[var(--dm-border)] bg-[var(--dm-paper)]/92 px-4 shadow-[0_10px_30px_rgba(47,52,64,0.08)] backdrop-blur-2xl"
+      className="pointer-events-none absolute left-0 top-0 z-50 flex h-12 w-full items-center justify-end px-5"
     >
-      <div data-tauri-drag-region className="flex items-center gap-3 text-[11px] font-black uppercase tracking-[0.28em] text-[var(--dm-ink)]">
-        <div className="h-2.5 w-2.5 rounded-full bg-[var(--dm-ink)]" />
-        DDNet Manager
-      </div>
-
-      <div className="flex h-full items-center">
+      <div className="pointer-events-auto flex h-full items-center gap-2 pt-2">
         <button
+          type="button"
           aria-label="Open settings"
           onClick={props.onOpenSettings}
-          className="grid h-11 w-12 place-items-center text-[var(--dm-muted-ink)] transition hover:bg-[var(--dm-soft)] hover:text-[var(--dm-ink)]"
+          className="group relative grid h-12 w-12 place-items-center rounded-[14px] bg-transparent text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.42)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#111213]/76 hover:shadow-[0_14px_28px_rgba(17,18,19,0.22)] hover:backdrop-blur-md"
         >
-          <Settings size={16} strokeWidth={1.8} />
+          <Hexagon size={18} strokeWidth={2.3} />
+          <span className="pointer-events-none absolute right-1 top-[56px] translate-y-1 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#2f3440] opacity-0 shadow-xl transition duration-200 before:absolute before:-top-1.5 before:right-5 before:h-3 before:w-3 before:rotate-45 before:bg-white group-hover:translate-y-0 group-hover:opacity-100">
+            设置
+          </span>
         </button>
         <button
+          type="button"
           aria-label="Minimize window"
-          onClick={minimize}
-          className="grid h-11 w-12 place-items-center text-[var(--dm-muted-ink)] transition hover:bg-[var(--dm-soft)] hover:text-[var(--dm-ink)]"
+          onClick={minimizeWindow}
+          className="group relative grid h-12 w-12 place-items-center rounded-[14px] bg-transparent text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.42)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#111213]/76 hover:shadow-[0_14px_28px_rgba(17,18,19,0.22)] hover:backdrop-blur-md"
         >
           <Minus size={16} strokeWidth={1.8} />
+          <span className="pointer-events-none absolute right-1 top-[56px] translate-y-1 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#2f3440] opacity-0 shadow-xl transition duration-200 before:absolute before:-top-1.5 before:right-5 before:h-3 before:w-3 before:rotate-45 before:bg-white group-hover:translate-y-0 group-hover:opacity-100">
+            最小化
+          </span>
         </button>
         <button
+          type="button"
           aria-label="Close window"
-          onClick={close}
-          className="grid h-11 w-12 place-items-center text-[#6d7280] transition hover:bg-[#b84a4a]/12 hover:text-[#8f2f2f]"
+          onClick={closeWindow}
+          className="group relative grid h-12 w-12 place-items-center rounded-[14px] bg-transparent text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.42)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#111213]/76 hover:shadow-[0_14px_28px_rgba(17,18,19,0.22)] hover:backdrop-blur-md"
         >
           <X size={16} strokeWidth={1.8} />
+          <span className="pointer-events-none absolute right-1 top-[56px] translate-y-1 rounded-xl bg-white px-4 py-2 text-sm font-bold text-[#2f3440] opacity-0 shadow-xl transition duration-200 before:absolute before:-top-1.5 before:right-5 before:h-3 before:w-3 before:rotate-45 before:bg-white group-hover:translate-y-0 group-hover:opacity-100">
+            关闭
+          </span>
         </button>
       </div>
     </div>

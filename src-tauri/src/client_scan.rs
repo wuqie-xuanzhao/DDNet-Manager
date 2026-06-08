@@ -102,6 +102,9 @@ pub fn scan_client_installations(options: &ScanOptions) -> Result<Vec<ClientInst
             if is_excluded_path(&candidate, &options.excluded_paths) {
                 continue;
             }
+            if is_local_smoke_tmp_path(&candidate) {
+                continue;
+            }
             let installation = validate_client_dir(&candidate)?;
             if seen_ids.insert(installation.id.clone()) {
                 installations.push(installation);
@@ -115,6 +118,9 @@ pub fn scan_client_installations(options: &ScanOptions) -> Result<Vec<ClientInst
                 continue;
             }
             if is_excluded_path(&candidate, &options.excluded_paths) {
+                continue;
+            }
+            if is_local_smoke_tmp_path(&candidate) {
                 continue;
             }
             let installation = validate_client_dir(&candidate)?;
@@ -138,6 +144,12 @@ fn is_excluded_path(candidate: &Path, excluded_paths: &[PathBuf]) -> bool {
         normalized_candidate == normalized_excluded
             || normalized_candidate.starts_with(&format!("{normalized_excluded}/"))
     })
+}
+
+/// 判断路径是否属于本仓库本地 smoke 自动验收生成的临时客户端目录。
+pub(crate) fn is_local_smoke_tmp_path(candidate: &Path) -> bool {
+    let normalized = normalize_id_seed(&normalize_path(candidate));
+    normalized.contains("/tmp/tauri-update-smoke/")
 }
 
 /// 返回 Windows 优先的轻量默认扫描根。

@@ -1,10 +1,14 @@
 use crate::download::{
-    auto_install_guard, create_download_job, download_asset_to_file, extract_package_to_staging,
-    extract_zip_to_staging, install_staged_client, package_kind_for_asset_url, restore_rollback,
-    rollback_dir_for, sha256_hex, validate_download_url_with_hosts, verify_downloaded_file,
-    DownloadFileRequest, PackageKind,
+    auto_install_guard, build_download_job_recovery, create_download_job, download_asset_to_file,
+    extract_package_to_staging, extract_zip_to_staging, install_staged_client,
+    package_kind_for_asset_url, restore_rollback, rollback_dir_for, sha256_hex,
+    validate_download_url_with_hosts, verify_downloaded_file, DownloadFileRequest,
+    DownloadJobRecoveryDecision, PackageKind,
 };
-use crate::models::{ClientUpdateCheck, UpdateAction, UpdateAsset, UpdateSourceKind};
+use crate::models::{
+    ClientUpdateCheck, DownloadCacheState, DownloadJob, DownloadJobStatus, UpdateAction,
+    UpdateAsset, UpdateSourceKind,
+};
 use std::fs;
 use std::io::Write;
 
@@ -14,6 +18,133 @@ fn sha256_hex_matches_known_value() {
         sha256_hex(b"ddnet-manager"),
         "739340afd53a209817636fca6d95d15abba5e236a11e49ff33e810111f00a55e"
     );
+}
+
+#[test]
+fn build_download_job_recovery_marks_verified_cache_as_installable() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let bytes = b"ddnet-manager";
+    let cache_path = temp_dir.path().join("download.zip");
+    fs::write(&cache_path, bytes).expect("测试缓存文件应写入成功");
+    let job = DownloadJob {
+        id: "download-verified".to_string(),
+        client_installation_id: "qmclient-main".to_string(),
+        client_id: "qmclient".to_string(),
+        channel: "stable".to_string(),
+        version: "2.62.4".to_string(),
+        asset_url:
+            "https://github.com/wxj881027/QmClient/releases/download/v2.62.4/QmClient-windows.zip"
+                .to_string(),
+        sha256: sha256_hex(bytes),
+        size: bytes.len() as u64,
+        status: DownloadJobStatus::Verified,
+        downloaded_bytes: bytes.len() as u64,
+        cache_path: cache_path.to_string_lossy().replace('\\', "/"),
+        error: None,
+    };
+
+    let recovery = build_download_job_recovery(&job).expect("恢复摘要应构建成功");
+
+    assert_eq!(recovery.cache_state, DownloadCacheState::Verified);
+    assert!(recovery.can_install);
+    assert!(!recovery.can_retry);
+}
+
+#[test]
+fn build_download_job_recovery_marks_missing_cache_as_retryable() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let missing_path = temp_dir.path().join("missing.zip");
+    let job = DownloadJob {
+        id: "download-missing".to_string(),
+        client_installation_id: "qmclient-main".to_string(),
+        client_id: "qmclient".to_string(),
+        channel: "stable".to_string(),
+        version: "2.62.4".to_string(),
+        asset_url:
+            "https://github.com/wxj881027/QmClient/releases/download/v2.62.4/QmClient-windows.zip"
+                .to_string(),
+        sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        size: 1024,
+        status: DownloadJobStatus::Failed,
+        downloaded_bytes: 128,
+        cache_path: missing_path.to_string_lossy().replace('\\', "/"),
+        error: Some("download interrupted".to_string()),
+    };
+
+    let recovery = build_download_job_recovery(&job).expect("缺失缓存恢复摘要应构建成功");
+
+    assert_eq!(recovery.cache_state, DownloadCacheState::Missing);
+    assert!(!recovery.can_install);
+    assert!(recovery.can_retry);
+}
+
+#[test]
+fn build_download_job_recovery_marks_corrupted_cache_as_retryable() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let cache_path = temp_dir.path().join("download.zip");
+    fs::write(&cache_path, b"broken").expect("损坏缓存文件应写入成功");
+    let job = DownloadJob {
+        id: "download-corrupted".to_string(),
+        client_installation_id: "qmclient-main".to_string(),
+        client_id: "qmclient".to_string(),
+        channel: "stable".to_string(),
+        version: "2.62.4".to_string(),
+        asset_url:
+            "https://github.com/wxj881027/QmClient/releases/download/v2.62.4/QmClient-windows.zip"
+                .to_string(),
+        sha256: sha256_hex(b"ddnet-manager"),
+        size: b"ddnet-manager".len() as u64,
+        status: DownloadJobStatus::Failed,
+        downloaded_bytes: b"broken".len() as u64,
+        cache_path: cache_path.to_string_lossy().replace('\\', "/"),
+        error: Some("download sha256 mismatch".to_string()),
+    };
+
+    let recovery = build_download_job_recovery(&job).expect("损坏缓存恢复摘要应构建成功");
+
+    assert_eq!(recovery.cache_state, DownloadCacheState::Corrupted);
+    assert!(!recovery.can_install);
+    assert!(recovery.can_retry);
+}
+
+#[test]
+fn recovery_decision_uses_verified_cache_for_install() {
+    let decision = DownloadJobRecoveryDecision::from_cache_state(
+        DownloadJobStatus::Verified,
+        DownloadCacheState::Verified,
+    );
+
+    assert!(decision.can_install);
+    assert!(!decision.can_retry);
+}
+
+#[test]
+fn recovery_decision_rejects_install_for_non_verified_jobs_even_with_verified_cache() {
+    for status in [
+        DownloadJobStatus::Pending,
+        DownloadJobStatus::Downloading,
+        DownloadJobStatus::Canceled,
+        DownloadJobStatus::Completed,
+    ] {
+        let decision = DownloadJobRecoveryDecision::from_cache_state(
+            status.clone(),
+            DownloadCacheState::Verified,
+        );
+
+        assert!(!decision.can_install);
+        assert_eq!(decision.can_retry, status != DownloadJobStatus::Completed);
+    }
+}
+
+#[test]
+fn recovery_decision_allows_install_retry_for_failed_install_with_verified_cache() {
+    let decision = DownloadJobRecoveryDecision::from_cache_state(
+        DownloadJobStatus::Failed,
+        DownloadCacheState::Verified,
+    );
+
+    assert!(decision.can_install);
+    assert!(!decision.can_retry);
 }
 
 #[test]
@@ -148,6 +279,36 @@ fn auto_install_guard_accepts_manager_owned_package_kinds() {
     auto_install_guard(PackageKind::Zip).expect("zip 应支持自动安装");
     auto_install_guard(PackageKind::TarXz).expect("tar.xz 应进入 Manager-owned 安装闭环");
     auto_install_guard(PackageKind::Dmg).expect("dmg 应进入 macOS Manager-owned 安装闭环");
+}
+
+#[test]
+fn failed_verified_unsupported_package_recovery_is_not_installable() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let cache_path = temp_dir.path().join("client.dmg");
+    fs::write(&cache_path, b"verified dmg payload").expect("测试缓存应写入成功");
+    let mut job = create_download_job(
+        "qmclient-main",
+        &sample_update("https://github.com/ddnet/ddnet/releases/download/v1/qmclient-macos.dmg"),
+        temp_dir.path(),
+    );
+    job.status = DownloadJobStatus::Failed;
+    job.downloaded_bytes = b"verified dmg payload".len() as u64;
+    job.cache_path = cache_path.to_string_lossy().replace('\\', "/");
+    job.sha256 = sha256_hex(b"verified dmg payload");
+    job.size = b"verified dmg payload".len() as u64;
+    job.error = Some(
+        "automatic .dmg install requires macOS hdiutil and app bundle copy support".to_string(),
+    );
+
+    let recovery = build_download_job_recovery(&job).expect("恢复摘要应可构建");
+
+    assert!(!recovery.can_install);
+    assert!(!recovery.can_retry);
+    assert_eq!(
+        recovery.cache_state,
+        crate::models::DownloadCacheState::Verified
+    );
+    assert!(recovery.user_message.contains("不支持自动安装"));
 }
 
 #[test]
@@ -358,6 +519,33 @@ fn validate_download_url_accepts_enabled_route_host() {
             &enabled_hosts,
         )
         .expect("显式启用的代理 host 应可用于下载");
+}
+
+#[test]
+fn validate_download_url_allows_local_smoke_hosts_when_enabled() {
+    crate::local_smoke::with_local_smoke_test_env(true, || {
+        for url in [
+            "http://localhost/file.zip",
+            "https://127.0.0.1/file.zip",
+            "http://10.0.0.1/file.zip",
+            "https://169.254.1.1/file.zip",
+            "http://[::1]/file.zip",
+            "https://[fc00::1]/file.zip",
+        ] {
+            validate_download_url_with_hosts(url, &[])
+                .expect("显式开启 local smoke 后应允许本地下载地址");
+        }
+    });
+}
+
+#[test]
+fn validate_download_url_still_rejects_public_http_when_local_smoke_enabled() {
+    crate::local_smoke::with_local_smoke_test_env(true, || {
+        let error = validate_download_url_with_hosts("http://example.com/file.zip", &[])
+            .expect_err("local smoke 开关不应放通公网 HTTP 下载地址");
+
+        assert_eq!(error, "download url must use https");
+    });
 }
 
 #[test]

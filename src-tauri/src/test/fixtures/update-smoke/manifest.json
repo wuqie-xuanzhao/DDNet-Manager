@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "clients": [
+    {
+      "client_id": "qmclient",
+      "channel": "stable",
+      "version": "9.9.9-smoke",
+      "release_notes": "local smoke build",
+      "assets": [
+        {
+          "platform": "windows-x86_64",
+          "asset_url": "http://127.0.0.1:18765/qmclient-smoke.zip",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "size": 1
+        }
+      ]
+    }
+  ]
+}

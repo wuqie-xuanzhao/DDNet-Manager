@@ -59,7 +59,7 @@
     "targets": "all",
     "category": "Game",
     "shortDescription": "DDNet third-party launcher.",
-    "longDescription": "A candy-styled DDNet manager for validating local third-party client directories, tracking resources and launching verified client executables.",
+    "longDescription": "A candy-styled DDNet manager for validating local third-party client directories, managing updates and launching verified client executables.",
     "copyright": "Copyright 2026 DDNet Manager Team",
     "icon": [
       "icons/32x32.png",

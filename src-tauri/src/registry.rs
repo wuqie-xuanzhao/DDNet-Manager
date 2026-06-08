@@ -1,4 +1,6 @@
-use crate::models::{AppSettings, ClientInstallation, CompatibilityStatus, InstallHistoryRecord};
+use crate::models::{
+    AppSettings, ClientInstallation, CompatibilityStatus, DownloadJob, InstallHistoryRecord,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 
@@ -134,6 +136,13 @@ impl ClientRegistry {
 
     /// 设置默认启动客户端。
     pub fn set_default_client(&self, id: &str) -> Result<(), String> {
+        let client = self
+            .client_installation_by_id(id)?
+            .ok_or_else(|| format!("client installation not found: {id}"))?;
+        if crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir)) {
+            return Err("local smoke client cannot be set as default".to_string());
+        }
+
         let tx = self
             .conn
             .unchecked_transaction()
@@ -158,6 +167,13 @@ impl ClientRegistry {
 
     /// 返回当前默认客户端。没有默认客户端时返回空。
     pub fn get_default_client(&self) -> Result<Option<ClientInstallation>, String> {
+        let clients = self.list_client_installations()?;
+        if clients.iter().any(|client| {
+            crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir))
+        }) {
+            self.remove_local_smoke_client_installations()?;
+        }
+
         let row = self
             .conn
             .query_row(
@@ -176,6 +192,17 @@ impl ClientRegistry {
             Ok(client)
         })
         .transpose()
+    }
+
+    /// 清理本地 smoke 自动验收残留的临时客户端记录。
+    pub fn remove_local_smoke_client_installations(&self) -> Result<(), String> {
+        for client in self.list_client_installations()? {
+            if crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir)) {
+                self.remove_client_installation(&client.id)?;
+            }
+        }
+
+        Ok(())
     }
 
     /// 从注册表移除客户端安装记录，不删除本地文件。
@@ -201,13 +228,16 @@ impl ClientRegistry {
             .optional()
             .map_err(|error| format!("failed to query app settings: {error}"))?;
 
-        value
-            .map(|json| {
-                serde_json::from_str(&json)
-                    .map_err(|error| format!("failed to parse app settings: {error}"))
-            })
-            .transpose()
-            .map(|settings| settings.unwrap_or_default())
+        let Some(json) = value else {
+            return Ok(AppSettings::default());
+        };
+
+        let settings = serde_json::from_str(&json)
+            .map_err(|error| format!("failed to parse app settings: {error}"))?;
+        if json.contains("\"github_token\"") {
+            self.save_app_settings(&settings)?;
+        }
+        Ok(settings)
     }
 
     /// 保存应用设置，并覆盖当前运行时使用的配置快照。
@@ -222,6 +252,127 @@ impl ClientRegistry {
             )
             .map(|_| ())
             .map_err(|error| format!("failed to save app settings: {error}"))
+    }
+
+    /// 保存或更新下载任务快照。
+    pub fn upsert_download_job(&self, job: &DownloadJob) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO download_jobs (
+                    id, client_installation_id, client_id, channel, version, asset_url,
+                    sha256, size, status, downloaded_bytes, cache_path, error, job_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                ON CONFLICT(id) DO UPDATE SET
+                    client_installation_id = excluded.client_installation_id,
+                    client_id = excluded.client_id,
+                    channel = excluded.channel,
+                    version = excluded.version,
+                    asset_url = excluded.asset_url,
+                    sha256 = excluded.sha256,
+                    size = excluded.size,
+                    status = excluded.status,
+                    downloaded_bytes = excluded.downloaded_bytes,
+                    cache_path = excluded.cache_path,
+                    error = excluded.error,
+                    job_json = excluded.job_json",
+                params![
+                    job.id,
+                    job.client_installation_id,
+                    job.client_id,
+                    job.channel,
+                    job.version,
+                    job.asset_url,
+                    job.sha256,
+                    job.size,
+                    serde_json::to_string(&job.status).map_err(|error| format!(
+                        "failed to serialize download job status: {error}"
+                    ))?,
+                    job.downloaded_bytes,
+                    job.cache_path,
+                    job.error,
+                    serde_json::to_string(job)
+                        .map_err(|error| format!("failed to serialize download job: {error}"))?
+                ],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("failed to upsert download job: {error}"))
+    }
+
+    /// 返回指定客户端的下载任务列表；为空时返回全部任务。
+    pub fn list_download_jobs(
+        &self,
+        client_installation_id: Option<&str>,
+    ) -> Result<Vec<DownloadJob>, String> {
+        let sql = if client_installation_id.is_some() {
+            "SELECT job_json
+             FROM download_jobs
+             WHERE client_installation_id = ?1
+             ORDER BY id DESC"
+        } else {
+            "SELECT job_json
+             FROM download_jobs
+             ORDER BY id DESC"
+        };
+        let mut statement = self
+            .conn
+            .prepare(sql)
+            .map_err(|error| format!("failed to query download jobs: {error}"))?;
+        let mut jobs = Vec::new();
+        if let Some(client_installation_id) = client_installation_id {
+            let rows = statement
+                .query_map(params![client_installation_id], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(|error| format!("failed to read download jobs: {error}"))?;
+            for row in rows {
+                let job_json =
+                    row.map_err(|error| format!("failed to read download job row: {error}"))?;
+                jobs.push(
+                    serde_json::from_str(&job_json)
+                        .map_err(|error| format!("failed to parse download job: {error}"))?,
+                );
+            }
+        } else {
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| format!("failed to read download jobs: {error}"))?;
+            for row in rows {
+                let job_json =
+                    row.map_err(|error| format!("failed to read download job row: {error}"))?;
+                jobs.push(
+                    serde_json::from_str(&job_json)
+                        .map_err(|error| format!("failed to parse download job: {error}"))?,
+                );
+            }
+        }
+        Ok(jobs)
+    }
+
+    /// 按下载任务 ID 读取任务快照。
+    pub fn download_job_by_id(&self, id: &str) -> Result<Option<DownloadJob>, String> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT job_json FROM download_jobs WHERE id = ?1 LIMIT 1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("failed to query download job: {error}"))?;
+
+        row.map(|job_json| {
+            serde_json::from_str(&job_json)
+                .map_err(|error| format!("failed to parse download job: {error}"))
+        })
+        .transpose()
+    }
+
+    /// 删除已不再需要的下载任务快照。
+    pub fn remove_download_job(&self, id: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM download_jobs WHERE id = ?1", params![id])
+            .map(|_| ())
+            .map_err(|error| format!("failed to remove download job: {error}"))
     }
 
     /// 记录一次已完成或失败的 Manager-owned 安装事务。
@@ -375,6 +526,21 @@ impl ClientRegistry {
                     scanned_at TEXT NOT NULL,
                     root TEXT NOT NULL,
                     candidate_count INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS download_jobs (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    client_installation_id TEXT NOT NULL,
+                    client_id TEXT NOT NULL,
+                    channel TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    asset_url TEXT NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    size INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    downloaded_bytes INTEGER NOT NULL,
+                    cache_path TEXT NOT NULL,
+                    error TEXT,
+                    job_json TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS install_history (
                     id TEXT PRIMARY KEY NOT NULL,

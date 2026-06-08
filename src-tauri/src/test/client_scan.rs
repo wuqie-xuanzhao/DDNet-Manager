@@ -314,6 +314,34 @@ fn scan_client_installations_respects_excluded_paths() {
 }
 
 #[test]
+fn scan_client_installations_ignores_local_smoke_tmp_clients() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let install_dir = temp_dir
+        .path()
+        .join("tmp")
+        .join("tauri-update-smoke")
+        .join("run-1")
+        .join("client-install")
+        .join("QmClient");
+    std::fs::create_dir_all(&install_dir).expect("测试 smoke 客户端目录应创建成功");
+    std::fs::write(install_dir.join("DDNet.exe"), b"smoke-current-build")
+        .expect("测试可执行文件应写入成功");
+    std::fs::write(install_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+    std::fs::create_dir(install_dir.join("data")).expect("测试 data 目录应创建成功");
+
+    let options = scan::ScanOptions {
+        roots: vec![temp_dir.path().to_path_buf()],
+        include_saved_paths: false,
+        deep: true,
+        use_everything: false,
+        excluded_paths: Vec::new(),
+    };
+    let installations = scan::scan_client_installations(&options).expect("扫描应成功");
+
+    assert!(installations.is_empty());
+}
+
+#[test]
 fn excluded_paths_match_directory_boundaries() {
     let excluded = vec![std::path::PathBuf::from("D:/Games/Qm")];
 

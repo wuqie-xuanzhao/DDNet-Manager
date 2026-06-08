@@ -12,6 +12,9 @@ pub mod client_catalog;
 /// 客户端进程识别与启动。
 pub mod process;
 
+/// 本地 smoke 受控放行策略。
+pub mod local_smoke;
+
 /// 更新 manifest 拉取与解析。
 pub mod manifest;
 
@@ -24,12 +27,6 @@ pub mod github_release;
 /// DDNet 官方下载页与 sha256sums 适配器。
 pub mod ddnet_source;
 
-/// cfg bind 解析能力。
-pub mod cfg;
-
-/// Workshop 公开 JSON 拉取与适配能力。
-pub mod workshop;
-
 /// 下载校验与下载事务基础能力。
 pub mod download;
 
@@ -38,9 +35,6 @@ pub mod network_route;
 
 /// 客户端注册表持久化能力。
 pub mod registry;
-
-/// Manager 专用 cfg 文本生成与文件事务基础能力。
-pub mod file_tx;
 
 /// 版本号比较与更新判断。
 pub mod version;
@@ -72,6 +66,7 @@ fn main() {
             commands::get_default_client,
             commands::load_app_settings,
             commands::save_app_settings,
+            commands::report_local_smoke_result,
             commands::list_install_history,
             commands::launch_client,
             commands::launch_default_client,
@@ -81,6 +76,7 @@ fn main() {
             commands::start_update_download,
             commands::cancel_download,
             commands::get_download_job,
+            commands::list_download_job_recoveries,
             commands::install_downloaded_update
         ])
         .run(tauri::generate_context!());

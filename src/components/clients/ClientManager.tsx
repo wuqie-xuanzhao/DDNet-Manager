@@ -153,13 +153,15 @@ export function ClientManager() {
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
+            type="button"
             onClick={() => void validateAndSave()}
             disabled={!path.trim() || isBusy}
-            className="border border-cyan-200 bg-cyan-200 px-4 py-2 text-sm font-black text-slate-950 transition disabled:cursor-not-allowed disabled:border-cyan-200/20 disabled:bg-cyan-200/20 disabled:text-cyan-100/55"
+            className="border border-cyan-200 bg-cyan-200 px-4 py-2 text-sm font-black text-cyan-950 transition disabled:cursor-not-allowed disabled:border-cyan-200/20 disabled:bg-cyan-200/20 disabled:text-cyan-100/55"
           >
             {isBusy ? "请稍候..." : "验证并保存"}
           </button>
           <button
+            type="button"
             onClick={() => void scan()}
             disabled={isBusy}
             className="border border-white/15 bg-white/8 px-4 py-2 text-sm font-black text-slate-100 transition hover:border-cyan-200/35 disabled:cursor-not-allowed disabled:opacity-45"
@@ -190,6 +192,7 @@ export function ClientManager() {
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
+                      type="button"
                       onClick={() => void makeDefault(client.id)}
                       disabled={client.is_default || isBusy}
                       className="border border-white/12 px-3 py-1.5 text-xs font-black text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -197,6 +200,7 @@ export function ClientManager() {
                       设为默认
                     </button>
                     <button
+                      type="button"
                       onClick={() => void remove(client.id)}
                       disabled={isBusy}
                       className="border border-red-300/20 px-3 py-1.5 text-xs font-black text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
@@ -221,6 +225,7 @@ export function ClientManager() {
                   <div className="text-sm font-black text-cyan-100">{client.display_name}</div>
                   <div className="mt-1 break-all text-xs text-slate-400">{client.install_dir}</div>
                   <button
+                    type="button"
                     onClick={() => void saveCandidate(client)}
                     disabled={isBusy}
                     className="mt-3 border border-cyan-200/35 px-3 py-1.5 text-xs font-black text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40"
