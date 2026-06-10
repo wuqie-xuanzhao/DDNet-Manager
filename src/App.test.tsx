@@ -101,7 +101,7 @@ describe("App launcher shell", () => {
 
     expect(screen.getByRole("dialog", { name: "设置" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "客户端" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "更新" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下载" })).toBeInTheDocument();
   });
 
   it("lets users click a game card from the library list", () => {

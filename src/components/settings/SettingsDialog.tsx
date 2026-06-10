@@ -3,7 +3,7 @@ import { X, Loader2, ArrowUpRight, CheckCircle2, AlertCircle } from "lucide-reac
 import { useEffect, useRef, useState } from "react";
 import { ClientManager } from "@/components/clients/ClientManager";
 import { UpdatePanel } from "@/components/update/UpdatePanel";
-import { networkRouteUrl, updateNetworkRoute } from "@/lib/settings";
+
 import { getAppVersion, checkAppUpdate } from "@/lib/tauri";
 import type { AppSettings, LauncherState, LocalSmokeAutomationConfig, AppUpdateCheck } from "@/types";
 import logoMark from "@/assets/logo.svg";
@@ -41,7 +41,6 @@ const sections: { id: SettingsSectionId; label: string }[] = [
   { id: "general", label: "通用" },
   { id: "clients", label: "客户端" },
   { id: "download", label: "下载" },
-  { id: "updates", label: "更新" },
   { id: "appearance", label: "外观" },
   { id: "tools", label: "工具" },
   { id: "about", label: "关于" }
@@ -78,18 +77,7 @@ function SectionHeader(props: { children: React.ReactNode }) {
   );
 }
 
-function InputField(props: { value: string; onChange: (value: string) => void; placeholder?: string; type?: string; "aria-label"?: string }) {
-  return (
-    <input
-      type={props.type ?? "text"}
-      value={props.value}
-      onChange={(e) => props.onChange(e.target.value)}
-      placeholder={props.placeholder}
-      aria-label={props["aria-label"]}
-      className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
-    />
-  );
-}
+
 
 export function SettingsDialog(props: SettingsDialogProps) {
   const dialogRef = useRef<HTMLElement>(null);
@@ -199,54 +187,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
         return <ClientManager />;
       case "download":
         return (
-          <div className="space-y-5">
-            <div className="space-y-3">
-              <SectionHeader>网络路由</SectionHeader>
-              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
-                    const active = (props.settings.network_route?.mode ?? "direct") === mode;
-                    return (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => update(updateNetworkRoute(props.settings, mode, networkRouteUrl(props.settings)))}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
-                          active
-                            ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
-                            : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-black/20"
-                        }`}
-                      >
-                        {mode === "direct" ? "直连" : mode === "proxy_prefix" ? "代理前缀" : "镜像模板"}
-                      </button>
-                    );
-                  })}
-                </div>
-                {(props.settings.network_route?.mode ?? "direct") !== "direct" ? (
-                  <InputField
-                    aria-label={props.settings.network_route?.mode === "mirror_template" ? "镜像模板地址" : "代理前缀地址"}
-                    value={networkRouteUrl(props.settings)}
-                    onChange={(value) => update(updateNetworkRoute(props.settings, props.settings.network_route?.mode ?? "proxy_prefix", value))}
-                    placeholder={props.settings.network_route?.mode === "mirror_template" ? "https://mirror.example/{url}" : "https://proxy.example/"}
-                  />
-                ) : null}
-              </div>
-            </div>
-            <div className="space-y-3">
-              <SectionHeader>高级更新源</SectionHeader>
-              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4">
-                <InputField
-                  aria-label="manifest 地址"
-                  value={props.settings.advanced_manifest_url ?? ""}
-                  onChange={(value) => update({ ...props.settings, advanced_manifest_url: value.trim() ? value : null })}
-                  placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
-                />
-              </div>
-            </div>
-          </div>
+          <UpdatePanel
+            smokeAutomation={props.smokeAutomation}
+            settings={props.settings}
+            onUpdateSettings={props.onUpdateSettings}
+          />
         );
-      case "updates":
-        return <UpdatePanel smokeAutomation={props.smokeAutomation} />;
       case "appearance":
         return (
           <div className="space-y-5">
@@ -339,7 +285,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   <button
                     type="button"
                     onClick={handleCheckUpdate}
-                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide bg-[var(--app-accent)] text-black hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(65,242,255,0.4)] transition-all cursor-pointer"
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide bg-[var(--app-accent)] text-black hover:bg-cyan-400 transition-all cursor-pointer"
                   >
                     检查更新
                   </button>
@@ -371,7 +317,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   <button
                     type="button"
                     onClick={() => window.open(updateInfo.release_url, "_blank", "noreferrer")}
-                    className="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 transition-all cursor-pointer shadow-md shadow-amber-500/10"
+                    className="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 transition-all cursor-pointer"
                   >
                     <span>前往下载</span>
                     <ArrowUpRight className="w-3.5 h-3.5" />

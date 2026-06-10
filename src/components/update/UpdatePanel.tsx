@@ -8,7 +8,6 @@ import {
   isTauriRuntime,
   listDownloadJobRecoveries,
   listInstallHistory,
-  loadAppSettings,
   reportLocalSmokeResult,
   startUpdateDownload,
   upsertClientInstallation,
@@ -21,7 +20,7 @@ import type {
   DownloadJobRecovery,
   InstallHistoryRecord,
   LocalSmokeAutomationConfig,
-  NetworkRouteMode
+  AppSettings
 } from "../../types";
 import { getUpdateErrorMessage } from "../../lib/errors";
 import {
@@ -31,8 +30,7 @@ import {
   progressPercent,
   resolveUpdateManifestInput
 } from "../../lib/updateLogic";
-
-const MANIFEST_URL_PLACEHOLDER = "Manifest 地址";
+import { updateNetworkRoute } from "../../lib/settings";
 
 type SmokeStage = "bootstrap" | "check" | "download" | "install";
 
@@ -127,7 +125,11 @@ function updateSourceLabel(source: ClientUpdateCheck["source_kind"]) {
   }
 }
 
-export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfig | null }) {
+export function UpdatePanel(props: {
+  smokeAutomation?: LocalSmokeAutomationConfig | null;
+  settings: AppSettings;
+  onUpdateSettings: (settings: AppSettings) => Promise<void>;
+}) {
   const tauriRuntime = isTauriRuntime();
   const smokeAutomation = props.smokeAutomation ?? null;
   const smokeEnabled = smokeAutomation !== null;
@@ -135,11 +137,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
   const smokeManifestUrl = smokeAutomation?.manifestUrl.trim() ?? "";
   const smokeCloseWindowOnFinish = smokeAutomation?.closeWindowOnFinish ?? false;
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
-  const [manifestUrl, setManifestUrl] = useState("");
-  const [useManifestSource, setUseManifestSource] = useState(false);
   const [channel, setChannel] = useState("stable");
-  const [routeMode, setRouteMode] = useState<NetworkRouteMode>("direct");
-  const [routeUrl, setRouteUrl] = useState("");
   const [client, setClient] = useState<ClientInstallation | null>(null);
   const [update, setUpdate] = useState<ClientUpdateCheck | null>(null);
   const [job, setJob] = useState<DownloadJob | null>(null);
@@ -154,11 +152,15 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
   const smokeReportedRef = useRef(false);
   const smokeFailureStageRef = useRef<SmokeStage>("bootstrap");
   const hydrationKey = `${tauriRuntime ? "tauri" : "browser"}:${smokeEnabled ? smokeManifestUrl : "manual"}`;
+
+  const activeRouteMode = props.settings.network_route?.mode ?? "direct";
+  const activeRouteUrl = props.settings.network_route?.proxy_prefix_url ?? props.settings.network_route?.mirror_template ?? "";
+
   const manifestInput = resolveUpdateManifestInput({
     smokeEnabled,
     smokeManifestUrl,
-    useManifestSource,
-    manifestUrl
+    useManifestSource: props.settings.advanced_manifest_url !== null,
+    manifestUrl: props.settings.advanced_manifest_url ?? ""
   });
   const activeUseManifestSource = manifestInput.useManifestSource;
   const activeManifestUrl = manifestInput.manifestUrl;
@@ -233,35 +235,18 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
 
     const hydrate = async () => {
       try {
-        const [storedClient, settings] = await Promise.all([
-          smokeEnabled ? Promise.resolve(null) : getDefaultClient(),
-          loadAppSettings()
-        ]);
-        if (!alive) {
-          return;
-        }
-
         const nextClient = smokeEnabled
           ? await upsertClientInstallation({
               install_dir: (await validateClientDir(smokeClientInstallDir)).install_dir,
               is_default: false
             })
-          : storedClient;
+          : await getDefaultClient();
         if (!alive) {
           return;
         }
 
         setClient(nextClient);
         currentClientIdRef.current = nextClient?.id ?? null;
-        if (smokeEnabled) {
-          setManifestUrl(smokeManifestUrl);
-        } else if (settings.advanced_manifest_url) {
-          setManifestUrl(settings.advanced_manifest_url);
-        }
-        if (settings.network_route) {
-          setRouteMode(settings.network_route.mode);
-          setRouteUrl(settings.network_route.proxy_prefix_url ?? settings.network_route.mirror_template ?? "");
-        }
         if (nextClient) {
           const [nextRecoveries, nextHistory] = await Promise.all([
             listDownloadJobRecoveries(nextClient.id),
@@ -487,8 +472,8 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
         clientId: client.client_id,
         channel,
         manifestUrl: activeManifestUrl,
-        routeMode,
-        routeUrl,
+        routeMode: activeRouteMode,
+        routeUrl: activeRouteUrl,
         useManifestSource: activeUseManifestSource
       }));
       if (latestRequestIdRef.current !== requestId) {
@@ -533,8 +518,8 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
     channel,
     client,
     completeSmoke,
-    routeMode,
-    routeUrl,
+    activeRouteMode,
+    activeRouteUrl,
     setError,
     setIsBusy,
     setJob,
@@ -576,8 +561,8 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
         clientInstallationId: client.id,
         channel: update.channel,
         manifestUrl: activeManifestUrl,
-        routeMode,
-        routeUrl,
+        routeMode: activeRouteMode,
+        routeUrl: activeRouteUrl,
         useManifestSource: activeUseManifestSource
       }));
       setJob(nextJob);
@@ -604,8 +589,8 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
     client,
     completeSmoke,
     refreshClientArtifacts,
-    routeMode,
-    routeUrl,
+    activeRouteMode,
+    activeRouteUrl,
     setError,
     setIsBusy,
     setJob,
@@ -699,58 +684,78 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
           <div className="flex items-center justify-between py-1">
             <span className="text-xs font-medium text-[var(--app-text-secondary)]">类型</span>
             <span className="text-xs font-bold text-[var(--app-text)]">
-              {activeUseManifestSource ? "ManifestSource" : "内置客户端更新源"}
+              {props.settings.advanced_manifest_url !== null ? "自定义更新配置文件" : "内置客户端更新源"}
             </span>
           </div>
           <div className="border-t border-[var(--app-border-subtle)]" />
           <div className="flex items-center justify-between py-1">
-            <label className="text-xs font-medium text-[var(--app-text-secondary)]" htmlFor="channel-input">渠道</label>
-            <input
-              id="channel-input"
+            <label className="text-xs font-medium text-[var(--app-text-secondary)]" htmlFor="channel-select">更新渠道</label>
+            <select
+              id="channel-select"
               value={channel}
               onChange={(event) => { resetResult(); setChannel(event.target.value); }}
               disabled={isBusy}
-              className="w-32 bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-2.5 py-1.5 text-right text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
-              spellCheck={false}
-            />
+              className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-2 py-1 text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors cursor-pointer w-32"
+            >
+              <option value="stable">stable (稳定版)</option>
+              <option value="nightly">nightly (测试版)</option>
+            </select>
           </div>
         </div>
       </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">Manifest</span>
+          <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">自定义更新配置</span>
         </div>
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3">
-          <div className="flex items-center justify-between py-1">
-            <span className="text-xs font-medium text-[var(--app-text-secondary)]">Manifest 模式</span>
+          <div className="flex items-start justify-between py-1">
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-[var(--app-text-secondary)] block">使用自定义更新源 (高级)</span>
+              <span className="text-[10px] text-[var(--app-text-dim)] block leading-relaxed max-w-[280px]">
+                启用后将使用自定义的 Manifest JSON 配置文件作为客户端更新源，通常用于第三方或开发版客户端。
+              </span>
+            </div>
             <button
               type="button"
               role="switch"
-              aria-checked={activeUseManifestSource}
-              onClick={() => { resetResult(); setUseManifestSource((value) => !value); }}
+              aria-checked={props.settings.advanced_manifest_url !== null}
+              onClick={() => {
+                resetResult();
+                const isCurrentlyActive = props.settings.advanced_manifest_url !== null;
+                void props.onUpdateSettings({
+                  ...props.settings,
+                  advanced_manifest_url: isCurrentlyActive ? null : ""
+                });
+              }}
               disabled={isBusy}
               className={`w-10 h-5 rounded-full flex items-center transition-colors px-[3px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
-                activeUseManifestSource ? "bg-[var(--app-accent)]" : "bg-[var(--app-surface)] border border-[var(--app-border-subtle)]"
+                props.settings.advanced_manifest_url !== null ? "bg-[var(--app-accent)]" : "bg-[var(--app-surface)] border border-[var(--app-border-subtle)]"
               }`}
             >
               <div
                 className={`w-[14px] h-[14px] rounded-full transition-transform bg-white shadow-sm ${
-                  activeUseManifestSource ? "translate-x-5" : "translate-x-0"
+                  props.settings.advanced_manifest_url !== null ? "translate-x-5" : "translate-x-0"
                 }`}
               />
             </button>
           </div>
-          {activeUseManifestSource ? (
+          {props.settings.advanced_manifest_url !== null ? (
             <div className="pt-2 border-t border-[var(--app-border-subtle)]">
               <input
                 id="manifest-url-input"
-                aria-label="自维护 manifest 地址"
-                value={activeManifestUrl}
-                onChange={(event) => { resetResult(); setManifestUrl(event.target.value); }}
+                aria-label="自定义 manifest 地址"
+                value={props.settings.advanced_manifest_url}
+                onChange={(event) => {
+                  resetResult();
+                  void props.onUpdateSettings({
+                    ...props.settings,
+                    advanced_manifest_url: event.target.value
+                  });
+                }}
                 disabled={isBusy}
                 className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
-                placeholder={MANIFEST_URL_PLACEHOLDER}
+                placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
                 spellCheck={false}
               />
             </div>
@@ -760,17 +765,20 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
 
       <div className="space-y-3">
         <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">网络</span>
+          <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">网络路由</span>
         </div>
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
           <div className="flex flex-wrap gap-2">
             {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
-              const active = routeMode === mode;
+              const active = activeRouteMode === mode;
               return (
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => { resetResult(); setRouteMode(mode); }}
+                  onClick={() => {
+                    resetResult();
+                    void props.onUpdateSettings(updateNetworkRoute(props.settings, mode, activeRouteUrl));
+                  }}
                   disabled={isBusy}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
                     active
@@ -783,15 +791,18 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
               );
             })}
           </div>
-          {routeMode !== "direct" ? (
+          {activeRouteMode !== "direct" ? (
             <div className="pt-2 border-t border-[var(--app-border-subtle)]">
               <input
-                aria-label={routeMode === "proxy_prefix" ? "代理前缀地址" : "镜像模板地址"}
-                value={routeUrl}
-                onChange={(event) => { resetResult(); setRouteUrl(event.target.value); }}
+                aria-label={activeRouteMode === "proxy_prefix" ? "代理前缀地址" : "镜像模板地址"}
+                value={activeRouteUrl}
+                onChange={(event) => {
+                  resetResult();
+                  void props.onUpdateSettings(updateNetworkRoute(props.settings, activeRouteMode, event.target.value));
+                }}
                 disabled={isBusy}
                 className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
-                placeholder={routeMode === "proxy_prefix" ? "填写你的代理前缀地址" : "填写包含 {url} 的镜像模板"}
+                placeholder={activeRouteMode === "proxy_prefix" ? "填写你的代理前缀地址 (如 https://proxy.example/)" : "填写包含 {url} 的镜像模板"}
                 spellCheck={false}
               />
             </div>
@@ -815,7 +826,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
             type="button"
             onClick={() => void check()}
             disabled={!visibleClient || isBusy}
-            className="w-full h-10 rounded-lg bg-[var(--app-accent)] text-black hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(65,242,255,0.4)] text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-45"
+            className="w-full h-10 rounded-lg bg-[var(--app-accent)] text-black hover:bg-cyan-400 text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-45"
           >
             {isBusy ? "请稍候..." : "检查更新"}
           </button>
@@ -844,7 +855,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
                       window.open(update.action_url, "_blank", "noreferrer");
                     }
                   }}
-                  className="mt-4 inline-flex h-10 items-center rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(65,242,255,0.4)] transition-all cursor-pointer"
+                  className="mt-4 inline-flex h-10 items-center rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer"
                 >
                   打开上游页面
                 </button>
@@ -865,7 +876,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
                 type="button"
                 onClick={() => void download()}
                 disabled={!update.needs_update || isBusy}
-                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(65,242,255,0.4)] transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
               >
                 开始下载
               </button>
@@ -883,7 +894,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
                 <span>{percent}%</span>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/20">
-                <div className="h-full bg-[var(--app-accent)] shadow-[0_0_8px_var(--app-accent)] transition-all" style={{ width: `${percent}%` }} />
+                <div className="h-full bg-[var(--app-accent)] transition-all" style={{ width: `${percent}%` }} />
               </div>
               <div className="mt-3 text-xs leading-6 text-[var(--app-text-muted)]">
                 {job.status === "verified"
@@ -897,7 +908,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
                 type="button"
                 onClick={() => void installJob(job.id)}
                 disabled={job.status !== "verified" || isBusy}
-                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(65,242,255,0.4)] transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
               >
                 安装更新
               </button>
@@ -912,7 +923,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
             <div>
               <div className="text-xs font-black text-[var(--app-text-muted)]">恢复任务</div>
             </div>
-            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-[11px] font-black text-black shadow-[0_0_10px_rgba(65,242,255,0.3)]">{visibleRecoveries.length}</span>
+            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-[11px] font-black text-black">{visibleRecoveries.length}</span>
           </div>
           {visibleRecoveries.length > 0 ? (
             <div className="mt-3 grid gap-3">
@@ -934,7 +945,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
                       type="button"
                       onClick={() => void installJob(recovery.job.id, recovery.job)}
                       disabled={isBusy}
-                      className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(65,242,255,0.4)] transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                      className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       继续安装
                     </button>
@@ -954,7 +965,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
             <div>
               <div className="text-xs font-black text-[var(--app-text-muted)]">安装历史</div>
             </div>
-            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-[11px] font-black text-black shadow-[0_0_10px_rgba(65,242,255,0.3)]">{visibleInstallHistory.length}</span>
+            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-[11px] font-black text-black">{visibleInstallHistory.length}</span>
           </div>
           {visibleInstallHistory.length > 0 ? (
             <div className="mt-3 grid gap-3">

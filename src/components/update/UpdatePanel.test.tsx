@@ -98,6 +98,16 @@ const externalJob: DownloadJob = {
   error: null
 };
 
+const mockSettings = {
+  network_route: null,
+  scan_excluded_paths: [],
+  use_everything: false,
+  close_panel_after_launch: true,
+  auto_check_updates: false,
+  advanced_manifest_url: null
+};
+const mockOnUpdateSettings = vi.fn().mockResolvedValue(undefined);
+
 describe("UpdatePanel event ownership", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -106,14 +116,7 @@ describe("UpdatePanel event ownership", () => {
     closeWindow.mockResolvedValue(undefined);
     reportLocalSmokeResult.mockResolvedValue(undefined);
     getDefaultClient.mockResolvedValue(defaultClient);
-    loadAppSettings.mockResolvedValue({
-      network_route: null,
-      scan_excluded_paths: [],
-      use_everything: false,
-      close_panel_after_launch: true,
-      auto_check_updates: false,
-      advanced_manifest_url: null
-    });
+    loadAppSettings.mockResolvedValue(mockSettings);
     listDownloadJobRecoveries.mockResolvedValue([]);
     listInstallHistory.mockResolvedValue([]);
     upsertClientInstallation.mockResolvedValue({
@@ -139,7 +142,7 @@ describe("UpdatePanel event ownership", () => {
   });
 
   it("ignores download events for a different client installation", async () => {
-    render(<UpdatePanel />);
+    render(<UpdatePanel settings={mockSettings} onUpdateSettings={mockOnUpdateSettings} />);
 
     await waitFor(() => {
       expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-current");
@@ -154,7 +157,7 @@ describe("UpdatePanel event ownership", () => {
   });
 
   it("ignores install progress for jobs outside the current panel", async () => {
-    render(<UpdatePanel />);
+    render(<UpdatePanel settings={mockSettings} onUpdateSettings={mockOnUpdateSettings} />);
 
     await waitFor(() => {
       expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-current");
@@ -170,6 +173,8 @@ describe("UpdatePanel event ownership", () => {
   it("uses the validated smoke client instead of the persisted default client in smoke mode", async () => {
     render(
       <UpdatePanel
+        settings={mockSettings}
+        onUpdateSettings={mockOnUpdateSettings}
         smokeAutomation={{
           clientInstallDir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient",
           manifestUrl: "http://127.0.0.1:18765/manifest.json",
@@ -193,6 +198,8 @@ describe("UpdatePanel event ownership", () => {
   it("persists the smoke client as a non-default installation before loading artifacts", async () => {
     render(
       <UpdatePanel
+        settings={mockSettings}
+        onUpdateSettings={mockOnUpdateSettings}
         smokeAutomation={{
           clientInstallDir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient",
           manifestUrl: "http://127.0.0.1:18765/manifest.json",
@@ -217,6 +224,8 @@ describe("UpdatePanel event ownership", () => {
 
     render(
       <UpdatePanel
+        settings={mockSettings}
+        onUpdateSettings={mockOnUpdateSettings}
         smokeAutomation={{
           clientInstallDir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient",
           manifestUrl: "http://127.0.0.1:18765/manifest.json",
