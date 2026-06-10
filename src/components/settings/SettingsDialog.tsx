@@ -332,9 +332,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 <span className="text-sm font-bold text-[var(--app-text)] block tracking-wide">DDNet Manager</span>
                 <div className="flex items-center space-x-2 mt-1">
                   <span className="text-[var(--app-text-secondary)] font-semibold">版本 v{appVersion}</span>
-                  <span className="text-[10px] bg-[var(--app-border-strong)] text-[var(--app-text-dim)] px-2 py-0.5 rounded-full font-mono">
-                    {props.selectedClientType.name}
-                  </span>
                 </div>
               </div>
               <div>
