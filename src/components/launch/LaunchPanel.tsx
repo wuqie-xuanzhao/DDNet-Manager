@@ -1,6 +1,6 @@
 import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import { useState, type ReactNode } from "react";
-import { GameIcon } from "@/components/icons/GameIcon";
+import { ArrowDown, CloudDownload, Folder } from "lucide-react";
 import type { LauncherState, LaunchReadiness } from "../../types";
 
 type LaunchButtonProps = {
@@ -39,9 +39,18 @@ function LaunchButton(props: LaunchButtonProps) {
     await props.onClick();
   };
 
-  const stateLabel = props.state === "validating" ? "启动，正在验证" : props.state === "launching" ? "启动中" : "启动";
+  const stateLabel =
+    props.state === "validating" ? "启动，正在验证" : props.state === "launching" ? "启动中" : props.state === "running" ? "运行中" : "启动";
   const buttonText =
-    props.state === "launching" ? "启动中" : props.state === "validating" ? "验证中" : props.state === "ready" || props.state === "running" ? "开始游戏" : "获取游戏";
+    props.state === "launching"
+      ? "启动中"
+      : props.state === "validating"
+        ? "验证中"
+        : props.state === "running"
+          ? "运行中"
+          : props.state === "ready"
+            ? "开始游戏"
+            : "获取游戏";
 
   return (
     <motion.button
@@ -52,13 +61,12 @@ function LaunchButton(props: LaunchButtonProps) {
       aria-label={stateLabel}
       whileHover={props.disabled ? undefined : { y: -3, scale: 1.01 }}
       whileTap={props.disabled ? undefined : { scale: 0.99 }}
-      className="group relative flex h-[72px] w-[min(70vw,340px)] items-center justify-center gap-6 overflow-hidden rounded-full bg-[#ffd91f] px-5 text-center text-[#111213] shadow-[0_20px_46px_rgba(0,0,0,0.36)] transition-colors duration-200 hover:bg-[#202329] hover:text-[#ffd91f] disabled:cursor-not-allowed disabled:opacity-70 min-[1440px]:h-[78px] min-[1440px]:w-[370px]"
+      className="group relative grid h-[54px] w-[min(70vw,276px)] grid-cols-[42px_1fr_12px] items-center gap-5 overflow-hidden rounded-full bg-[#ffd91f] px-[18px] text-center text-[#111213] transition-colors duration-200 hover:bg-[#202329] hover:text-[#ffd91f] disabled:cursor-not-allowed disabled:opacity-70"
     >
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.36),rgba(255,255,255,0)_52%,rgba(17,18,19,0.08))]" />
-      <span className="relative z-10 grid h-12 w-12 place-items-center rounded-full bg-[#111213] text-[#ffd91f] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] transition-colors duration-200 group-hover:bg-[#ffd91f] group-hover:text-[#111213]">
-        <GameIcon name="cloudDownload" className="size-7 animate-[download-bob_1.2s_ease-in-out_infinite]" />
+      <span className="relative z-10 grid h-[42px] w-[42px] shrink-0 place-items-center rounded-full bg-[#111213] text-[#ffd91f] transition-colors duration-200 group-hover:bg-[#ffd91f] group-hover:text-[#111213]">
+        <ArrowDown size={23} strokeWidth={4} />
       </span>
-      <span className="relative z-10 text-[26px] font-black tracking-[0]">{buttonText}</span>
+      <span className="relative z-10 text-left text-[22px] font-black leading-none tracking-[0]">{buttonText}</span>
     </motion.button>
   );
 }
@@ -87,21 +95,21 @@ function LaunchReadinessCard(props: { readiness: LaunchReadiness | null }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, ease: "easeOut" }}
-      className="w-[min(86vw,420px)] overflow-hidden rounded-[18px] border border-white/12 bg-[#071113]/66 text-white shadow-[0_18px_46px_rgba(0,0,0,0.28)] backdrop-blur-md"
+      className="w-[min(86vw,392px)] overflow-hidden rounded-[18px] border border-white/12 bg-[#071113]/66 text-white shadow-[0_18px_46px_rgba(0,0,0,0.28)] backdrop-blur-md"
     >
       <div className="flex items-start justify-between gap-4 px-5 pt-4">
         <div className="min-w-0">
-          <div className="text-xs font-black uppercase tracking-[0.18em] text-white/48">启动状态</div>
-          <div className="mt-2 truncate text-xl font-black text-white">
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-white/48">启动状态</div>
+          <div className="mt-2 truncate text-lg font-black text-white">
             {readiness.client?.display_name ?? "未设置默认客户端"}
           </div>
-          <p className="mt-1 text-sm font-bold text-white/66">{readiness.user_message}</p>
+          <p className="mt-1 text-xs font-bold text-white/66">{readiness.user_message}</p>
         </div>
-        <span className={`shrink-0 rounded-full border px-3 py-1 text-xs font-black ${tone}`}>{readiness.status_label}</span>
+        <span className={`shrink-0 rounded-full border px-3 py-1 text-[11px] font-black ${tone}`}>{readiness.status_label}</span>
       </div>
 
       {readiness.client ? (
-        <div className="mt-4 grid grid-cols-2 gap-2 px-5 text-xs font-bold text-white/64">
+        <div className="mt-4 grid grid-cols-2 gap-2 px-5 text-[11px] font-bold text-white/64">
           <div className="rounded-xl bg-white/8 px-3 py-2">
             <div className="text-white/38">版本</div>
             <div className="mt-1 truncate text-white/82">{readiness.client.version ?? "未知"}</div>
@@ -120,7 +128,7 @@ function LaunchReadinessCard(props: { readiness: LaunchReadiness | null }) {
       {readiness.blocking_reasons.length > 0 ? (
         <div className="mt-4 border-t border-white/10 px-5 py-3">
           <div className="text-xs font-black uppercase tracking-[0.16em] text-[#ffb0b0]">阻断项</div>
-          <ul className="mt-2 grid gap-1 text-sm font-bold text-white/72">
+          <ul className="mt-2 grid gap-1 text-xs font-bold text-white/72">
             {readiness.blocking_reasons.map((reason) => (
               <li key={reason} className="flex gap-2">
                 <span className="text-[#ff9a9a]">•</span>
@@ -140,14 +148,14 @@ export function LaunchPanel(props: LaunchPanelProps) {
   const [startMenuShortcut, setStartMenuShortcut] = useState(true);
   const canBrowse = props.tauriRuntime;
   const canValidate = canBrowse && props.clientPath.trim().length > 0 && props.state !== "validating" && props.state !== "launching";
-  const primaryDisabled = !props.tauriRuntime || props.state === "validating" || props.state === "launching";
+  const primaryDisabled = !props.tauriRuntime || props.state === "validating" || props.state === "launching" || props.state === "running";
 
   const handlePrimaryClick = async () => {
     if (primaryDisabled) {
       return;
     }
 
-    if (props.state === "ready" || props.state === "running") {
+    if (props.state === "ready") {
       await props.onPrimaryAction();
       return;
     }
@@ -163,10 +171,10 @@ export function LaunchPanel(props: LaunchPanelProps) {
         transition={{ delay: 0.08, duration: 0.42, ease: "easeOut" }}
         className="grid w-full shrink-0 justify-items-center gap-4 pb-8 min-[900px]:justify-items-end min-[900px]:pr-[5.2vw]"
       >
-        <div className="flex flex-col items-center gap-3 min-[900px]:items-end">
+        <div className="flex flex-col items-center gap-3">
           <LaunchReadinessCard readiness={props.readiness} />
           <LaunchButton state={props.state} disabled={primaryDisabled} onClick={handlePrimaryClick} />
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[22px] font-black">
+          <div className="flex w-[min(70vw,276px)] flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[18px] font-black">
             <span className="text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.42)]">已安装?</span>
             <button
               type="button"
@@ -237,12 +245,12 @@ export function LaunchPanel(props: LaunchPanelProps) {
 
               <div className="mt-4 rounded-[12px] bg-[#2a2e34] p-4">
                 <div className="flex items-center gap-3 text-sm font-bold text-white/72">
-                  <GameIcon name="folder" className="size-5" />
+                  <Folder className="size-5" />
                   安装目录
                   <span className="text-white/42">用于保存和更新客户端文件</span>
                 </div>
                 <div className="mt-3 flex items-center gap-3 text-sm font-bold text-white/72">
-                  <GameIcon name="cloudDownload" className="size-5" />
+                  <CloudDownload className="size-5" />
                   更新包
                   <span className="text-white/42">下载后校验并安装</span>
                 </div>

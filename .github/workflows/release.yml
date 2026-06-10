@@ -61,11 +61,11 @@ jobs:
           make --version
           bash --version
 
-      - name: Install frontend dependencies
-        run: make install
-
       - name: Run quality gate
         run: make check-lint
+
+      - name: Install frontend dependencies
+        run: make install-frozen
 
       - name: Build Tauri bundles
         run: make tauri-build

@@ -1,122 +1,22 @@
-import { startTransition, useEffect, useState, type ReactNode } from "react";
-import { motion } from "framer-motion";
-import { Bell, CircleHelp, Disc3, Headphones, MessageCircle, Radio, Share2 } from "lucide-react";
-import launcherBackground from "./assets/launcher-background.png";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { AnimatePresence, motion } from "framer-motion";
+import { Gamepad, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type UIEvent, type WheelEvent } from "react";
 import logoMark from "./assets/logo.svg";
-import { ClientManager } from "./components/clients/ClientManager";
-import { GamesPanel, type ClientType } from "./components/games/GamesPanel";
-import { GameIcon, type GameIconName } from "./components/icons/GameIcon";
-import { TitleBar } from "./components/layout/TitleBar";
-import { LaunchPanel } from "./components/launch/LaunchPanel";
-import { SettingsDialog, type SettingsSectionId } from "./components/settings/SettingsDialog";
-import { Card, CardContent, CardHeader, CardTitle } from "./components/ui/card";
-import { UpdatePanel } from "./components/update/UpdatePanel";
+import { GAMES_DATA, GAME_ICON_MAP, type LauncherGameId } from "./components/launcher/data";
+import { ConfirmExitModal, PostDetailModal, SettingsModal } from "./components/launcher/Dialogs";
+import DownloadButton from "./components/launcher/DownloadButton";
+import NewsCard from "./components/launcher/NewsCard";
+import SocialSidebar from "./components/launcher/SocialSidebar";
+import type { GameConfig, GameNewsItem, SocialLink } from "./components/launcher/types";
+import VideoPlayer from "./components/launcher/VideoPlayer";
+import WindowControls from "./components/launcher/WindowControls";
+import { soundEngine } from "./components/launcher/audio";
 import { useAppSettings } from "./hooks/useAppSettings";
-import { useAutoUpdate, type AutoUpdateState } from "./hooks/useAutoUpdate";
+import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { useClientLauncher } from "./hooks/useClientLauncher";
 import { isTauriRuntime } from "./lib/tauri";
-import type {
-  ClientInstallation,
-  ClientUpdateCheck,
-  LocalSmokeAutomationConfig
-} from "./types";
-
-type AppView = "launch" | "games" | "update";
-type BackgroundMode = "default" | "custom";
-
-type NavItem = {
-  id: AppView;
-  label: string;
-  icon: GameIconName;
-};
-
-const navItems: NavItem[] = [
-  { id: "launch", label: "启动", icon: "play" },
-  { id: "update", label: "更新", icon: "cloudDownload" }
-];
-
-const clientTypes: ClientType[] = [
-  {
-    id: "qmclient",
-    name: "QmClient",
-    subtitle: "主力客户端",
-    version: "稳定版",
-    status: "已选",
-    pathHint: "等待定位",
-    icon: "gamepad",
-    accent: "#2f3440"
-  },
-  {
-    id: "ddnet",
-    name: "DDNet Vanilla",
-    subtitle: "官网下载",
-    version: "官方版",
-    status: "可添加",
-    pathHint: "未定位",
-    icon: "play",
-    accent: "#6d7280"
-  },
-  {
-    id: "ddnet-steam",
-    name: "DDNet Steam",
-    subtitle: "Steam 安装",
-    version: "Steam",
-    status: "可扫描",
-    pathHint: "steamapps/common/DDNet",
-    icon: "folder",
-    accent: "#4e657a"
-  },
-  {
-    id: "qmclient-nightly",
-    name: "QmClient Nightly",
-    subtitle: "测试通道",
-    version: "测试版",
-    status: "暂未支持",
-    pathHint: "稍后支持",
-    icon: "refresh",
-    accent: "#59606d"
-  },
-  {
-    id: "taterclient",
-    name: "TaterClient",
-    subtitle: "TClient",
-    version: "第三方",
-    status: "可添加",
-    pathHint: "手动添加",
-    icon: "gamepad",
-    accent: "#5c6f58"
-  },
-  {
-    id: "bestclient",
-    name: "BestClient",
-    subtitle: "BestProjectTeam",
-    version: "第三方",
-    status: "可添加",
-    pathHint: "手动添加",
-    icon: "toolKit",
-    accent: "#755d67"
-  },
-  {
-    id: "cactusclient",
-    name: "Cactus Client",
-    subtitle: "cactuss.top",
-    version: "Third-party",
-    status: "可添加",
-    pathHint: "手动添加",
-    icon: "wrench",
-    accent: "#6f734e"
-  },
-  {
-    id: "third-party",
-    name: "第三方客户端",
-    subtitle: "自定义",
-    version: "自定义",
-    status: "可添加",
-    pathHint: "手动添加",
-    icon: "toolKit",
-    accent: "#4f5663"
-  }
-];
+import type { LocalSmokeAutomationConfig } from "./types";
 
 function localSmokeEnvEnabled(value: string | undefined) {
   return value?.trim() === "1";
@@ -136,454 +36,644 @@ function resolveLocalSmokeAutomation(): LocalSmokeAutomationConfig | null {
 
 const localSmokeAutomation = resolveLocalSmokeAutomation();
 
-function getUpdateRows(
-  selectedClient: ClientInstallation | null,
-  autoUpdateState: AutoUpdateState,
-  autoUpdate: ClientUpdateCheck | null,
-  autoUpdateError: string | null
-) {
-  const updateValue = (() => {
-    switch (autoUpdateState) {
-      case "disabled":
-        return "未启用";
-      case "idle":
-        return "待检查";
-      case "checking":
-        return "检查中";
-      case "available":
-        return autoUpdate?.latest_version ? `可更新 ${autoUpdate.latest_version}` : "有更新";
-      case "current":
-        return "已是最新";
-      case "manual":
-        return "需打开来源";
-      case "error":
-        return autoUpdateError ?? "检查失败";
-    }
-  })();
+const descriptions: Record<string, string> = {
+  qmclient: "QmClient 是当前主线客户端。DDNet Manager 会围绕它管理默认启动项、版本检测、下载校验、安装事务和失败恢复记录。",
+  ddnet: "DDNet 官方客户端保留原版 DDrace Network 体验。你可以通过扫描或手动定位，把它纳入统一启动与注册表管理。",
+  "ddnet-steam": "Steam 版 DDNet 会从 steamapps/common/DDNet 识别安装位置，并和其他客户端一样参与默认客户端选择与运行检测。",
+  "third-party": "第三方兼容客户端可通过手动路径加入管理。模型预留后续 catalog、更新源和安装历史扩展。"
+};
 
-  return [
-    {
-      icon: "cloudDownload" as const,
-      label: "更新",
-      value: updateValue,
-      tone: autoUpdateState === "available" ? "text-[#e0b300]" : autoUpdateState === "error" ? "text-[#8f2f2f]" : "text-[#5f6673]"
-    },
-    { icon: "settings" as const, label: "网络", value: "未启用", tone: "text-[#5f6673]" },
-    {
-      icon: "folder" as const,
-      label: "更新源",
-      value: autoUpdate?.source_kind === "github_release" ? "GitHub" : autoUpdate?.source_kind === "website" ? "官网" : "内置",
-      tone: "text-[#5f6673]"
-    },
-    {
-      icon: "refresh" as const,
-      label: "客户端",
-      value: selectedClient?.version ? selectedClient.version : "未知",
-      tone: "text-[#5f6673]"
-    }
-  ];
+const particles = Array.from({ length: 14 }, (_, index) => ({
+  delay: -index * 1.37,
+  duration: 16 + (index % 6) * 2.4,
+  left: `${(index * 17) % 100}%`,
+  opacity: 0.18 + (index % 5) * 0.07,
+  size: 3 + (index % 4)
+}));
+
+function currentWindow() {
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
 }
 
-function ActivityBar(props: {
-  activeView: AppView;
-  onChangeView: (view: AppView) => void;
-}) {
-  const gamesActive = props.activeView === "games";
+function getAccentColor(gameId: string) {
+  if (gameId === "qmclient") {
+    return "rgba(254,211,48,0.75)";
+  }
+  if (gameId === "ddnet") {
+    return "rgba(99,102,241,0.72)";
+  }
+  if (gameId === "ddnet-steam") {
+    return "rgba(240,218,22,0.82)";
+  }
+  return "rgba(204,43,125,0.72)";
+}
 
+function GameLogo(props: { game: GameConfig; large?: boolean }) {
   return (
-    <nav
-      aria-label="主模块导航"
-      className="relative z-50 flex h-full w-[88px] shrink-0 flex-col items-center overflow-visible bg-[linear-gradient(180deg,rgba(36,101,116,0.72)_0%,rgba(21,68,80,0.78)_42%,rgba(4,17,21,0.96)_100%)] px-3 py-5 text-white shadow-[22px_0_54px_rgba(0,0,0,0.20)] backdrop-blur-xl"
-    >
-      <button
-        type="button"
-        aria-label="DDNet Manager 首页"
-        onClick={() => props.onChangeView("launch")}
-        className="grid h-[58px] w-[58px] place-items-center rounded-full text-white transition hover:bg-white/10"
+    <div className="flex flex-col text-left text-white leading-none">
+      <span
+        className={`${props.large ? "text-4xl sm:text-[46px]" : "text-[24px]"} font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-white to-gray-300 drop-shadow-[0_4px_12px_rgba(255,255,255,0.08)] select-none`}
       >
-        <img
-          src={logoMark}
-          alt=""
-          className="h-10 w-10 select-none opacity-95 brightness-0 invert drop-shadow-[0_2px_10px_rgba(0,0,0,0.38)]"
-        />
-      </button>
-
-      <div className="mt-16 flex flex-1 flex-col gap-4">
-        {navItems.map((item) => {
-          const active = props.activeView === item.id;
-
-          return (
-            <button
-              key={item.id}
-              type="button"
-              aria-label={item.label}
-              aria-current={active ? "page" : undefined}
-              onClick={() => props.onChangeView(item.id)}
-              className={`group relative grid h-[58px] w-[58px] place-items-center rounded-[18px] transition ${
-                active
-                  ? "bg-white/20 text-white shadow-[0_18px_30px_rgba(0,0,0,0.22)]"
-                  : "text-white/64 hover:bg-white/10 hover:text-white"
-              }`}
-            >
-              {active ? <span className="absolute -left-3 h-9 w-1.5 rounded-full bg-white" /> : null}
-              <GameIcon name={item.icon} className="size-7" />
-              <span className="pointer-events-none absolute left-[68px] z-[120] whitespace-nowrap rounded-xl bg-[#10171a] px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:translate-x-1 group-hover:opacity-100">
-                {item.label}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      <button
-        type="button"
-        aria-label="全部游戏"
-        aria-current={gamesActive ? "page" : undefined}
-        onClick={() => props.onChangeView("games")}
-        className={`group relative grid h-[58px] w-[58px] place-items-center rounded-[18px] transition ${
-          gamesActive
-            ? "bg-white/20 text-white shadow-[0_18px_30px_rgba(0,0,0,0.22)]"
-            : "text-white/64 hover:bg-white/10 hover:text-white"
-        }`}
-      >
-        {gamesActive ? <span className="absolute -left-3 h-9 w-1.5 rounded-full bg-white" /> : null}
-        <GameIcon name="gamepad" className="size-7" />
-        <span className="pointer-events-none absolute left-[68px] z-[120] whitespace-nowrap rounded-xl bg-[#10171a] px-3 py-2 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:translate-x-1 group-hover:opacity-100">
-          全部游戏
-        </span>
-      </button>
-    </nav>
-  );
-}
-
-const launcherNews = [
-  "【更新】QmClient 下载与安装检测优化中",
-  "【公告】DDNet Manager 首页视觉已切换为启动器模式"
-];
-
-function LaunchHero() {
-  return (
-    <motion.section
-      initial={{ opacity: 0, x: -18 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.42, ease: "easeOut" }}
-      className="absolute left-[72px] top-[82px] z-30 hidden w-[min(46vw,640px)] text-white min-[900px]:block"
-    >
-      <div className="text-[36px] font-black leading-none tracking-[0.02em] drop-shadow-[0_4px_22px_rgba(0,0,0,0.38)]">
-        DDNet
-      </div>
-      <div className="mt-24 text-[26px] font-black text-white/82 drop-shadow-[0_3px_16px_rgba(0,0,0,0.42)]">
-        QmClient-first 版本
-      </div>
-      <h1 className="mt-4 text-[clamp(48px,5vw,76px)] font-black leading-[0.96] tracking-[0] text-white/92 drop-shadow-[0_6px_26px_rgba(0,0,0,0.42)]">
-        DDrace Network
-      </h1>
-      <button
-        type="button"
-        className="mt-8 h-16 min-w-[184px] rounded-[8px] border-2 border-white/72 bg-white/8 px-9 text-[20px] font-black text-white shadow-[0_12px_34px_rgba(0,0,0,0.20)] backdrop-blur-sm transition hover:-translate-y-0.5 hover:bg-white/18"
-      >
-        版本热点
-      </button>
-    </motion.section>
-  );
-}
-
-function LaunchNewsPanel() {
-  return (
-    <motion.section
-      aria-label="首页活动资讯"
-      initial={{ opacity: 0, y: 18 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.08, duration: 0.42, ease: "easeOut" }}
-      className="absolute bottom-[78px] left-[72px] z-20 hidden w-[min(40vw,610px)] overflow-hidden rounded-[12px] bg-[#05151a]/70 text-white shadow-[0_24px_60px_rgba(0,0,0,0.32)] backdrop-blur-md min-[1024px]:block"
-    >
-      <div className="h-[148px] overflow-hidden">
-        <img
-          src={launcherBackground}
-          alt=""
-          className="h-full w-full object-cover object-[50%_55%] opacity-86"
-        />
-      </div>
-      <div className="px-7 pb-5 pt-5">
-        <div className="flex items-center gap-9 text-[22px] font-black">
-          <button type="button" className="relative text-white">
-            活动
-            <span className="absolute -bottom-3 left-1 h-1 w-6 rounded-full bg-[#ffd91f]" />
-          </button>
-          <button type="button" className="text-white/56 transition hover:text-white">公告</button>
-          <button type="button" className="text-white/56 transition hover:text-white">资讯</button>
-        </div>
-        <div className="mt-7 grid gap-3 text-[16px] font-bold">
-          {launcherNews.map((item) => (
-            <div key={item} className="grid grid-cols-[minmax(0,1fr)_auto] gap-5">
-              <span className="truncate text-white/92">{item}</span>
-              <time className="text-white/84">06/07</time>
-            </div>
-          ))}
-        </div>
-      </div>
-    </motion.section>
-  );
-}
-
-const RIGHT_ACTION_ITEMS = [
-  { label: "设置", icon: Disc3 },
-  { label: "社群", icon: Share2 },
-  { label: "消息", icon: MessageCircle },
-  { label: "公告", icon: Radio },
-  { label: "提醒", icon: Bell },
-  { label: "帮助", icon: CircleHelp },
-  { label: "客服", icon: Headphones }
-] as const;
-
-function RightActionRail() {
-  return (
-    <aside className="absolute right-5 top-[88px] z-40 hidden flex-col items-center gap-7 text-white/74 min-[1100px]:flex">
-      {RIGHT_ACTION_ITEMS.map(({ label, icon: Icon }) => (
-        <button
-          key={label}
-          type="button"
-          aria-label={label}
-          className="group relative grid h-9 w-9 place-items-center rounded-full drop-shadow-[0_3px_12px_rgba(0,0,0,0.42)] transition hover:-translate-y-0.5 hover:bg-white/10 hover:text-white"
-        >
-          <Icon size={28} strokeWidth={2.4} />
-          <span className="pointer-events-none absolute right-11 whitespace-nowrap rounded-lg bg-[#10171a]/92 px-3 py-1.5 text-xs font-bold text-white opacity-0 shadow-xl transition group-hover:translate-x-[-2px] group-hover:opacity-100">
-            {label}
-          </span>
-        </button>
-      ))}
-    </aside>
-  );
-}
-
-function CompactUpdateStatus(props: {
-  selectedClient: ClientInstallation | null;
-  autoUpdateState: AutoUpdateState;
-  autoUpdate: ClientUpdateCheck | null;
-  autoUpdateError: string | null;
-}) {
-  return (
-    <Card className="rounded-[28px] border-[var(--dm-border)] bg-white/72 text-[var(--dm-ink)] shadow-[0_18px_44px_rgba(47,52,64,0.08)] backdrop-blur-2xl">
-      <CardHeader className="p-4 pb-0">
-        <CardTitle className="text-[11px] font-black tracking-[0.18em] text-[#5f6673]">更新</CardTitle>
-      </CardHeader>
-      <CardContent className="grid grid-cols-2 gap-2 p-4 pt-3">
-        {getUpdateRows(props.selectedClient, props.autoUpdateState, props.autoUpdate, props.autoUpdateError).map((row) => (
-          <div key={row.label} className="flex min-w-0 items-center gap-2 rounded-2xl bg-[var(--dm-soft)] px-3 py-3">
-            <GameIcon name={row.icon} className={`size-4 ${row.tone}`} />
-            <div className="min-w-0">
-              <div className="text-[9px] font-black uppercase tracking-[0.14em] text-[#8b9099]">{row.label}</div>
-              <div className="truncate text-xs font-black text-[#3d4350]">{row.value}</div>
-            </div>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function WorkspaceShell(props: {
-  activeView: AppView;
-  children: ReactNode;
-  customBackgroundUrl: string | null;
-}) {
-  const launchBackgroundUrl = props.customBackgroundUrl ?? launcherBackground;
-
-  return (
-    <section className="relative min-w-0 flex-1 overflow-hidden bg-[var(--dm-bg)]">
-      <div className="absolute inset-0">
-        {props.activeView === "launch" ? (
-          <img
-            src={launchBackgroundUrl}
-            alt=""
-            aria-hidden="true"
-            className="h-full w-full object-cover object-[54%_50%]"
-          />
-        ) : null}
-        {props.activeView !== "launch" && props.customBackgroundUrl ? (
-          <img
-            src={props.customBackgroundUrl}
-            alt="自定义背景"
-            className="h-full w-full object-cover opacity-28"
-          />
-        ) : null}
-        {props.activeView === "launch" ? (
-          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,29,36,0.82)_0%,rgba(7,43,52,0.62)_30%,rgba(5,20,24,0.08)_58%,rgba(0,0,0,0.30)_100%),linear-gradient(0deg,rgba(0,0,0,0.52)_0%,rgba(0,0,0,0.08)_34%,rgba(0,0,0,0.12)_100%)]" />
-        ) : (
-          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(243,241,234,0.96)_0%,rgba(243,241,234,0.90)_42%,rgba(243,241,234,0.84)_100%),radial-gradient(circle_at_78%_18%,rgba(47,52,64,0.06),transparent_28%)]" />
-        )}
-      </div>
-
-      {props.activeView === "launch" ? <LaunchHero /> : null}
-      {props.activeView === "launch" ? <LaunchNewsPanel /> : null}
-      {props.activeView === "launch" ? <RightActionRail /> : null}
-
-      <div className="relative z-10 flex h-full min-h-0 flex-col">
-        {props.activeView === "launch" ? (
-          <div className="min-h-0 flex-1 overflow-hidden px-4 pb-3 pt-4 md:px-6 md:pb-4 md:pt-6">
-            {props.children}
-          </div>
-        ) : (
-          <div className="dm-scroll min-h-0 flex-1 overflow-y-auto p-5 pt-16 md:p-7 md:pt-16">
-            <div className="mx-auto max-w-[1120px] text-[var(--dm-ink)]">
-              {props.children}
-            </div>
-          </div>
-        )}
-      </div>
-    </section>
+        {props.game.logoText}
+      </span>
+      <span className={`${props.large ? "text-[11px]" : "text-[9px]"} uppercase tracking-[0.25em] text-[#fed330] font-black font-mono mt-1.5 select-none`}>
+        {props.game.logoSubtext}
+      </span>
+    </div>
   );
 }
 
 export default function App() {
   const tauriRuntime = isTauriRuntime();
-  const [activeView, setActiveView] = useState<AppView>("launch");
-  const [customBackgroundUrl, setCustomBackgroundUrl] = useState<string | null>(null);
-  const [backgroundMode, setBackgroundMode] = useState<BackgroundMode>("default");
+  const [activeGameId, setActiveGameId] = useState<LauncherGameId>("qmclient");
+  const [displayedGameId, setDisplayedGameId] = useState<LauncherGameId>("qmclient");
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [hoveredGameId, setHoveredGameId] = useState<LauncherGameId | null>(null);
+  const [hoveredCardIndex, setHoveredCardIndex] = useState<number | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("general");
-  const { appSettings, savedAppSettings, settingsError, settingsState, changeSettings, saveSettings } = useAppSettings(tauriRuntime);
+  const [isExitAlertOpen, setIsExitAlertOpen] = useState(false);
+  const [isPlayerOpen, setIsPlayerOpen] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<GameNewsItem | null>(null);
+  const [isPostOpen, setIsPostOpen] = useState(false);
+  const [isAudioOn, setIsAudioOn] = useState(false);
+  const [speedLimit, setSpeedLimit] = useState(false);
+  const [bgmVolume, setBgmVolume] = useState(65);
+  const [showGameIcons, setShowGameIcons] = useState(true);
+  const [isLaunching, setIsLaunching] = useState(false);
+  const [launchProgress, setLaunchProgress] = useState(0);
+  const [launchStatusText, setLaunchStatusText] = useState("");
+
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const scrollTargetRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { appSettings, savedAppSettings, settingsState } = useAppSettings(tauriRuntime);
   const {
-    clientPath,
     errorMessage,
-    handleBackgroundValidationError,
     handleBrowse,
-    handleClientPathChange,
     handlePrimaryAction,
-    handleValidate,
     launchReadiness,
     launcherState,
-    selectedClient,
-    selectedClientTypeId,
-    selectClientType
+    selectedClient
   } = useClientLauncher({
     appSettings,
     localSmokeAutomation,
-    onOpenUpdateView: () => setActiveView("update"),
+    onOpenUpdateView: () => undefined,
     tauriRuntime
   });
-  const { autoUpdate, autoUpdateError, autoUpdateState } = useAutoUpdate({
+  useAutoUpdate({
     savedAppSettings,
     selectedClient,
     settingsState,
     tauriRuntime
   });
 
-  const selectedClientType = clientTypes.find((client) => client.id === selectedClientTypeId) ?? clientTypes[0];
+  const activeGame = GAMES_DATA.find((game) => game.id === activeGameId) ?? GAMES_DATA[0];
+  const displayedGame = GAMES_DATA.find((game) => game.id === displayedGameId) ?? activeGame;
+  const activeWallpaper = isLibraryOpen && hoveredGameId ? (GAMES_DATA.find((game) => game.id === hoveredGameId)?.bgImage ?? activeGame.bgImage) : activeGame.bgImage;
+  const repeatedGames = useMemo(() => [...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA], []);
+  const canLaunch = Boolean(launchReadiness?.can_launch) && launcherState === "ready";
+  const primaryDisabled = !tauriRuntime || launcherState === "validating" || launcherState === "launching" || launcherState === "running";
 
-  const handleBackgroundImageSelect = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      handleBackgroundValidationError("背景必须是图片。");
+  useEffect(() => {
+    if (isAudioOn) {
+      soundEngine.start(activeGameId);
       return;
     }
 
-    setCustomBackgroundUrl((current) => {
-      if (current) {
-        URL.revokeObjectURL(current);
-      }
-      return URL.createObjectURL(file);
-    });
-    setBackgroundMode("custom");
-  };
-
-  const clearBackgroundImage = () => {
-    setCustomBackgroundUrl((current) => {
-      if (current) {
-        URL.revokeObjectURL(current);
-      }
-      return null;
-    });
-    setBackgroundMode("default");
-  };
+    soundEngine.stop();
+  }, [activeGameId, isAudioOn]);
 
   useEffect(() => {
     return () => {
-      if (customBackgroundUrl) {
-        URL.revokeObjectURL(customBackgroundUrl);
+      if (enterTimerRef.current) {
+        clearTimeout(enterTimerRef.current);
+      }
+      if (leaveTimerRef.current) {
+        clearTimeout(leaveTimerRef.current);
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [customBackgroundUrl]);
+  }, []);
 
-  const changeView = (view: AppView) => {
-    startTransition(() => setActiveView(view));
+  useEffect(() => {
+    if (!isLibraryOpen) {
+      setHoveredCardIndex(null);
+      setHoveredGameId(null);
+      return;
+    }
+
+    setDisplayedGameId(activeGameId);
+    scrollTargetRef.current = null;
+    if (trackRef.current) {
+      const itemWidth = 196;
+      trackRef.current.scrollLeft = itemWidth * GAMES_DATA.length * 2;
+    }
+  }, [activeGameId, isLibraryOpen]);
+
+  const handleCardMouseEnter = (gameId: string, index: number) => {
+    if (enterTimerRef.current) {
+      clearTimeout(enterTimerRef.current);
+    }
+    if (leaveTimerRef.current) {
+      clearTimeout(leaveTimerRef.current);
+    }
+
+    setHoveredCardIndex(index);
+    enterTimerRef.current = setTimeout(() => {
+      setHoveredGameId(gameId as LauncherGameId);
+      setDisplayedGameId(gameId as LauncherGameId);
+    }, 240);
   };
 
-  const changeSettingsSection = (section: SettingsSectionId) => {
-    startTransition(() => setActiveSettingsSection(section));
+  const handleCardMouseLeave = () => {
+    if (enterTimerRef.current) {
+      clearTimeout(enterTimerRef.current);
+    }
+    setHoveredCardIndex(null);
+    leaveTimerRef.current = setTimeout(() => {
+      setHoveredGameId(null);
+      setDisplayedGameId(activeGameId);
+    }, 220);
   };
 
-  const renderActiveView = () => {
-    switch (activeView) {
-      case "games":
-        return (
-          <div className="grid gap-6">
-            <GamesPanel
-              clientTypes={clientTypes}
-              selectedClientTypeId={selectedClientTypeId}
-              selectedClient={selectedClient}
-              clientPath={clientPath}
-              onSelectClientType={selectClientType}
-            />
-            <ClientManager />
-          </div>
-        );
-      case "update":
-        return <UpdatePanel smokeAutomation={localSmokeAutomation} />;
-      case "launch":
-        return (
-          <LaunchPanel
-            tauriRuntime={tauriRuntime}
-            state={launcherState}
-            clientPath={clientPath}
-            readiness={launchReadiness}
-            errorMessage={errorMessage}
-            mobileUpdateStatus={
-              <CompactUpdateStatus
-                selectedClient={selectedClient}
-                autoUpdateState={autoUpdateState}
-                autoUpdate={autoUpdate}
-                autoUpdateError={autoUpdateError}
-              />
-            }
-            onBrowse={handleBrowse}
-            onValidate={handleValidate}
-            onPrimaryAction={handlePrimaryAction}
-          />
-        );
+  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (!trackRef.current) {
+      return;
+    }
+
+    const container = trackRef.current;
+    scrollTargetRef.current ??= container.scrollLeft;
+    scrollTargetRef.current += event.deltaY * 1.1;
+
+    const animateScroll = () => {
+      if (!trackRef.current || scrollTargetRef.current === null) {
+        return;
+      }
+
+      const current = trackRef.current.scrollLeft;
+      const target = scrollTargetRef.current;
+      const diff = target - current;
+
+      if (Math.abs(diff) > 0.4) {
+        trackRef.current.scrollLeft += diff * 0.12;
+        animationFrameRef.current = requestAnimationFrame(animateScroll);
+        return;
+      }
+
+      trackRef.current.scrollLeft = target;
+      scrollTargetRef.current = null;
+      animationFrameRef.current = null;
+    };
+
+    animationFrameRef.current ??= requestAnimationFrame(animateScroll);
+  };
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const container = event.currentTarget;
+    const itemWidth = 196;
+    const singleSetWidth = itemWidth * GAMES_DATA.length;
+    let delta = 0;
+
+    if (container.scrollLeft >= singleSetWidth * 3) {
+      delta = -singleSetWidth;
+    } else if (container.scrollLeft <= singleSetWidth) {
+      delta = singleSetWidth;
+    }
+
+    if (delta !== 0) {
+      container.scrollLeft += delta;
+      if (scrollTargetRef.current !== null) {
+        scrollTargetRef.current += delta;
+      }
     }
   };
 
+  const handleLaunchGame = async () => {
+    if (primaryDisabled) {
+      return;
+    }
+
+    if (!canLaunch) {
+      await handleBrowse();
+      return;
+    }
+
+    setIsLaunching(true);
+    setLaunchProgress(0);
+    setLaunchStatusText("正在复检默认客户端...");
+    const interval = setInterval(() => {
+      setLaunchProgress((current) => {
+        const next = Math.min(100, current + 8);
+        if (next >= 32) {
+          setLaunchStatusText("正在同步本地注册表与可执行文件...");
+        }
+        if (next >= 68) {
+          setLaunchStatusText("正在拉起客户端进程...");
+        }
+        if (next >= 100) {
+          clearInterval(interval);
+          void handlePrimaryAction().finally(() => setTimeout(() => setIsLaunching(false), 500));
+        }
+        return next;
+      });
+    }, 120);
+  };
+
+  const handleSocialClick = (social: SocialLink) => {
+    if (social.url.startsWith("http")) {
+      window.open(social.url, "_blank", "noreferrer");
+    }
+  };
+
+  const handleConfirmExit = () => {
+    setIsExitAlertOpen(false);
+    void currentWindow()?.close();
+  };
+
+  const handleMinimizeFromExit = () => {
+    setIsExitAlertOpen(false);
+    void currentWindow()?.minimize();
+  };
+
+  const selectGame = (gameId: string) => {
+    const typedId = gameId as LauncherGameId;
+    setActiveGameId(typedId);
+    setDisplayedGameId(typedId);
+    setIsLibraryOpen(false);
+  };
+
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[var(--dm-bg)] text-[var(--dm-muted-ink)]">
-      <TitleBar onOpenSettings={() => setIsSettingsOpen(true)} />
-      <section className="flex h-full min-h-0">
-        <ActivityBar activeView={activeView} onChangeView={changeView} />
-        <WorkspaceShell activeView={activeView} customBackgroundUrl={customBackgroundUrl}>
-          {renderActiveView()}
-        </WorkspaceShell>
-      </section>
-      <SettingsDialog
-        open={isSettingsOpen}
-        activeSection={activeSettingsSection}
-        launcherState={launcherState}
-        clientPath={clientPath}
-        selectedClientType={selectedClientType}
-        backgroundMode={backgroundMode}
-        errorMessage={errorMessage}
-        settings={appSettings}
-        settingsState={settingsState}
-        settingsError={settingsError}
-        tauriRuntime={tauriRuntime}
-        onClose={() => setIsSettingsOpen(false)}
-        onSectionChange={changeSettingsSection}
-        onSettingsChange={changeSettings}
-        onSaveSettings={saveSettings}
-        onClientPathChange={handleClientPathChange}
-        onBrowse={handleBrowse}
-        onValidate={handleValidate}
-        onBackgroundImageSelect={handleBackgroundImageSelect}
-        onClearBackgroundImage={clearBackgroundImage}
-      />
-    </main>
+    <div id="pc-desktop" className="fixed inset-0 h-screen w-screen overflow-hidden bg-[#111215] select-none font-sans">
+      <motion.div id="ddnet-launcher" className="absolute inset-0 h-full w-full bg-[#111215] overflow-hidden flex flex-row select-none">
+        <div className="absolute inset-0 z-0 select-none pointer-events-none overflow-hidden">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeWallpaper}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.55 }}
+              className="absolute inset-0"
+            >
+              <img src={activeWallpaper} alt={`${activeGame.name} 背景`} className="w-full h-full object-cover select-none pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/30 to-black/10" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-[#000000]/25 to-black/40" />
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        <div className="absolute inset-0 pointer-events-none overflow-hidden z-1">
+          {particles.map((particle, index) => {
+            const bulletColor = getAccentColor(activeGame.id);
+            return (
+              <motion.div
+                key={index}
+                className="absolute rounded-full pointer-events-none"
+                style={{
+                  width: particle.size,
+                  height: particle.size,
+                  left: particle.left,
+                  bottom: "-20px",
+                  opacity: particle.opacity,
+                  background: `radial-gradient(circle, ${bulletColor} 0%, rgba(255,255,255,0) 100%)`,
+                  boxShadow: `0 0 ${particle.size * 1.5}px ${bulletColor}`
+                }}
+                animate={{ y: ["0vh", "-110vh"], x: ["0px", `${Math.sin(index) * 35 + 15}px`, `${Math.sin(index) * -35 - 15}px`, "0px"] }}
+                transition={{ duration: particle.duration, repeat: Infinity, ease: "linear", delay: particle.delay }}
+              />
+            );
+          })}
+        </div>
+
+        <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-10 right-20 w-[350px] h-[350px] bg-blue-500/10 blur-[130px] rounded-full" />
+          <div className="absolute bottom-20 left-10 w-[250px] h-[250px] bg-purple-500/10 blur-[110px] rounded-full" />
+        </div>
+
+        <div className="w-[58px] bg-[#111215]/12 backdrop-blur-lg border-r border-white/5 flex flex-col items-center py-6 shrink-0 z-40 relative select-none" data-tauri-drag-region>
+          <motion.button
+            type="button"
+            whileHover={{ scale: 1.05 }}
+            onClick={() => setIsSettingsOpen(true)}
+            aria-label="DDNet Manager 首页"
+            className="w-10 h-10 flex items-center justify-center cursor-pointer shrink-0"
+          >
+            <img src={logoMark} alt="" className="w-[34px] h-[34px] brightness-0 invert opacity-95" />
+          </motion.button>
+
+          <div className="flex-1" />
+          <div className="w-[20px] h-[1.5px] bg-white/10 mb-3.5 shrink-0" />
+
+          <div className="flex flex-col items-center w-full mb-2 select-none font-sans">
+            <div className="relative group flex items-center justify-center w-full">
+              <div className={`absolute w-[44px] h-[44px] rounded-[13px] border-[2px] transition-all duration-200 pointer-events-none z-0 ${isLibraryOpen ? "border-black/65 opacity-100" : "border-black/35 opacity-0 group-hover:opacity-100"}`} />
+              <motion.button
+                id="btn-all-games-sidebar"
+                type="button"
+                aria-label="全部游戏"
+                onClick={() => setIsLibraryOpen((value) => !value)}
+                whileTap={{ scale: 0.94 }}
+                className="w-9 h-9 rounded-[10px] flex items-center justify-center cursor-pointer transition-all duration-150 relative z-10 focus:outline-none bg-[#28292e] border-transparent"
+              >
+                <svg viewBox="0 0 24 24" className={`w-[21px] h-[21px] fill-current text-white/55 transition-all duration-200 ${isLibraryOpen ? "text-white opacity-100 font-bold" : "group-hover:text-white group-hover:opacity-100"}`}>
+                  <rect x="3" y="3" width="7" height="7" rx="2" />
+                  <rect x="3" y="14" width="7" height="7" rx="2" />
+                  <rect x="14" y="14" width="7" height="7" rx="2" />
+                  <path d="M17.5 2.5 Q17.5 7 22 7 Q17.5 7 17.5 11.5 Q17.5 7 13 7 Q17.5 7 17.5 2.5 Z" />
+                </svg>
+              </motion.button>
+              <div className="absolute left-[56px] top-1/2 -translate-y-1/2 scale-90 translate-x-[-4px] opacity-0 group-hover:scale-100 group-hover:translate-x-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50 flex items-center origin-left">
+                <div className="w-2.5 h-2.5 rotate-45 bg-[#e3e5e9] relative -mr-1 rounded-[1.5px]" />
+                <div className="bg-[#e3e5e9] text-[#121319] text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-2xl whitespace-nowrap tracking-wide">全部游戏</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 h-full relative flex flex-col overflow-hidden">
+          <div className="relative z-40 h-16 w-full flex items-center justify-end px-8 select-none pointer-events-auto shrink-0" data-tauri-drag-region>
+            <WindowControls
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onCloseLauncher={() => setIsExitAlertOpen(true)}
+              onMinimize={() => void currentWindow()?.minimize()}
+              isAudioOn={isAudioOn}
+              onToggleAudio={() => setIsAudioOn((value) => !value)}
+            />
+          </div>
+
+          <div className="absolute inset-0 z-30 pointer-events-none">
+            <motion.div
+              id="dashboard-intro-block"
+              animate={{ opacity: isLibraryOpen ? 0 : 1, y: isLibraryOpen ? -50 : 0 }}
+              transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+              style={{ pointerEvents: isLibraryOpen ? "none" : "auto" }}
+              className="absolute top-[54px] left-10 z-40 flex flex-col space-y-5 select-none text-left max-w-[470px]"
+            >
+              <motion.div key={`logo-${activeGame.id}`} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.4 }} className="flex items-center space-x-3 text-white mb-1.5">
+                <GameLogo game={activeGame} />
+              </motion.div>
+
+              <motion.div key={`banner-${activeGame.id}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.1 }} className="space-y-2.5">
+                <div className="flex items-center">
+                  <div className="px-2.5 py-[3px] text-[11px] font-bold tracking-wide uppercase text-[#121319] flex items-center shadow-md select-none rounded-[3px] leading-none bg-[#fed330]">
+                    {activeGame.bannerCategory}
+                  </div>
+                  <div className="flex flex-col space-y-[2px] ml-2">
+                    <div className="flex space-x-[2px]">
+                      <div className="w-[4.5px] h-[4.5px] rounded-[1px] bg-[#fed330]" />
+                      <div className="w-[4.5px] h-[4.5px] bg-transparent" />
+                      <div className="w-[4.5px] h-[4.5px] rounded-[1px] bg-[#fed330]" />
+                    </div>
+                    <div className="flex space-x-[2px]">
+                      <div className="w-[4.5px] h-[4.5px] bg-transparent" />
+                      <div className="w-[4.5px] h-[4.5px] rounded-[1px] bg-[#fed330]" />
+                      <div className="w-[4.5px] h-[4.5px] bg-transparent" />
+                    </div>
+                  </div>
+                </div>
+                <h1
+                  className="text-4xl sm:text-[50px] font-black tracking-wide leading-[0.98] select-none whitespace-nowrap"
+                  style={{
+                    background: "linear-gradient(to bottom, #ffffff 15%, #ffffff 50%, #f1e2c3 100%)",
+                    WebkitBackgroundClip: "text",
+                    WebkitTextFillColor: "transparent",
+                    filter: "drop-shadow(0 4px 10px rgba(0,0,0,0.92)) drop-shadow(0 1px 2px rgba(0,0,0,1))"
+                  }}
+                >
+                  {activeGame.bannerTitle}
+                </h1>
+                <p className="text-[13.5px] sm:text-[14.5px] font-bold text-[#ebe4d0] tracking-wide select-none [text-shadow:0_2px_4px_rgba(0,0,0,0.95),0_1px_1px_rgba(0,0,0,1)]">
+                  {activeGame.bannerSubtitle}
+                </p>
+              </motion.div>
+
+              <div className="pt-2">
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.04, y: -1 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => setIsPlayerOpen(true)}
+                  className="bg-white hover:bg-neutral-100 text-[#121319] hover:text-black font-extrabold text-[13.5px] px-[28px] py-[10.5px] rounded-full shadow-[0_8px_20px_rgba(255,255,255,0.18)] transition-all cursor-pointer border-none flex items-center justify-center space-x-1.5 focus:outline-none"
+                >
+                  <span>{activeGame.bannerButtonText}</span>
+                </motion.button>
+              </div>
+            </motion.div>
+
+            <motion.div
+              id="dashboard-news-block"
+              animate={{ opacity: isLibraryOpen ? 0 : 1, y: isLibraryOpen ? 280 : 0 }}
+              transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+              style={{ pointerEvents: isLibraryOpen ? "none" : "auto" }}
+              className="absolute bottom-[18px] left-8 z-30 select-none flex flex-col space-y-4"
+            >
+              <NewsCard
+                pvCardImage={activeGame.pvCardImage}
+                pvTitle={activeGame.pvTitle}
+                news={activeGame.news}
+                accentColor={activeGame.accentColor}
+                onOpenPV={() => setIsPlayerOpen(true)}
+                onSelectNews={(item) => {
+                  setSelectedPost(item);
+                  setIsPostOpen(true);
+                }}
+              />
+            </motion.div>
+
+            <motion.div
+              id="float-social-sidebar"
+              animate={{ opacity: isLibraryOpen ? 0 : 1, scale: isLibraryOpen ? 0.85 : 1, x: isLibraryOpen ? 30 : 0 }}
+              transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+              style={{ pointerEvents: isLibraryOpen ? "none" : "auto" }}
+              className="absolute right-[14px] top-[41%] -translate-y-1/2 z-40 select-none"
+            >
+              <SocialSidebar socials={activeGame.socials} onSocialClick={handleSocialClick} />
+            </motion.div>
+
+            <motion.div
+              id="dashboard-download-block"
+              animate={{ opacity: isLibraryOpen ? 0 : 1, y: isLibraryOpen ? 280 : 0 }}
+              transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+              style={{ pointerEvents: isLibraryOpen ? "none" : "auto" }}
+              className="absolute bottom-[28px] right-8 z-35 select-none flex flex-col items-center font-sans"
+            >
+              <DownloadButton
+                gameId={activeGame.id}
+                sizeGB={activeGame.sizeGB}
+                speedMB={activeGame.installSpeedMB}
+                accentColor={activeGame.accentColor}
+                onLaunchGame={() => void handleLaunchGame()}
+                onLocateGame={() => void handleBrowse()}
+                canLaunch={canLaunch}
+                disabled={primaryDisabled}
+              />
+              {errorMessage ? <div className="mt-2 max-w-[280px] rounded-lg bg-red-500/12 px-3 py-2 text-center text-[11px] font-semibold text-red-200">{errorMessage}</div> : null}
+            </motion.div>
+
+            {isLibraryOpen ? (
+              <>
+                <motion.div
+                  id="library-intro-block"
+                  initial={{ opacity: 0, y: -50 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -50 }}
+                  transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute top-20 left-10 z-40 flex flex-col select-none text-left"
+                >
+                  <AnimatePresence mode="wait">
+                    <motion.div key={`lib-logo-${displayedGameId}`} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
+                      <GameLogo game={displayedGame} large />
+                    </motion.div>
+                  </AnimatePresence>
+                </motion.div>
+
+                <motion.div
+                  id="library-description-block"
+                  initial={{ opacity: 0, y: 40 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 40 }}
+                  transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute bottom-[170px] left-10 z-40 flex flex-col select-none text-left max-w-[650px]"
+                >
+                  <AnimatePresence mode="wait">
+                    <motion.div key={`lib-desc-${displayedGameId}`} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
+                      <p className="text-[15px] font-medium text-gray-200 leading-relaxed drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] font-sans antialiased">
+                        {descriptions[displayedGameId]}
+                      </p>
+                    </motion.div>
+                  </AnimatePresence>
+                </motion.div>
+
+                <motion.div
+                  id="library-carousel-block"
+                  initial={{ opacity: 0, y: 280 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 280 }}
+                  transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute bottom-6 left-8 right-8 z-40 select-none pointer-events-auto"
+                >
+                  <div className="relative w-full overflow-hidden">
+                    <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#111215] to-transparent pointer-events-none z-10" />
+                    <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#111215] to-transparent pointer-events-none z-10" />
+                    <div ref={trackRef} onWheel={handleWheel} onScroll={handleScroll} className="flex items-center space-x-4 overflow-x-auto py-2 px-12 scrollbar-none" style={{ scrollBehavior: "auto" }}>
+                      {repeatedGames.map((game, index) => {
+                        const isSelected = game.id === activeGameId;
+                        const isCardHovered = index === hoveredCardIndex;
+                        return (
+                          <div key={`card-col-${game.id}-${index}`} className="flex flex-col items-center space-y-2.5 shrink-0">
+                            <motion.button
+                              id={`card-selector-${game.id}-${index}`}
+                              type="button"
+                              aria-label={`选择 ${game.name}`}
+                              onMouseEnter={() => handleCardMouseEnter(game.id, index)}
+                              onMouseLeave={handleCardMouseLeave}
+                              onClick={() => selectGame(game.id)}
+                              whileHover={{ y: -6, scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              className={`relative w-[180px] h-[95px] rounded-xl overflow-hidden cursor-pointer shrink-0 transition-[border-color,opacity,box-shadow] duration-200 border bg-transparent p-0 text-left focus:outline-none ${
+                                isSelected
+                                  ? "border-[#ffeb3b] shadow-[0_0_20px_rgba(255,235,59,0.35)] ring-1 ring-[#ffeb3b]/40 opacity-100"
+                                  : isCardHovered
+                                    ? "border-[#ffeb3b] shadow-[0_0_15px_rgba(255,235,59,0.25)] opacity-100"
+                                    : "border-white/10 opacity-70"
+                              }`}
+                            >
+                              <img src={game.pvCardImage} alt={game.name} className="w-full h-full object-cover" />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+                              {isSelected ? <div className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded bg-yellow-400 text-black text-[9px] font-black uppercase tracking-wider block z-10">使用中</div> : null}
+                              <AnimatePresence>
+                                {isCardHovered ? (
+                                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: "easeOut" }} className="absolute inset-0 bg-black/75 flex items-center justify-center pointer-events-none z-20">
+                                    <motion.div initial={{ scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.94, opacity: 0 }} transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }} className="flex items-center justify-center space-x-2">
+                                      <div className="w-7 h-7 rounded-[8px] border border-white/10 bg-white/10 flex items-center justify-center overflow-hidden shrink-0 relative">
+                                        <img src={GAME_ICON_MAP[game.id as LauncherGameId]} alt={game.name} className="w-full h-full object-cover absolute inset-0 z-10" onError={(event) => { event.currentTarget.style.opacity = "0"; }} />
+                                        <div className="absolute inset-0 flex items-center justify-center text-white/40 z-0">
+                                          <Gamepad className="w-3.5 h-3.5" />
+                                        </div>
+                                      </div>
+                                      <span className="text-[#ffeb3b] text-[13px] font-bold tracking-wide">查看详情</span>
+                                    </motion.div>
+                                  </motion.div>
+                                ) : null}
+                              </AnimatePresence>
+                            </motion.button>
+                            <div className="text-center w-full">
+                              <span className={`text-[12px] font-bold block tracking-wide select-none transition-colors duration-200 ${isSelected ? "text-[#ffeb3b] font-extrabold" : isCardHovered ? "text-white" : "text-[#9fa2b4]"}`}>
+                                {game.name}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </motion.div>
+              </>
+            ) : null}
+          </div>
+        </div>
+
+        <VideoPlayer isOpen={isPlayerOpen} onClose={() => setIsPlayerOpen(false)} title={activeGame.pvTitle} posterImage={activeGame.pvCardImage} />
+        <PostDetailModal
+          isOpen={isPostOpen}
+          onClose={() => {
+            setIsPostOpen(false);
+            setSelectedPost(null);
+          }}
+          post={selectedPost}
+          gameName={activeGame.name}
+        />
+        <ConfirmExitModal
+          isOpen={isExitAlertOpen}
+          onCancel={() => setIsExitAlertOpen(false)}
+          onConfirmExit={handleConfirmExit}
+          onMinimize={handleMinimizeFromExit}
+        />
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          speedLimit={speedLimit}
+          setSpeedLimit={setSpeedLimit}
+          bgmVolume={bgmVolume}
+          setBgmVolume={setBgmVolume}
+          isAudioOn={isAudioOn}
+          setIsAudioOn={setIsAudioOn}
+          showGameIcons={showGameIcons}
+          setShowGameIcons={setShowGameIcons}
+        />
+
+        <AnimatePresence>
+          {isLaunching ? (
+            <motion.div id="game-launch-curtain" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-[#000] z-50 flex flex-col items-center justify-center p-6">
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center space-y-7 max-w-md text-center">
+                <Loader2 className="w-10 h-10 text-yellow-400 animate-spin opacity-80" />
+                <div className="space-y-2">
+                  <h2 className="text-3xl font-extrabold tracking-widest text-[#fff]">{activeGame.name}</h2>
+                  <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500 font-mono">{activeGame.enName}</p>
+                </div>
+                <div className="w-[280px] h-1.5 bg-neutral-900 rounded-full overflow-hidden border border-white/5 relative">
+                  <motion.div className="h-full bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 rounded-full" style={{ width: `${launchProgress}%` }} transition={{ ease: "easeOut" }} />
+                </div>
+                <span className="text-[13px] text-gray-400 block h-6 font-medium animate-pulse">{launchStatusText}</span>
+                <span className="text-[11px] text-gray-600 block mt-4 font-mono">启动进度：{launchProgress}% · 加载中...</span>
+              </motion.div>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+        <div className="pointer-events-none absolute bottom-3 left-20 z-40 text-[10px] font-mono text-white/35">
+          {launchReadiness?.user_message ?? "正在读取默认客户端状态"}
+        </div>
+      </motion.div>
+    </div>
   );
 }

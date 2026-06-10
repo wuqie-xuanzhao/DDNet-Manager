@@ -1,0 +1,6 @@
+{
+  "name": "米哈游启动器",
+  "description": "米哈游启动器（HoYoPlay）1:1 高仿真交互版，完美复刻米哈游经典游戏《崩坏：星穹铁道》的选择、启动界面、公告组件及下载模拟，具有华丽的动画过渡与音效级多端功能体验。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

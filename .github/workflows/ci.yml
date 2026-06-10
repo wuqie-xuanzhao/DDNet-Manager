@@ -60,8 +60,5 @@ jobs:
           make --version
           bash --version
 
-      - name: Install frontend dependencies
-        run: make install
-
       - name: Run quality gate
         run: make check-lint

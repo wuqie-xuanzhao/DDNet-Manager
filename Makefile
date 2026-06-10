@@ -1,4 +1,4 @@
-.PHONY: install dev build preview check frontend-test frontend-lint check-lint check-lint-fix fmt test rust-test rust-check tauri-dev tauri-dev-smoke tauri-smoke-update tauri-build clean
+.PHONY: install install-frozen dev build preview check frontend-test frontend-lint check-lint check-lint-fix fmt test rust-test rust-check tauri-dev tauri-dev-smoke tauri-smoke-update tauri-build clean
 
 SHELL := powershell.exe
 .SHELLFLAGS := -NoProfile -ExecutionPolicy Bypass -Command
@@ -8,6 +8,9 @@ CARGO := cargo
 
 install:
 	$(BUN) install
+
+install-frozen:
+	$(BUN) install --frozen-lockfile
 
 dev:
 	$(BUN) run dev

@@ -56,11 +56,11 @@ function SettingCard(props: { title: string; children: React.ReactNode }) {
 
 function TogglePill(props: { checked: boolean; label: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-[22px] bg-white/70 px-4 py-3">
+    <div className="flex items-center justify-between gap-4 rounded-[22px] bg-black/30 border border-[#41f2ff]/10 px-4 py-3">
       <span className="text-sm font-bold text-[var(--dm-ink)]">{props.label}</span>
       <span
         className={`relative h-7 w-12 rounded-full border transition ${
-          props.checked ? "border-[var(--dm-ink)] bg-[var(--dm-ink)]" : "border-[var(--dm-border)] bg-white"
+          props.checked ? "border-[#41f2ff] bg-[#41f2ff]" : "border-[var(--dm-border)] bg-black/50"
         }`}
       >
         <span
@@ -68,7 +68,7 @@ function TogglePill(props: { checked: boolean; label: string }) {
             props.checked ? "left-6" : "left-1"
           }`}
         >
-          {props.checked ? <GameIcon name="play" className="size-3 text-[var(--dm-ink)]" /> : null}
+          {props.checked ? <GameIcon name="play" className="size-3 text-[#111213]" /> : null}
         </span>
       </span>
     </div>
@@ -147,13 +147,13 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   value={props.clientPath}
                   onChange={(event) => props.onClientPathChange(event.target.value)}
                   placeholder="C:/Games/QmClient"
-                  className="h-12 min-w-0 rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+                  className="h-12 min-w-0 rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
                 />
                 <button
                   type="button"
                   onClick={() => void props.onBrowse()}
                   disabled={!canBrowse}
-                  className="h-12 rounded-[18px] border border-[var(--dm-border)] bg-white px-5 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 hover:bg-[var(--dm-paper)] disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:bg-white"
+                  className="h-12 rounded-[18px] border border-[var(--dm-border)] bg-black/30 px-5 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 hover:bg-black/55 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:bg-black/30"
                 >
                   定位
                 </button>
@@ -161,7 +161,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   type="button"
                   onClick={() => void props.onValidate()}
                   disabled={!canValidate}
-                  className="h-12 rounded-[18px] bg-[var(--dm-ink)] px-5 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+                  className="h-12 rounded-[18px] bg-[#41f2ff] px-5 text-sm font-black text-[#111213] shadow-[0_0_15px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
                 >
                   验证
                 </button>
@@ -186,7 +186,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   }
                   className="text-left"
                 >
-                  <TogglePill checked={props.settings.close_panel_after_launch} label="启动后关闭面板" />
+                  <TogglePill checked={props.settings.close_panel_after_launch} label="启动后最小化启动器" />
                 </button>
                 <button
                   type="button"
@@ -221,8 +221,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         onClick={() => props.onSettingsChange(updateNetworkRoute(props.settings, mode, networkRouteUrl(props.settings)))}
                         className={`h-10 rounded-[15px] border px-4 text-xs font-black transition hover:-translate-y-0.5 ${
                           active
-                            ? "border-[var(--dm-ink)] bg-[var(--dm-ink)] text-white"
-                            : "border-[var(--dm-border)] bg-white text-[var(--dm-muted-ink)]"
+                            ? "border-[#41f2ff] bg-[#41f2ff] text-[#111213]"
+                            : "border-[var(--dm-border)] bg-[var(--dm-panel)] text-[var(--dm-muted-ink)]"
                         }`}
                       >
                         {mode === "direct" ? "直连" : mode === "proxy_prefix" ? "代理前缀" : "镜像模板"}
@@ -244,7 +244,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                       )
                     }
                     placeholder={props.settings.network_route?.mode === "mirror_template" ? "https://mirror.example/{url}" : "https://proxy.example/"}
-                    className="h-12 min-w-0 rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+                    className="h-12 min-w-0 rounded-[18px] border border-[var(--dm-border)] bg-[var(--dm-panel)] px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
                   />
                 ) : null}
               </div>
@@ -260,7 +260,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   })
                 }
                 placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
-                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
               />
             </SettingCard>
             <SettingCard title="GitHub">
@@ -270,7 +270,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 placeholder="GitHub token"
                 type="password"
                 aria-label="GitHub token 不会保存"
-                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
               />
               <div className="mt-2 text-xs font-bold leading-5 text-[var(--dm-muted-ink)]">
                 Token 仅作为后续凭证存储入口预留，当前不会写入本机设置。
@@ -288,13 +288,13 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   onClick={props.onClearBackgroundImage}
                   className={`h-11 rounded-[16px] border px-4 text-sm font-black transition hover:-translate-y-0.5 ${
                     props.backgroundMode === "default"
-                      ? "border-[var(--dm-ink)] bg-[var(--dm-ink)] text-white"
-                      : "border-[var(--dm-border)] bg-white text-[var(--dm-muted-ink)]"
+                      ? "border-[#41f2ff] bg-[#41f2ff] text-[#111213] shadow-[0_0_15px_rgba(65,242,255,0.25)]"
+                      : "border-[var(--dm-border)] bg-black/30 text-[var(--dm-muted-ink)] hover:bg-black/55"
                   }`}
                 >
                   默认背景
                 </button>
-                <label className="grid h-11 cursor-pointer place-items-center rounded-[16px] border border-[var(--dm-border)] bg-white px-4 text-sm font-black text-[var(--dm-muted-ink)] transition hover:-translate-y-0.5 hover:bg-[var(--dm-paper)]">
+                <label className="grid h-11 cursor-pointer place-items-center rounded-[16px] border border-[var(--dm-border)] bg-black/30 px-4 text-sm font-black text-[var(--dm-muted-ink)] transition hover:-translate-y-0.5 hover:bg-black/55">
                   自定义图片
                   <input
                     type="file"
@@ -312,8 +312,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
               </div>
             </SettingCard>
             <SettingCard title="主题">
-              <div className="rounded-[22px] bg-white/70 px-4 py-3 text-sm font-bold text-[var(--dm-muted-ink)]">
-                白天模式
+              <div className="rounded-[22px] bg-black/30 border border-[#41f2ff]/10 px-4 py-3 text-sm font-bold text-[var(--dm-muted-ink)]">
+                暗黑 / 工业霓虹模式
               </div>
             </SettingCard>
           </div>
@@ -347,7 +347,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     })
                   }
                   placeholder="每行一个排除路径"
-                  className="min-h-28 w-full resize-none rounded-[18px] border border-[var(--dm-border)] bg-white px-4 py-3 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#9a9fa8] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+                  className="min-h-28 w-full resize-none rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 py-3 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
                 />
               </div>
             </SettingCard>
@@ -361,7 +361,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 <GameIcon name={props.selectedClientType.icon} className="size-8" />
               </div>
               <div>
-                <div className="text-2xl font-black tracking-[-0.04em] text-[var(--dm-ink)]">DDNet Manager</div>
+                <div className="text-2xl font-black tracking-[0] text-[var(--dm-ink)]">DDNet Manager</div>
                 <div className="mt-1 text-sm font-bold text-[var(--dm-muted-ink)]">{props.selectedClientType.name}</div>
               </div>
             </div>
@@ -374,7 +374,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
     <AnimatePresence>
       {props.open ? (
         <motion.div
-          className="fixed inset-0 z-[80] grid place-items-center bg-[#2f3440]/24 p-6 backdrop-blur-sm"
+          className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-6 backdrop-blur-sm"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -393,10 +393,10 @@ export function SettingsDialog(props: SettingsDialogProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="grid h-[min(78vh,720px)] w-[min(92vw,1120px)] overflow-hidden rounded-[30px] border border-[var(--dm-border)] bg-[var(--dm-paper)] text-[var(--dm-ink)] shadow-[0_34px_110px_rgba(47,52,64,0.22)] md:grid-cols-[300px_minmax(0,1fr)]"
+            className="grid h-[min(78vh,720px)] w-[min(92vw,1120px)] overflow-hidden rounded-[30px] border border-[var(--dm-border)] bg-[var(--dm-paper)] text-[var(--dm-ink)] shadow-[0_0_50px_rgba(0,0,0,0.6)] md:grid-cols-[300px_minmax(0,1fr)]"
           >
             <aside className="border-r border-[var(--dm-border)] bg-[var(--dm-panel)] p-6">
-              <div className="text-3xl font-black tracking-[-0.05em]">设置</div>
+              <div className="text-3xl font-black tracking-[0]">设置</div>
               <div className="mt-8 grid gap-2">
                 {sections.map((section) => {
                   const active = props.activeSection === section.id;
@@ -405,10 +405,10 @@ export function SettingsDialog(props: SettingsDialogProps) {
                       key={section.id}
                       type="button"
                       onClick={() => props.onSectionChange(section.id)}
-                      className={`flex h-14 items-center gap-3 rounded-2xl px-4 text-left text-base font-black transition ${
+                      className={`flex h-14 items-center gap-3 rounded-2xl px-4 text-left text-base font-black border transition duration-200 ${
                         active
-                          ? "bg-[var(--dm-ink)] text-white shadow-[0_14px_30px_rgba(47,52,64,0.16)]"
-                          : "text-[var(--dm-muted-ink)] hover:bg-white/68 hover:text-[var(--dm-ink)]"
+                          ? "bg-[#41f2ff] text-[#111213] border-[#41f2ff] shadow-[0_0_15px_rgba(65,242,255,0.3)]"
+                          : "border-transparent text-[var(--dm-muted-ink)] hover:bg-[#41f2ff]/10 hover:text-[#41f2ff]"
                       }`}
                     >
                       <GameIcon name={section.icon} className="size-5" />
@@ -420,7 +420,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
             </aside>
             <div className="dm-scroll min-h-0 overflow-y-auto p-6">
               <div className="mb-7 flex items-center justify-between gap-4">
-                <h2 className="text-3xl font-black tracking-[-0.05em]">
+                <h2 className="text-3xl font-black tracking-[0]">
                   {sections.find((section) => section.id === props.activeSection)?.label}
                 </h2>
                 <Button
@@ -442,7 +442,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   type="button"
                   onClick={() => void props.onSaveSettings()}
                   disabled={props.settingsState === "saving" || props.settingsState === "loading"}
-                  className="h-9 rounded-[14px] bg-[var(--dm-ink)] px-4 text-xs font-black text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+                  className="h-9 rounded-[14px] bg-[#41f2ff] px-4 text-xs font-black text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
                 >
                   {props.settingsState === "saving" ? "保存中" : "保存"}
                 </button>

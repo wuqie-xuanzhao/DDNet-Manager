@@ -75,9 +75,9 @@ export function GamesPanel(props: GamesPanelProps) {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="text-[11px] font-black tracking-[0.2em] text-[var(--dm-muted-ink)]">客户端列表</div>
-          <h1 className="mt-2 text-4xl font-black tracking-[-0.06em] text-[var(--dm-ink)]">全部游戏</h1>
+          <h1 className="mt-2 text-4xl font-black tracking-[0] text-[var(--dm-ink)]">全部游戏</h1>
         </div>
-        <div className="rounded-full border border-[var(--dm-border)] bg-white/70 px-4 py-2 text-xs font-black text-[var(--dm-muted-ink)] shadow-sm">
+        <div className="rounded-full border border-[var(--dm-border)] bg-black/40 px-4 py-2 text-xs font-black text-[var(--dm-muted-ink)] shadow-sm">
           {props.clientTypes.length} 个客户端
         </div>
       </div>
@@ -95,35 +95,35 @@ export function GamesPanel(props: GamesPanelProps) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.04, duration: 0.28, ease: "easeOut" }}
               onClick={() => props.onSelectClientType(item.id)}
-              className={`group relative min-h-[320px] overflow-hidden rounded-[34px] border p-4 text-left transition ${
+              className={`group relative min-h-[320px] overflow-hidden rounded-[34px] border p-4 text-left transition duration-300 ${
                 active
-                  ? "border-[var(--dm-ink)] bg-white shadow-[0_26px_70px_rgba(47,52,64,0.16)]"
-                  : "border-[var(--dm-border)] bg-white/72 shadow-[0_18px_44px_rgba(47,52,64,0.08)] hover:-translate-y-1 hover:bg-white/88"
+                  ? "border-[#41f2ff] bg-[#161719]/90 shadow-[0_0_25px_rgba(65,242,255,0.18)]"
+                  : "border-[var(--dm-border)] bg-[#161719]/55 shadow-[0_15px_30px_rgba(0,0,0,0.3)] hover:-translate-y-1 hover:bg-[#161719]/80 hover:border-[#41f2ff]/30 hover:shadow-[0_0_20px_rgba(65,242,255,0.1)]"
               }`}
             >
               <div
                 className="absolute inset-x-4 top-4 h-40 rounded-[28px]"
                 style={{
-                  background: `linear-gradient(135deg, ${item.accent} 0%, rgba(255,255,255,0.75) 78%)`
+                  background: `linear-gradient(135deg, ${item.accent} 0%, rgba(22,23,25,0.65) 78%)`
                 }}
               />
-              <div className="absolute right-6 top-8 text-white/80">
+              <div className="absolute right-6 top-8 text-white/50 group-hover:text-white/80 transition duration-300">
                 <GameIcon name={item.icon} className="size-20" />
               </div>
-              <div className="absolute inset-x-4 top-4 h-40 rounded-[28px] bg-[radial-gradient(circle_at_18%_18%,rgba(255,255,255,0.9),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0),rgba(47,52,64,0.18))]" />
+              <div className="absolute inset-x-4 top-4 h-40 rounded-[28px] bg-[radial-gradient(circle_at_18%_18%,rgba(255,255,255,0.25),transparent_40%),linear-gradient(180deg,transparent,rgba(17,18,19,0.7))]" />
 
               <div className="relative z-10 flex h-full min-h-[288px] flex-col justify-between">
                 <div className="flex justify-between gap-3">
-                  <Badge className="border-0 bg-white/82 text-[10px] font-black text-[var(--dm-ink)]">
+                  <Badge className="border border-white/10 bg-[#111213]/80 text-[10px] font-black text-slate-300">
                     {item.version}
                   </Badge>
                   {active ? (
-                    <Badge className="border-0 bg-[var(--dm-ink)] text-[10px] font-black text-white">当前</Badge>
+                    <Badge className="border-0 bg-[#41f2ff] text-[10px] font-black text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.35)]">当前</Badge>
                   ) : null}
                 </div>
 
                 <div>
-                  <h2 className="text-2xl font-black tracking-[-0.045em] text-[var(--dm-ink)]">{item.name}</h2>
+                  <h2 className="text-2xl font-black tracking-[0] text-[var(--dm-ink)]">{item.name}</h2>
                   <div className="mt-1 text-sm font-bold text-[var(--dm-muted-ink)]">{item.subtitle}</div>
 
                   <div className="mt-5 grid gap-2">

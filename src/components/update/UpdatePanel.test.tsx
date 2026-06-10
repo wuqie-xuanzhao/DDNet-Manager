@@ -21,6 +21,7 @@ const loadAppSettings = vi.fn();
 const reportLocalSmokeResult = vi.fn();
 const closeWindow = vi.fn();
 const validateClientDir = vi.fn();
+const upsertClientInstallation = vi.fn();
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -50,6 +51,7 @@ vi.mock("../../lib/tauri", async () => {
     loadAppSettings: (...args: unknown[]) => loadAppSettings(...args),
     reportLocalSmokeResult: (...args: unknown[]) => reportLocalSmokeResult(...args),
     startUpdateDownload: vi.fn(),
+    upsertClientInstallation: (...args: unknown[]) => upsertClientInstallation(...args),
     validateClientDir: (...args: unknown[]) => validateClientDir(...args)
   };
 });
@@ -114,6 +116,16 @@ describe("UpdatePanel event ownership", () => {
     });
     listDownloadJobRecoveries.mockResolvedValue([]);
     listInstallHistory.mockResolvedValue([]);
+    upsertClientInstallation.mockResolvedValue({
+      ...defaultClient,
+      id: "client-smoke-persisted",
+      install_dir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient",
+      executable_path: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient/DDNet.exe",
+      storage_cfg_path: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient/storage.cfg",
+      data_dir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient/data",
+      version: null,
+      is_default: false
+    });
     validateClientDir.mockResolvedValue({
       ...defaultClient,
       id: "client-smoke",
@@ -173,9 +185,30 @@ describe("UpdatePanel event ownership", () => {
     });
 
     expect(screen.getByText("E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient")).toBeInTheDocument();
-    expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-smoke");
+    expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-smoke-persisted");
     expect(listDownloadJobRecoveries).not.toHaveBeenCalledWith("client-current");
     expect(getDefaultClient).not.toHaveBeenCalled();
+  });
+
+  it("persists the smoke client as a non-default installation before loading artifacts", async () => {
+    render(
+      <UpdatePanel
+        smokeAutomation={{
+          clientInstallDir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient",
+          manifestUrl: "http://127.0.0.1:18765/manifest.json",
+          closeWindowOnFinish: false
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(upsertClientInstallation).toHaveBeenCalledWith({
+        install_dir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient",
+        is_default: false
+      });
+    });
+    expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-smoke-persisted");
+    expect(listInstallHistory).toHaveBeenCalledWith("client-smoke-persisted");
   });
 
   it("closes the smoke window when result reporting fails after install completion", async () => {
@@ -193,7 +226,7 @@ describe("UpdatePanel event ownership", () => {
     );
 
     await waitFor(() => {
-      expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-smoke");
+      expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-smoke-persisted");
     });
 
     await act(async () => {
@@ -201,7 +234,7 @@ describe("UpdatePanel event ownership", () => {
         payload: {
           ...externalJob,
           id: "download-smoke",
-          client_installation_id: "client-smoke",
+          client_installation_id: "client-smoke-persisted",
           status: "completed"
         }
       });

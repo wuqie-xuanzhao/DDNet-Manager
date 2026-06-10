@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildNetworkRoute,
+  buildUpdateSourceRequest,
   deriveAutoUpdateView,
+  networkRouteLabel,
   progressPercent,
   resolveUpdateManifestInput
 } from "./updateLogic";
@@ -36,6 +38,12 @@ describe("progressPercent", () => {
 describe("buildNetworkRoute", () => {
   it("returns null for direct mode", () => {
     expect(buildNetworkRoute("direct", "")).toBeNull();
+  });
+
+  it("keeps route mode labels stable", () => {
+    expect(networkRouteLabel("direct")).toBe("直接下载");
+    expect(networkRouteLabel("proxy_prefix")).toBe("代理前缀");
+    expect(networkRouteLabel("mirror_template")).toBe("镜像模板");
   });
 
   it("throws for invalid non-direct routes", () => {
@@ -93,6 +101,49 @@ describe("resolveUpdateManifestInput", () => {
     ).toEqual({
       useManifestSource: true,
       manifestUrl: "https://example.com/smoke.json"
+    });
+  });
+
+  it("builds a catalog update request without manifest source", () => {
+    expect(
+      buildUpdateSourceRequest({
+        clientId: "qmclient",
+        channel: "stable",
+        manifestUrl: "https://example.com/manifest.json",
+        routeMode: "direct",
+        routeUrl: "",
+        useManifestSource: false
+      })
+    ).toEqual({
+      client_id: "qmclient",
+      channel: "stable",
+      manifest_url: null,
+      network_route: null,
+      use_manifest_source: false
+    });
+  });
+
+  it("builds a manifest update request with a configured mirror route", () => {
+    expect(
+      buildUpdateSourceRequest({
+        clientId: "qmclient",
+        channel: "stable",
+        manifestUrl: " https://example.com/manifest.json ",
+        routeMode: "mirror_template",
+        routeUrl: "https://mirror.example.com/{url}",
+        useManifestSource: true
+      })
+    ).toEqual({
+      client_id: "qmclient",
+      channel: "stable",
+      manifest_url: "https://example.com/manifest.json",
+      network_route: {
+        mode: "mirror_template",
+        proxy_prefix_url: null,
+        mirror_template: "https://mirror.example.com/{url}",
+        enabled_hosts: ["mirror.example.com"]
+      },
+      use_manifest_source: true
     });
   });
 });

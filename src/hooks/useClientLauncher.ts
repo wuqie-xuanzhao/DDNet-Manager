@@ -324,12 +324,21 @@ export function useClientLauncher(params: {
 
     try {
       await launchDefaultClient();
-      await refreshLaunchReadiness();
-      setRuntimeLauncherState("running");
-      setRuntimeErrorMessage(null);
+      let launchWarning: string | null = null;
       if (appSettings.close_panel_after_launch && tauriRuntime) {
-        await getCurrentWindow().minimize();
+        try {
+          await getCurrentWindow().minimize();
+        } catch (error) {
+          launchWarning = `启动成功，但最小化启动器失败：${getErrorMessage(error)}`;
+        }
       }
+      try {
+        await refreshLaunchReadiness();
+      } catch (error) {
+        launchWarning = `启动成功，但运行状态刷新失败：${getErrorMessage(error)}`;
+      }
+      setRuntimeLauncherState("running");
+      setRuntimeErrorMessage(launchWarning);
     } catch (error) {
       markInvalid(`启动失败：${getErrorMessage(error)}`);
     }

@@ -1,4 +1,11 @@
-import type { ClientUpdateCheck, DownloadJob, NetworkRouteConfig, NetworkRouteMode } from "../types";
+import type {
+  CheckClientUpdateRequest,
+  ClientUpdateCheck,
+  DownloadJob,
+  NetworkRouteConfig,
+  NetworkRouteMode,
+  StartUpdateDownloadRequest
+} from "../types";
 import { routeHostFromUrl } from "./settings";
 
 export type AutoUpdateViewState = "disabled" | "idle" | "checking" | "available" | "current" | "manual" | "error";
@@ -35,6 +42,51 @@ export function buildNetworkRoute(routeMode: NetworkRouteMode, routeUrl: string)
     proxy_prefix_url: routeMode === "proxy_prefix" ? trimmedUrl : null,
     mirror_template: routeMode === "mirror_template" ? trimmedUrl : null,
     enabled_hosts: [host]
+  };
+}
+
+export function networkRouteLabel(mode: NetworkRouteMode) {
+  switch (mode) {
+    case "direct":
+      return "直接下载";
+    case "proxy_prefix":
+      return "代理前缀";
+    case "mirror_template":
+      return "镜像模板";
+  }
+}
+
+export function buildUpdateSourceRequest(input: {
+  clientId: string;
+  channel: string;
+  manifestUrl: string;
+  routeMode: NetworkRouteMode;
+  routeUrl: string;
+  useManifestSource: boolean;
+}): CheckClientUpdateRequest {
+  return {
+    client_id: input.clientId,
+    channel: input.channel,
+    manifest_url: input.useManifestSource ? input.manifestUrl.trim() : null,
+    network_route: buildNetworkRoute(input.routeMode, input.routeUrl),
+    use_manifest_source: input.useManifestSource
+  };
+}
+
+export function buildStartUpdateDownloadRequest(input: {
+  clientInstallationId: string;
+  channel: string;
+  manifestUrl: string;
+  routeMode: NetworkRouteMode;
+  routeUrl: string;
+  useManifestSource: boolean;
+}): StartUpdateDownloadRequest {
+  return {
+    client_installation_id: input.clientInstallationId,
+    channel: input.channel,
+    manifest_url: input.useManifestSource ? input.manifestUrl.trim() : null,
+    network_route: buildNetworkRoute(input.routeMode, input.routeUrl),
+    use_manifest_source: input.useManifestSource
   };
 }
 

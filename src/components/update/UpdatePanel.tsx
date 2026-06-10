@@ -11,6 +11,7 @@ import {
   loadAppSettings,
   reportLocalSmokeResult,
   startUpdateDownload,
+  upsertClientInstallation,
   validateClientDir
 } from "../../lib/tauri";
 import type {
@@ -23,7 +24,13 @@ import type {
   NetworkRouteMode
 } from "../../types";
 import { getUpdateErrorMessage } from "../../lib/errors";
-import { buildNetworkRoute, progressPercent, resolveUpdateManifestInput } from "../../lib/updateLogic";
+import {
+  buildStartUpdateDownloadRequest,
+  buildUpdateSourceRequest,
+  networkRouteLabel,
+  progressPercent,
+  resolveUpdateManifestInput
+} from "../../lib/updateLogic";
 
 const MANIFEST_URL_PLACEHOLDER = "自维护 manifest / 调试用途";
 
@@ -117,17 +124,6 @@ function updateSourceLabel(source: ClientUpdateCheck["source_kind"]) {
       return "DDNet 官网";
     case "none":
       return "无自动来源";
-  }
-}
-
-function networkRouteLabel(mode: NetworkRouteMode) {
-  switch (mode) {
-    case "direct":
-      return "直接下载";
-    case "proxy_prefix":
-      return "代理前缀";
-    case "mirror_template":
-      return "镜像模板";
   }
 }
 
@@ -246,7 +242,10 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
         }
 
         const nextClient = smokeEnabled
-          ? await validateClientDir(smokeClientInstallDir)
+          ? await upsertClientInstallation({
+              install_dir: (await validateClientDir(smokeClientInstallDir)).install_dir,
+              is_default: false
+            })
           : storedClient;
         if (!alive) {
           return;
@@ -484,14 +483,14 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
     setIsBusy(true);
 
     try {
-      const networkRoute = buildNetworkRoute(routeMode, routeUrl);
-      const result = await checkClientUpdate({
-        client_id: client.client_id,
+      const result = await checkClientUpdate(buildUpdateSourceRequest({
+        clientId: client.client_id,
         channel,
-        manifest_url: activeUseManifestSource ? activeManifestUrl.trim() : null,
-        network_route: networkRoute,
-        use_manifest_source: activeUseManifestSource
-      });
+        manifestUrl: activeManifestUrl,
+        routeMode,
+        routeUrl,
+        useManifestSource: activeUseManifestSource
+      }));
       if (latestRequestIdRef.current !== requestId) {
         return;
       }
@@ -573,14 +572,14 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
     setNotice(null);
     setIsBusy(true);
     try {
-      const networkRoute = buildNetworkRoute(routeMode, routeUrl);
-      const nextJob = await startUpdateDownload({
-        client_installation_id: client.id,
+      const nextJob = await startUpdateDownload(buildStartUpdateDownloadRequest({
+        clientInstallationId: client.id,
         channel: update.channel,
-        manifest_url: activeUseManifestSource ? activeManifestUrl.trim() : null,
-        network_route: networkRoute,
-        use_manifest_source: activeUseManifestSource
-      });
+        manifestUrl: activeManifestUrl,
+        routeMode,
+        routeUrl,
+        useManifestSource: activeUseManifestSource
+      }));
       setJob(nextJob);
       if (smokeAutomation) {
         if (nextJob.status === "verified") {
@@ -691,24 +690,24 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
   const visibleNotice = tauriRuntime ? notice : null;
 
   return (
-    <section className="rounded-[28px] border border-[var(--dm-border)] bg-white/82 p-6 text-[var(--dm-ink)] shadow-[0_24px_70px_rgba(47,52,64,0.10)] backdrop-blur-2xl">
-      <h2 className="text-3xl font-black tracking-[-0.05em]">客户端更新</h2>
-      <p className="mt-2 text-sm font-semibold text-[#4f5663]">检查默认客户端是否有新版本，下载完成后会先校验文件，再安装。</p>
+    <section className="rounded-[28px] border border-[var(--dm-border)] bg-[#161719]/65 p-6 text-[var(--dm-ink)] shadow-[0_24px_70px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
+      <h2 className="text-3xl font-black tracking-[0]">客户端更新</h2>
+      <p className="mt-2 text-sm font-semibold text-[var(--dm-muted-ink)]">检查默认客户端是否有新版本，下载完成后会先校验文件，再安装。</p>
 
       <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
-          <div className="text-[11px] font-black tracking-[0.18em] text-[#59606d]">更新源类型</div>
-          <div className="mt-3 rounded-[18px] bg-white/76 p-4">
+          <div className="text-[11px] font-black tracking-[0.18em] text-[var(--dm-muted-ink)]">更新源类型</div>
+          <div className="mt-3 rounded-[18px] bg-black/30 border border-[#41f2ff]/10 p-4">
             <div className="text-sm font-black text-[var(--dm-ink)]">
               {activeUseManifestSource ? "ManifestSource" : "内置客户端更新源"}
             </div>
-            <div className="mt-2 text-xs font-bold leading-6 text-[#59606d]">
+            <div className="mt-2 text-xs font-bold leading-6 text-[var(--dm-muted-ink)]">
               普通流程会根据客户端类型自动选择 GitHub Release、官网或手动下载入口。
             </div>
           </div>
         </div>
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
-          <label className="block text-[11px] font-black tracking-[0.18em] text-[#59606d]" htmlFor="channel-input">
+          <label className="block text-[11px] font-black tracking-[0.18em] text-[var(--dm-muted-ink)]" htmlFor="channel-input">
             更新渠道
           </label>
           <input
@@ -719,7 +718,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
               setChannel(event.target.value);
             }}
             disabled={isBusy}
-            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#7b808c] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-black/30 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
             spellCheck={false}
           />
         </div>
@@ -733,7 +732,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
             setUseManifestSource((value) => !value);
           }}
           disabled={isBusy}
-          className="flex w-full items-center justify-between text-left text-xs font-black text-[#59606d] disabled:cursor-not-allowed disabled:opacity-55"
+          className="flex w-full items-center justify-between text-left text-xs font-black text-[var(--dm-muted-ink)] disabled:cursor-not-allowed disabled:opacity-55"
         >
           <span>自维护 manifest / 调试用途</span>
           <span>{activeUseManifestSource ? "已启用" : "默认折叠"}</span>
@@ -748,7 +747,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
               setManifestUrl(event.target.value);
             }}
             disabled={isBusy}
-            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#7b808c] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-black/30 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
             placeholder={MANIFEST_URL_PLACEHOLDER}
             spellCheck={false}
           />
@@ -756,7 +755,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
       </div>
 
       <div className="mt-4 rounded-[22px] bg-[var(--dm-soft)] p-4">
-        <div className="text-xs font-black text-[#59606d]">下载网络</div>
+        <div className="text-xs font-black text-[var(--dm-muted-ink)]">下载网络</div>
         <div className="mt-3 flex flex-wrap gap-2">
           {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => (
             <button
@@ -769,8 +768,8 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
               disabled={isBusy}
               className={`h-10 rounded-[15px] border px-4 text-xs font-black transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55 ${
                 routeMode === mode
-                  ? "border-[var(--dm-ink)] bg-[var(--dm-ink)] text-white"
-                  : "border-[var(--dm-border)] bg-white text-[#59606d]"
+                  ? "border-[#41f2ff] bg-[#41f2ff] text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.2)]"
+                  : "border-[var(--dm-border)] bg-black/30 text-[var(--dm-muted-ink)]"
               }`}
             >
               {networkRouteLabel(mode)}
@@ -786,7 +785,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
               setRouteUrl(event.target.value);
             }}
             disabled={isBusy}
-            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-white px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#7b808c] focus:border-[var(--dm-ink)]/40 focus:ring-4 focus:ring-[var(--dm-ink)]/10"
+            className="mt-3 h-12 w-full rounded-[16px] border border-[var(--dm-border)] bg-black/30 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
             placeholder={routeMode === "proxy_prefix" ? "填写你的代理前缀地址" : "填写包含 {url} 的镜像模板"}
             spellCheck={false}
           />
@@ -795,11 +794,11 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
-          <div className="text-xs font-black text-[#59606d]">默认客户端</div>
-          <div className="mt-3 rounded-[18px] bg-white/76 p-4">
+          <div className="text-xs font-black text-[var(--dm-muted-ink)]">默认客户端</div>
+          <div className="mt-3 rounded-[18px] bg-black/30 border border-[#41f2ff]/10 p-4">
             <div className="text-lg font-black">{visibleClient?.display_name ?? "未设置"}</div>
-            <div className="mt-2 break-all text-xs font-bold text-[#59606d]">{visibleClient?.install_dir ?? "请先保存默认客户端"}</div>
-            <div className="mt-3 text-xs font-black text-[#3d4350]">
+            <div className="mt-2 break-all text-xs font-bold text-[var(--dm-muted-ink)]">{visibleClient?.install_dir ?? "请先保存默认客户端"}</div>
+            <div className="mt-3 text-xs font-black text-[#41f2ff]">
               {visibleClient ? `当前版本：${visibleClient.version ?? "未知"}` : "-"}
             </div>
           </div>
@@ -807,23 +806,23 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
             type="button"
             onClick={() => void check()}
             disabled={!visibleClient || isBusy}
-            className="mt-4 h-11 w-full rounded-[16px] bg-[var(--dm-ink)] px-5 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+            className="mt-4 h-11 w-full rounded-[16px] bg-[#41f2ff] px-5 text-sm font-black text-[#111213] shadow-[0_0_15px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
           >
             {isBusy ? "请稍候" : "检查更新"}
           </button>
         </div>
 
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
-          <div className="text-xs font-black text-[#59606d]">可用更新</div>
+          <div className="text-xs font-black text-[var(--dm-muted-ink)]">可用更新</div>
           {update?.action === "open_url" ? (
-            <div className="mt-3 rounded-[18px] bg-white/78 p-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[#59606d]">
+            <div className="mt-3 rounded-[18px] bg-black/30 border border-[#41f2ff]/10 p-4">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--dm-muted-ink)]">
                 <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{updateSourceLabel(update.source_kind)}</span>
                 {update.latest_version ? (
                   <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{update.latest_version}</span>
                 ) : null}
               </div>
-              <div className="mt-3 text-sm font-bold leading-7 text-[#59606d]">
+              <div className="mt-3 text-sm font-bold leading-7 text-[var(--dm-muted-ink)]">
                 {update.message ?? "该更新来源需要打开上游页面手动处理。"}
               </div>
               {update.action_url ? (
@@ -831,60 +830,60 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
                   href={update.action_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-4 inline-flex h-10 items-center rounded-[15px] bg-[var(--dm-ink)] px-4 text-sm font-black text-white transition hover:-translate-y-0.5"
+                  className="mt-4 inline-flex h-10 items-center rounded-[15px] bg-[#41f2ff] px-4 text-sm font-black text-[#111213] shadow-[0_0_15px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5"
                 >
                   打开上游页面
                 </a>
               ) : null}
             </div>
           ) : update ? (
-            <div className="mt-3 rounded-[18px] bg-white/78 p-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[#59606d]">
+            <div className="mt-3 rounded-[18px] bg-black/30 border border-[#41f2ff]/10 p-4">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--dm-muted-ink)]">
                 <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{update.channel}</span>
                 <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{update.latest_version}</span>
                 <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{update.asset.platform}</span>
                 <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{formatAssetSize(update.asset.size)}</span>
               </div>
-              <div className="mt-3 text-xs font-black text-[#59606d]">
+              <div className="mt-3 text-xs font-black text-[var(--dm-muted-ink)]">
                 {update.needs_update ? "需要更新" : "当前已是最新版本"}
               </div>
               <button
                 type="button"
                 onClick={() => void download()}
                 disabled={!update.needs_update || isBusy}
-                className="mt-4 h-10 rounded-[15px] bg-[var(--dm-ink)] px-4 text-sm font-black text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+                className="mt-4 h-10 rounded-[15px] bg-[#41f2ff] px-4 text-sm font-black text-[#111213] shadow-[0_0_15px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
               >
                 开始下载
               </button>
             </div>
           ) : (
-            <div className="mt-3 rounded-[18px] border border-dashed border-[var(--dm-border)] bg-white/64 px-4 py-6 text-sm font-semibold text-[#59606d]">
+            <div className="mt-3 rounded-[18px] border border-dashed border-[var(--dm-border)] bg-black/25 px-4 py-6 text-sm font-semibold text-[var(--dm-muted-ink)]">
               检查更新后会显示可下载的版本。
             </div>
           )}
 
           {job ? (
-            <div className="mt-4 rounded-[18px] bg-white/78 p-4">
-              <div className="flex items-center justify-between text-xs font-black text-[#59606d]">
+            <div className="mt-4 rounded-[18px] bg-black/30 border border-[#41f2ff]/10 p-4">
+              <div className="flex items-center justify-between text-xs font-black text-[var(--dm-muted-ink)]">
                 <span>{downloadStatusLabel(job.status)}</span>
                 <span>{percent}%</span>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--dm-soft)]">
-                <div className="h-full bg-[var(--dm-ink)] transition-all" style={{ width: `${percent}%` }} />
+                <div className="h-full bg-[#41f2ff] shadow-[0_0_8px_#41f2ff] transition-all" style={{ width: `${percent}%` }} />
               </div>
-              <div className="mt-3 text-xs leading-6 text-[#59606d]">
+              <div className="mt-3 text-xs leading-6 text-[var(--dm-muted-ink)]">
                 {job.status === "verified"
                   ? "下载完成，文件已通过校验。"
                   : job.status === "installing"
                     ? "正在安装更新，请保持客户端关闭。"
                     : "下载文件会保存在应用缓存中。"}
               </div>
-              {job.error ? <div className="mt-2 text-xs font-bold text-[#8f2f2f]">{getUpdateErrorMessage(job.error)}</div> : null}
+              {job.error ? <div className="mt-2 text-xs font-bold text-red-400">{getUpdateErrorMessage(job.error)}</div> : null}
               <button
                 type="button"
                 onClick={() => void installJob(job.id)}
                 disabled={job.status !== "verified" || isBusy}
-                className="mt-4 h-10 rounded-[15px] border border-[var(--dm-ink)] px-4 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
+                className="mt-4 h-10 rounded-[15px] bg-[#41f2ff] px-4 text-sm font-black text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 安装更新
               </button>
@@ -897,23 +896,23 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-black text-[#59606d]">恢复任务</div>
-              <div className="mt-1 text-[11px] font-bold text-[#7b808c]">展示当前默认客户端可继续安装或可重试的下载记录。</div>
+              <div className="text-xs font-black text-[var(--dm-muted-ink)]">恢复任务</div>
+              <div className="mt-1 text-[11px] font-bold text-slate-500">展示当前默认客户端可继续安装或可重试的下载记录。</div>
             </div>
-            <span className="rounded-full bg-white px-3 py-1 text-[11px] font-black text-[#59606d]">{visibleRecoveries.length}</span>
+            <span className="rounded-full bg-[#41f2ff] px-3 py-1 text-[11px] font-black text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.3)]">{visibleRecoveries.length}</span>
           </div>
           {visibleRecoveries.length > 0 ? (
             <div className="mt-3 grid gap-3">
               {visibleRecoveries.map((recovery) => (
-                <div key={recovery.job.id} className="rounded-[18px] bg-white/78 p-4">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-black text-[#59606d]">
+                <div key={recovery.job.id} className="rounded-[18px] bg-black/30 border border-[#41f2ff]/10 p-4">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-black text-[var(--dm-muted-ink)]">
                     <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{recovery.job.version}</span>
                     <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{downloadStatusLabel(recovery.job.status)}</span>
                     <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{recoveryStateLabel(recovery.cache_state)}</span>
                   </div>
-                  <div className="mt-3 text-sm font-bold leading-6 text-[#3d4350]">{recovery.user_message}</div>
-                  <div className="mt-2 break-all text-xs font-semibold text-[#7b808c]">{recovery.job.cache_path}</div>
-                  <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-black text-[#59606d]">
+                  <div className="mt-3 text-sm font-bold leading-6 text-[var(--dm-ink)]">{recovery.user_message}</div>
+                  <div className="mt-2 break-all text-xs font-semibold text-slate-500">{recovery.job.cache_path}</div>
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-black text-[var(--dm-muted-ink)]">
                     <span>已下载 {formatAssetSize(recovery.job.downloaded_bytes)} / {formatAssetSize(recovery.job.size)}</span>
                     <span>{recovery.can_retry ? "建议重新下载" : "无需重下"}</span>
                   </div>
@@ -922,7 +921,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
                       type="button"
                       onClick={() => void installJob(recovery.job.id, recovery.job)}
                       disabled={isBusy}
-                      className="mt-4 h-10 rounded-[15px] border border-[var(--dm-ink)] px-4 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
+                      className="mt-4 h-10 rounded-[15px] bg-[#41f2ff] px-4 text-sm font-black text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       继续安装
                     </button>
@@ -931,7 +930,7 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
               ))}
             </div>
           ) : (
-            <div className="mt-3 rounded-[18px] border border-dashed border-[var(--dm-border)] bg-white/64 px-4 py-6 text-sm font-semibold text-[#59606d]">
+            <div className="mt-3 rounded-[18px] border border-dashed border-[var(--dm-border)] bg-black/25 px-4 py-6 text-sm font-semibold text-[var(--dm-muted-ink)]">
               当前没有可恢复的下载任务。
             </div>
           )}
@@ -940,40 +939,40 @@ export function UpdatePanel(props: { smokeAutomation?: LocalSmokeAutomationConfi
         <div className="rounded-[22px] bg-[var(--dm-soft)] p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-black text-[#59606d]">安装历史</div>
-              <div className="mt-1 text-[11px] font-bold text-[#7b808c]">记录安装结果、完成时间，以及可回滚目录位置。</div>
+              <div className="text-xs font-black text-[var(--dm-muted-ink)]">安装历史</div>
+              <div className="mt-1 text-[11px] font-bold text-slate-500">记录安装结果、完成时间，以及可回滚目录位置。</div>
             </div>
-            <span className="rounded-full bg-white px-3 py-1 text-[11px] font-black text-[#59606d]">{visibleInstallHistory.length}</span>
+            <span className="rounded-full bg-[#41f2ff] px-3 py-1 text-[11px] font-black text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.3)]">{visibleInstallHistory.length}</span>
           </div>
           {visibleInstallHistory.length > 0 ? (
             <div className="mt-3 grid gap-3">
               {visibleInstallHistory.map((record) => (
-                <div key={record.id} className="rounded-[18px] bg-white/78 p-4">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-black text-[#59606d]">
+                <div key={record.id} className="rounded-[18px] bg-black/30 border border-[#41f2ff]/10 p-4">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-black text-[var(--dm-muted-ink)]">
                     <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{record.version}</span>
-                    <span className={`rounded-full px-3 py-1 ${record.status === "completed" ? "bg-[#e8fff0] text-[#237a45]" : "bg-[#fff0f0] text-[#9a3f3f]"}`}>
+                    <span className={`rounded-full px-3 py-1 border ${record.status === "completed" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-red-500/15 text-red-400 border-red-500/30"}`}>
                       {installHistoryStatusLabel(record.status)}
                     </span>
                     <span className="rounded-full bg-[var(--dm-soft)] px-3 py-1">{record.package_kind}</span>
                   </div>
-                  <div className="mt-3 text-xs font-bold text-[#59606d]">完成时间：{formatCompletedAt(record.completed_at)}</div>
-                  <div className="mt-2 break-all text-xs font-semibold text-[#7b808c]">
+                  <div className="mt-3 text-xs font-bold text-[var(--dm-muted-ink)]">完成时间：{formatCompletedAt(record.completed_at)}</div>
+                  <div className="mt-2 break-all text-xs font-semibold text-slate-500">
                     回滚目录：{record.rollback_path ?? "未记录"}
                   </div>
-                  {record.error ? <div className="mt-2 text-xs font-bold text-[#8f2f2f]">{getUpdateErrorMessage(record.error)}</div> : null}
+                  {record.error ? <div className="mt-2 text-xs font-bold text-red-400">{getUpdateErrorMessage(record.error)}</div> : null}
                 </div>
               ))}
             </div>
           ) : (
-            <div className="mt-3 rounded-[18px] border border-dashed border-[var(--dm-border)] bg-white/64 px-4 py-6 text-sm font-semibold text-[#59606d]">
+            <div className="mt-3 rounded-[18px] border border-dashed border-[var(--dm-border)] bg-black/25 px-4 py-6 text-sm font-semibold text-[var(--dm-muted-ink)]">
               当前还没有安装历史记录。
             </div>
           )}
         </div>
       </div>
 
-      {visibleNotice ? <div className="mt-4 rounded-2xl border border-[var(--dm-ink)]/10 bg-[var(--dm-ink)]/5 px-4 py-3 text-sm font-semibold text-[#3d4350]">{visibleNotice}</div> : null}
-      {visibleError ? <div className="mt-4 rounded-2xl border border-[#b84a4a]/20 bg-[#b84a4a]/8 px-4 py-3 text-sm font-semibold text-[#8f2f2f]">{visibleError}</div> : null}
+      {visibleNotice ? <div className="mt-4 rounded-2xl border border-[#41f2ff]/10 bg-[#41f2ff]/5 px-4 py-3 text-sm font-semibold text-[#41f2ff]">{visibleNotice}</div> : null}
+      {visibleError ? <div className="mt-4 rounded-2xl border border-[#b84a4a]/20 bg-[#b84a4a]/8 px-4 py-3 text-sm font-semibold text-red-400">{visibleError}</div> : null}
     </section>
   );
 }
