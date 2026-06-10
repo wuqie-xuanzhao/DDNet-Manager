@@ -3,7 +3,7 @@ dist/
 tmp/
 src-tauri/target/
 .claude/worktrees/
-.playwright-mcp/
+.playwright-mcp
 .superpowers/brainstorm/
 .codegraph/
 .DS_Store
