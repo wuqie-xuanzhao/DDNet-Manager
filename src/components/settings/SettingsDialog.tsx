@@ -86,7 +86,7 @@ function InputField(props: { value: string; onChange: (value: string) => void; p
       onChange={(e) => props.onChange(e.target.value)}
       placeholder={props.placeholder}
       aria-label={props["aria-label"]}
-      className="bg-[var(--app-input)] border border-[var(--app-border)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-focus)] font-mono"
+      className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
     />
   );
 }
@@ -179,16 +179,19 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <div className="space-y-6">
             <div className="space-y-3">
               <SectionHeader>启动选项</SectionHeader>
-              <Toggle
-                checked={props.settings.close_panel_after_launch}
-                label="启动后最小化启动器"
-                onChange={() => update({ ...props.settings, close_panel_after_launch: !props.settings.close_panel_after_launch })}
-              />
-              <Toggle
-                checked={props.settings.auto_check_updates}
-                label="自动检查更新"
-                onChange={() => update({ ...props.settings, auto_check_updates: !props.settings.auto_check_updates })}
-              />
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
+                <Toggle
+                  checked={props.settings.close_panel_after_launch}
+                  label="启动后最小化启动器"
+                  onChange={() => update({ ...props.settings, close_panel_after_launch: !props.settings.close_panel_after_launch })}
+                />
+                <div className="border-t border-[var(--app-border-subtle)]" />
+                <Toggle
+                  checked={props.settings.auto_check_updates}
+                  label="自动检查更新"
+                  onChange={() => update({ ...props.settings, auto_check_updates: !props.settings.auto_check_updates })}
+                />
+              </div>
             </div>
           </div>
         );
@@ -199,42 +202,46 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <div className="space-y-5">
             <div className="space-y-3">
               <SectionHeader>网络路由</SectionHeader>
-              <div className="flex flex-wrap gap-2">
-                {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
-                  const active = (props.settings.network_route?.mode ?? "direct") === mode;
-                  return (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => update(updateNetworkRoute(props.settings, mode, networkRouteUrl(props.settings)))}
-                      className={`px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
-                        active
-                          ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
-                          : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-[var(--app-border-subtle)]"
-                      }`}
-                    >
-                      {mode === "direct" ? "直连" : mode === "proxy_prefix" ? "代理前缀" : "镜像模板"}
-                    </button>
-                  );
-                })}
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
+                    const active = (props.settings.network_route?.mode ?? "direct") === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => update(updateNetworkRoute(props.settings, mode, networkRouteUrl(props.settings)))}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
+                          active
+                            ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
+                            : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-black/20"
+                        }`}
+                      >
+                        {mode === "direct" ? "直连" : mode === "proxy_prefix" ? "代理前缀" : "镜像模板"}
+                      </button>
+                    );
+                  })}
+                </div>
+                {(props.settings.network_route?.mode ?? "direct") !== "direct" ? (
+                  <InputField
+                    aria-label={props.settings.network_route?.mode === "mirror_template" ? "镜像模板地址" : "代理前缀地址"}
+                    value={networkRouteUrl(props.settings)}
+                    onChange={(value) => update(updateNetworkRoute(props.settings, props.settings.network_route?.mode ?? "proxy_prefix", value))}
+                    placeholder={props.settings.network_route?.mode === "mirror_template" ? "https://mirror.example/{url}" : "https://proxy.example/"}
+                  />
+                ) : null}
               </div>
-              {(props.settings.network_route?.mode ?? "direct") !== "direct" ? (
-                <InputField
-                  aria-label={props.settings.network_route?.mode === "mirror_template" ? "镜像模板地址" : "代理前缀地址"}
-                  value={networkRouteUrl(props.settings)}
-                  onChange={(value) => update(updateNetworkRoute(props.settings, props.settings.network_route?.mode ?? "proxy_prefix", value))}
-                  placeholder={props.settings.network_route?.mode === "mirror_template" ? "https://mirror.example/{url}" : "https://proxy.example/"}
-                />
-              ) : null}
             </div>
             <div className="space-y-3">
               <SectionHeader>高级更新源</SectionHeader>
-              <InputField
-                aria-label="manifest 地址"
-                value={props.settings.advanced_manifest_url ?? ""}
-                onChange={(value) => update({ ...props.settings, advanced_manifest_url: value.trim() ? value : null })}
-                placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
-              />
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4">
+                <InputField
+                  aria-label="manifest 地址"
+                  value={props.settings.advanced_manifest_url ?? ""}
+                  onChange={(value) => update({ ...props.settings, advanced_manifest_url: value.trim() ? value : null })}
+                  placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
+                />
+              </div>
             </div>
           </div>
         );
@@ -245,36 +252,38 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <div className="space-y-5">
             <div className="space-y-3">
               <SectionHeader>背景</SectionHeader>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={props.onClearBackgroundImage}
-                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
-                    props.backgroundMode === "default"
-                      ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
-                      : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-[var(--app-border-subtle)]"
-                  }`}
-                >
-                  默认背景
-                </button>
-                <label className="px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-[var(--app-border-subtle)] cursor-pointer transition-all">
-                  自定义图片
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      event.currentTarget.value = "";
-                      if (file) void props.onBackgroundImageSelect(file);
-                    }}
-                  />
-                </label>
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={props.onClearBackgroundImage}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
+                      props.backgroundMode === "default"
+                        ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
+                        : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-black/20"
+                    }`}
+                  >
+                    默认背景
+                  </button>
+                  <label className="px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-black/20 cursor-pointer transition-all border border-transparent hover:border-[var(--app-border-subtle)]">
+                    自定义图片
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.currentTarget.value = "";
+                        if (file) void props.onBackgroundImageSelect(file);
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
             </div>
             <div className="space-y-3">
               <SectionHeader>主题</SectionHeader>
-              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-lg px-3 py-2.5 text-xs text-[var(--app-text-muted)] font-medium">
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 text-xs text-[var(--app-text-muted)] font-medium">
                 暗黑
               </div>
             </div>
@@ -285,25 +294,31 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <div className="space-y-5">
             <div className="space-y-3">
               <SectionHeader>扫描</SectionHeader>
-              <Toggle
-                checked={props.settings.use_everything}
-                label="使用 Everything 加速扫描"
-                onChange={() => update({ ...props.settings, use_everything: !props.settings.use_everything })}
-              />
-              <textarea
-                aria-label="扫描排除路径列表"
-                value={props.settings.scan_excluded_paths.join("\n")}
-                onChange={(event) =>
-                  update({
-                    ...props.settings,
-                    scan_excluded_paths: event.target.value
-                      .split(/\r?\n/)
-                      .flatMap((line) => { const t = line.trim(); return t ? [t] : []; })
-                  })
-                }
-                placeholder="每行一个排除路径"
-                className="min-h-24 w-full resize-none bg-[var(--app-input)] border border-[var(--app-border)] rounded-lg px-3.5 py-2 text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-focus)] font-mono"
-              />
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
+                <Toggle
+                  checked={props.settings.use_everything}
+                  label="使用 Everything 加速扫描"
+                  onChange={() => update({ ...props.settings, use_everything: !props.settings.use_everything })}
+                />
+                <div className="border-t border-[var(--app-border-subtle)]" />
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold text-[var(--app-text-dim)] uppercase tracking-wider block">排除路径</span>
+                  <textarea
+                    aria-label="扫描排除路径列表"
+                    value={props.settings.scan_excluded_paths.join("\n")}
+                    onChange={(event) =>
+                      update({
+                        ...props.settings,
+                        scan_excluded_paths: event.target.value
+                          .split(/\r?\n/)
+                          .flatMap((line) => { const t = line.trim(); return t ? [t] : []; })
+                      })
+                    }
+                    placeholder="每行一个排除路径"
+                    className="min-h-24 w-full resize-none bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3 py-2 text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono leading-normal transition-colors"
+                  />
+                </div>
+              </div>
             </div>
           </div>
         );
