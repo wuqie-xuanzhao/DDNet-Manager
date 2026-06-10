@@ -1,24 +1,36 @@
 use crate::client_catalog::ClientCatalogEntry;
-use crate::models::UpdateAsset;
-use serde::Deserialize;
+use crate::models::{NetworkRouteConfig, UpdateAsset};
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const GITHUB_API_BASE: &str = "https://api.github.com/repos";
 const USER_AGENT: &str = "DDNet-Manager/0.1.0";
 
-#[derive(Debug, Deserialize)]
-struct GitHubReleaseResponse {
-    tag_name: String,
-    assets: Vec<GitHubReleaseAsset>,
+/// 表示 GitHub API 返回的 Release 数据结构。
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GitHubReleaseResponse {
+    /// 发布的 tag 名称（如 v0.1.0）。
+    pub tag_name: String,
+    /// 发布的网页 HTML URL。
+    pub html_url: String,
+    /// 发布的更新说明正文。
+    pub body: Option<String>,
+    /// 发布中附带的资产列表。
+    pub assets: Vec<GitHubReleaseAsset>,
 }
 
-#[derive(Debug, Deserialize)]
-struct GitHubReleaseAsset {
-    name: String,
-    browser_download_url: String,
-    size: u64,
+/// 表示 GitHub Release 中的一个资产项。
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GitHubReleaseAsset {
+    /// 资产名称。
+    pub name: String,
+    /// 资产的浏览器下载链接。
+    pub browser_download_url: String,
+    /// 资产文件的大小（字节）。
+    pub size: u64,
+    /// 资产的 sha256 散列校验值，如果存在的话。
     #[serde(default)]
-    digest: Option<String>,
+    pub digest: Option<String>,
 }
 
 /// 表示 GitHub Release 更新检查结果。
@@ -45,24 +57,23 @@ struct ReleaseSelection {
     asset: GitHubReleaseAsset,
 }
 
-/// 从 GitHub latest release 中选择当前平台可校验资产。
-pub async fn check_latest_release(
-    entry: &ClientCatalogEntry,
-    platform: &str,
-) -> Result<Option<GitHubReleaseCheck>, String> {
-    let crate::client_catalog::UpdateSourceDescriptor::GithubRelease { owner, repo, .. } =
-        entry.update_source
-    else {
-        return Ok(None);
-    };
-    let url = format!("{GITHUB_API_BASE}/{owner}/{repo}/releases/latest");
+/// 从 GitHub 获取最新的 release 数据，并处理网络路由（代理/镜像）。
+pub async fn fetch_latest_github_release(
+    owner: &str,
+    repo: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<GitHubReleaseResponse, String> {
+    let url_str = format!("{GITHUB_API_BASE}/{owner}/{repo}/releases/latest");
+    let final_url = crate::manifest::build_url_with_route(&url_str, route)?;
+
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent(USER_AGENT)
         .build()
         .map_err(|error| format!("failed to create GitHub client: {error}"))?;
-    let release = client
-        .get(url)
+
+    let response = client
+        .get(final_url)
         .send()
         .await
         .and_then(|response| response.error_for_status())
@@ -70,6 +81,23 @@ pub async fn check_latest_release(
         .json::<GitHubReleaseResponse>()
         .await
         .map_err(|error| format!("failed to parse GitHub release: {error}"))?;
+
+    Ok(response)
+}
+
+/// 从 GitHub latest release 中选择当前平台可校验资产。
+pub async fn check_latest_release(
+    entry: &ClientCatalogEntry,
+    platform: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<Option<GitHubReleaseCheck>, String> {
+    let crate::client_catalog::UpdateSourceDescriptor::GithubRelease { owner, repo, .. } =
+        entry.update_source
+    else {
+        return Ok(None);
+    };
+
+    let release = fetch_latest_github_release(owner, repo, route).await?;
 
     select_release_asset(entry, platform, release)
 }

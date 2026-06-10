@@ -1,6 +1,6 @@
 use crate::manifest::{
-    build_asset_url_with_route, build_manifest_url, build_manifest_url_with_route, parse_manifest,
-    select_client_update,
+    build_asset_url_with_route, build_manifest_url, build_manifest_url_with_route,
+    build_url_with_route, parse_manifest, select_client_update,
 };
 use crate::models::{ClientUpdateSelector, NetworkRouteConfig, NetworkRouteMode};
 
@@ -505,4 +505,19 @@ fn valid_manifest() -> String {
                     ]
                 }}"#
     )
+}
+
+#[test]
+fn build_url_with_route_handles_generic_url_routing() {
+    let route = NetworkRouteConfig {
+        mode: NetworkRouteMode::ProxyPrefix,
+        proxy_prefix_url: Some("https://proxy.example/".to_string()),
+        mirror_template: None,
+        enabled_hosts: vec!["proxy.example".to_string()],
+    };
+    let url = build_url_with_route("https://api.github.com/some/path", Some(&route)).unwrap();
+    assert_eq!(
+        url.as_str(),
+        "https://proxy.example/https%3A%2F%2Fapi.github.com%2Fsome%2Fpath"
+    );
 }

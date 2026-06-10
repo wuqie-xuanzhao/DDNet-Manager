@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
+  AppUpdateCheck,
   CheckClientUpdateRequest,
   ClientInstallation,
   ClientUpdateCheck,
@@ -68,7 +69,7 @@ export async function getLaunchReadiness(): Promise<LaunchReadiness> {
       can_launch: false,
       running: false,
       status_label: "未设置",
-      user_message: "尚未设置默认客户端，请先定位并保存一个客户端。",
+      user_message: "未设置默认客户端",
       blocking_reasons: ["没有默认客户端记录"],
       checked_at: checkedAt
     };
@@ -93,11 +94,7 @@ export async function getLaunchReadiness(): Promise<LaunchReadiness> {
 
   const canLaunch = client.health === "ok" && client.compatibility.can_launch;
   const statusLabel = running ? "正在运行" : canLaunch ? "可启动" : client.health !== "ok" ? "安装不完整" : "不可启动";
-  const userMessage = running
-    ? `${client.display_name} 正在运行。`
-    : canLaunch
-      ? `${client.display_name} 已准备就绪，可以启动。`
-      : `${client.display_name} 暂不能启动，请处理阻断项。`;
+  const userMessage = running ? "正在运行" : canLaunch ? "可启动" : "不可启动";
 
   return {
     client,
@@ -171,4 +168,12 @@ export function launchDefaultClient(): Promise<void> {
 
 export function isClientRunning(path: string): Promise<boolean> {
   return invoke<boolean>("is_client_running", { path });
+}
+
+export function getAppVersion(): Promise<string> {
+  return invoke<string>("get_app_version");
+}
+
+export function checkAppUpdate(): Promise<AppUpdateCheck> {
+  return invoke<AppUpdateCheck>("check_app_update");
 }

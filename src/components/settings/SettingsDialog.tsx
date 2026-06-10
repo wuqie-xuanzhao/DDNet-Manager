@@ -1,17 +1,17 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useRef } from "react";
-import { GameIcon, type GameIconName } from "@/components/icons/GameIcon";
-import { Button } from "@/components/ui/button";
-import type { ClientType } from "@/components/games/GamesPanel";
+import { X, Loader2, ArrowUpRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ClientManager } from "@/components/clients/ClientManager";
+import { UpdatePanel } from "@/components/update/UpdatePanel";
 import { networkRouteUrl, updateNetworkRoute } from "@/lib/settings";
-import type { AppSettings, LauncherState } from "@/types";
+import { getAppVersion, checkAppUpdate } from "@/lib/tauri";
+import type { AppSettings, LauncherState, LocalSmokeAutomationConfig, AppUpdateCheck } from "@/types";
+import logoMark from "@/assets/logo.svg";
 
-export type SettingsSectionId = "general" | "download" | "appearance" | "tools" | "about";
+export type SettingsSectionId = "general" | "clients" | "download" | "updates" | "appearance" | "tools" | "about";
 
-type SettingsSection = {
-  id: SettingsSectionId;
-  label: string;
-  icon: GameIconName;
+type ClientTypeInfo = {
+  name: string;
 };
 
 type SettingsDialogProps = {
@@ -20,16 +20,16 @@ type SettingsDialogProps = {
   tauriRuntime: boolean;
   launcherState: LauncherState;
   clientPath: string;
-  selectedClientType: ClientType;
+  selectedClientType: ClientTypeInfo;
   backgroundMode: "default" | "custom";
   errorMessage: string | null;
   settings: AppSettings;
   settingsState: "idle" | "loading" | "saving" | "saved" | "error";
   settingsError: string | null;
+  smokeAutomation: LocalSmokeAutomationConfig | null;
   onClose: () => void;
   onSectionChange: (section: SettingsSectionId) => void;
-  onSettingsChange: (settings: AppSettings) => void;
-  onSaveSettings: () => Promise<void>;
+  onUpdateSettings: (settings: AppSettings) => Promise<void>;
   onClientPathChange: (value: string) => void;
   onBrowse: () => Promise<void>;
   onValidate: () => Promise<void>;
@@ -37,264 +37,227 @@ type SettingsDialogProps = {
   onClearBackgroundImage: () => void;
 };
 
-const sections: SettingsSection[] = [
-  { id: "general", label: "通用", icon: "settings" },
-  { id: "download", label: "下载", icon: "cloudDownload" },
-  { id: "appearance", label: "外观", icon: "folder" },
-  { id: "tools", label: "工具", icon: "wrench" },
-  { id: "about", label: "关于", icon: "gamepad" }
+const sections: { id: SettingsSectionId; label: string }[] = [
+  { id: "general", label: "通用" },
+  { id: "clients", label: "客户端" },
+  { id: "download", label: "下载" },
+  { id: "updates", label: "更新" },
+  { id: "appearance", label: "外观" },
+  { id: "tools", label: "工具" },
+  { id: "about", label: "关于" }
 ];
 
-function SettingCard(props: { title: string; children: React.ReactNode }) {
+function Toggle(props: { checked: boolean; label: string; onChange: () => void }) {
   return (
-    <section className="rounded-[24px] bg-[var(--dm-soft)] p-4">
-      <h3 className="text-base font-black text-[var(--dm-ink)]">{props.title}</h3>
-      <div className="mt-3">{props.children}</div>
-    </section>
+    <div className="flex items-center justify-between py-1">
+      <span className="text-xs font-medium text-[var(--app-text-secondary)]">{props.label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={props.checked}
+        onClick={props.onChange}
+        className={`w-10 h-5 rounded-full flex items-center transition-colors px-[3px] cursor-pointer ${
+          props.checked ? "bg-[var(--app-accent)]" : "bg-[var(--app-input)]"
+        }`}
+      >
+        <div
+          className={`w-[14px] h-[14px] rounded-full transition-transform bg-white shadow-sm ${
+            props.checked ? "translate-x-5" : "translate-x-0"
+          }`}
+        />
+      </button>
+    </div>
   );
 }
 
-function TogglePill(props: { checked: boolean; label: string }) {
+function SectionHeader(props: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 rounded-[22px] bg-black/30 border border-[#41f2ff]/10 px-4 py-3">
-      <span className="text-sm font-bold text-[var(--dm-ink)]">{props.label}</span>
-      <span
-        className={`relative h-7 w-12 rounded-full border transition ${
-          props.checked ? "border-[#41f2ff] bg-[#41f2ff]" : "border-[var(--dm-border)] bg-black/50"
-        }`}
-      >
-        <span
-          className={`absolute top-1 grid h-5 w-5 place-items-center rounded-full bg-white shadow-sm transition ${
-            props.checked ? "left-6" : "left-1"
-          }`}
-        >
-          {props.checked ? <GameIcon name="play" className="size-3 text-[#111213]" /> : null}
-        </span>
-      </span>
+    <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
+      <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">{props.children}</span>
     </div>
+  );
+}
+
+function InputField(props: { value: string; onChange: (value: string) => void; placeholder?: string; type?: string; "aria-label"?: string }) {
+  return (
+    <input
+      type={props.type ?? "text"}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+      placeholder={props.placeholder}
+      aria-label={props["aria-label"]}
+      className="bg-[var(--app-input)] border border-[var(--app-border)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-focus)] font-mono"
+    />
   );
 }
 
 export function SettingsDialog(props: SettingsDialogProps) {
   const dialogRef = useRef<HTMLElement>(null);
   const { onClose, open } = props;
-  const canBrowse = props.tauriRuntime;
-  const canValidate = canBrowse && props.clientPath.trim().length > 0 && props.launcherState !== "validating" && props.launcherState !== "launching";
+
+  const [appVersion, setAppVersion] = useState<string>("0.1.0");
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "up-to-date" | "has-update" | "failed">("idle");
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateCheck | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) {
-      return;
+    if (open && props.tauriRuntime) {
+      void getAppVersion()
+        .then((version) => setAppVersion(version))
+        .catch((err) => console.error("Failed to get app version:", err));
     }
+  }, [open, props.tauriRuntime]);
+
+  useEffect(() => {
+    setUpdateStatus("idle");
+    setUpdateInfo(null);
+    setUpdateError(null);
+  }, [open, props.activeSection]);
+
+  const handleCheckUpdate = () => {
+    setUpdateStatus("checking");
+    setUpdateError(null);
+    checkAppUpdate()
+      .then((res) => {
+        setUpdateInfo(res);
+        if (res.has_update) {
+          setUpdateStatus("has-update");
+        } else {
+          setUpdateStatus("up-to-date");
+        }
+      })
+      .catch((err) => {
+        setUpdateStatus("failed");
+        setUpdateError(err instanceof Error ? err.message : String(err));
+      });
+  };
+
+  const update = (settings: AppSettings) => {
+    void props.onUpdateSettings(settings);
+  };
+
+  useEffect(() => {
+    if (!open) return;
 
     const previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
     const firstFocusable = dialog?.querySelector<HTMLElement>(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
     );
-
     firstFocusable?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
-
-      if (event.key !== "Tab" || !dialog) {
-        return;
-      }
+      if (event.key === "Escape") { onClose(); return; }
+      if (event.key !== "Tab" || !dialog) return;
 
       const focusableElements = Array.from(
         dialog.querySelectorAll<HTMLElement>(
           'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
         )
       );
+      if (focusableElements.length === 0) { event.preventDefault(); return; }
 
-      if (focusableElements.length === 0) {
-        event.preventDefault();
-        return;
-      }
-
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
-
-      if (event.shiftKey && document.activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (!event.shiftKey && document.activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-      }
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
 
     document.addEventListener("keydown", handleKeyDown);
-
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
       previousActiveElement?.focus();
     };
   }, [onClose, open]);
 
+  const activeLabel = sections.find((s) => s.id === props.activeSection)?.label ?? "";
+
   const renderSection = () => {
     switch (props.activeSection) {
       case "general":
         return (
-          <div className="space-y-4">
-            <SettingCard title="客户端">
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
-                <input
-                  aria-label="客户端安装目录"
-                  value={props.clientPath}
-                  onChange={(event) => props.onClientPathChange(event.target.value)}
-                  placeholder="C:/Games/QmClient"
-                  className="h-12 min-w-0 rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
-                />
-                <button
-                  type="button"
-                  onClick={() => void props.onBrowse()}
-                  disabled={!canBrowse}
-                  className="h-12 rounded-[18px] border border-[var(--dm-border)] bg-black/30 px-5 text-sm font-black text-[var(--dm-ink)] transition hover:-translate-y-0.5 hover:bg-black/55 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:translate-y-0 disabled:hover:bg-black/30"
-                >
-                  定位
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void props.onValidate()}
-                  disabled={!canValidate}
-                  className="h-12 rounded-[18px] bg-[#41f2ff] px-5 text-sm font-black text-[#111213] shadow-[0_0_15px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
-                >
-                  验证
-                </button>
-              </div>
-              {props.errorMessage ? (
-                <div className="mt-3 rounded-2xl border border-[#b84a4a]/20 bg-[#b84a4a]/8 px-4 py-3 text-sm font-semibold text-[#8f2f2f]">
-                  {props.errorMessage}
-                </div>
-              ) : null}
-            </SettingCard>
-            <SettingCard title="启动">
-              <div className="grid gap-3 md:grid-cols-2">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={props.settings.close_panel_after_launch}
-                  onClick={() =>
-                    props.onSettingsChange({
-                      ...props.settings,
-                      close_panel_after_launch: !props.settings.close_panel_after_launch
-                    })
-                  }
-                  className="text-left"
-                >
-                  <TogglePill checked={props.settings.close_panel_after_launch} label="启动后最小化启动器" />
-                </button>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={props.settings.auto_check_updates}
-                  onClick={() =>
-                    props.onSettingsChange({
-                      ...props.settings,
-                      auto_check_updates: !props.settings.auto_check_updates
-                    })
-                  }
-                  className="text-left"
-                >
-                  <TogglePill checked={props.settings.auto_check_updates} label="自动检查更新" />
-                </button>
-              </div>
-            </SettingCard>
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <SectionHeader>启动选项</SectionHeader>
+              <Toggle
+                checked={props.settings.close_panel_after_launch}
+                label="启动后最小化启动器"
+                onChange={() => update({ ...props.settings, close_panel_after_launch: !props.settings.close_panel_after_launch })}
+              />
+              <Toggle
+                checked={props.settings.auto_check_updates}
+                label="自动检查更新"
+                onChange={() => update({ ...props.settings, auto_check_updates: !props.settings.auto_check_updates })}
+              />
+            </div>
           </div>
         );
+      case "clients":
+        return <ClientManager />;
       case "download":
         return (
-          <div className="space-y-4">
-            <SettingCard title="网络">
-              <div className="grid gap-3">
-                <div className="flex flex-wrap gap-2">
-                  {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
-                    const active = (props.settings.network_route?.mode ?? "direct") === mode;
-                    return (
-                      <button
-                        key={mode}
-                        type="button"
-                        onClick={() => props.onSettingsChange(updateNetworkRoute(props.settings, mode, networkRouteUrl(props.settings)))}
-                        className={`h-10 rounded-[15px] border px-4 text-xs font-black transition hover:-translate-y-0.5 ${
-                          active
-                            ? "border-[#41f2ff] bg-[#41f2ff] text-[#111213]"
-                            : "border-[var(--dm-border)] bg-[var(--dm-panel)] text-[var(--dm-muted-ink)]"
-                        }`}
-                      >
-                        {mode === "direct" ? "直连" : mode === "proxy_prefix" ? "代理前缀" : "镜像模板"}
-                      </button>
-                    );
-                  })}
-                </div>
-                {(props.settings.network_route?.mode ?? "direct") !== "direct" ? (
-                  <input
-                    aria-label={props.settings.network_route?.mode === "mirror_template" ? "镜像模板地址" : "代理前缀地址"}
-                    value={networkRouteUrl(props.settings)}
-                    onChange={(event) =>
-                      props.onSettingsChange(
-                        updateNetworkRoute(
-                          props.settings,
-                          props.settings.network_route?.mode ?? "proxy_prefix",
-                          event.target.value
-                        )
-                      )
-                    }
-                    placeholder={props.settings.network_route?.mode === "mirror_template" ? "https://mirror.example/{url}" : "https://proxy.example/"}
-                    className="h-12 min-w-0 rounded-[18px] border border-[var(--dm-border)] bg-[var(--dm-panel)] px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
-                  />
-                ) : null}
+          <div className="space-y-5">
+            <div className="space-y-3">
+              <SectionHeader>网络路由</SectionHeader>
+              <div className="flex flex-wrap gap-2">
+                {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
+                  const active = (props.settings.network_route?.mode ?? "direct") === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => update(updateNetworkRoute(props.settings, mode, networkRouteUrl(props.settings)))}
+                      className={`px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
+                        active
+                          ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
+                          : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-[var(--app-border-subtle)]"
+                      }`}
+                    >
+                      {mode === "direct" ? "直连" : mode === "proxy_prefix" ? "代理前缀" : "镜像模板"}
+                    </button>
+                  );
+                })}
               </div>
-            </SettingCard>
-            <SettingCard title="高级更新源">
-              <input
-                aria-label="高级更新源 manifest 地址"
+              {(props.settings.network_route?.mode ?? "direct") !== "direct" ? (
+                <InputField
+                  aria-label={props.settings.network_route?.mode === "mirror_template" ? "镜像模板地址" : "代理前缀地址"}
+                  value={networkRouteUrl(props.settings)}
+                  onChange={(value) => update(updateNetworkRoute(props.settings, props.settings.network_route?.mode ?? "proxy_prefix", value))}
+                  placeholder={props.settings.network_route?.mode === "mirror_template" ? "https://mirror.example/{url}" : "https://proxy.example/"}
+                />
+              ) : null}
+            </div>
+            <div className="space-y-3">
+              <SectionHeader>高级更新源</SectionHeader>
+              <InputField
+                aria-label="manifest 地址"
                 value={props.settings.advanced_manifest_url ?? ""}
-                onChange={(event) =>
-                  props.onSettingsChange({
-                    ...props.settings,
-                    advanced_manifest_url: event.target.value.trim() ? event.target.value : null
-                  })
-                }
+                onChange={(value) => update({ ...props.settings, advanced_manifest_url: value.trim() ? value : null })}
                 placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
-                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
               />
-            </SettingCard>
-            <SettingCard title="GitHub">
-              <input
-                value=""
-                onChange={() => undefined}
-                placeholder="GitHub token"
-                type="password"
-                aria-label="GitHub token 不会保存"
-                className="h-12 w-full rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
-              />
-              <div className="mt-2 text-xs font-bold leading-5 text-[var(--dm-muted-ink)]">
-                Token 仅作为后续凭证存储入口预留，当前不会写入本机设置。
-              </div>
-            </SettingCard>
+            </div>
           </div>
         );
+      case "updates":
+        return <UpdatePanel smokeAutomation={props.smokeAutomation} />;
       case "appearance":
         return (
-          <div className="space-y-4">
-            <SettingCard title="背景">
+          <div className="space-y-5">
+            <div className="space-y-3">
+              <SectionHeader>背景</SectionHeader>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={props.onClearBackgroundImage}
-                  className={`h-11 rounded-[16px] border px-4 text-sm font-black transition hover:-translate-y-0.5 ${
+                  className={`px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
                     props.backgroundMode === "default"
-                      ? "border-[#41f2ff] bg-[#41f2ff] text-[#111213] shadow-[0_0_15px_rgba(65,242,255,0.25)]"
-                      : "border-[var(--dm-border)] bg-black/30 text-[var(--dm-muted-ink)] hover:bg-black/55"
+                      ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
+                      : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-[var(--app-border-subtle)]"
                   }`}
                 >
                   默认背景
                 </button>
-                <label className="grid h-11 cursor-pointer place-items-center rounded-[16px] border border-[var(--dm-border)] bg-black/30 px-4 text-sm font-black text-[var(--dm-muted-ink)] transition hover:-translate-y-0.5 hover:bg-black/55">
+                <label className="px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-[var(--app-border-subtle)] cursor-pointer transition-all">
                   自定义图片
                   <input
                     type="file"
@@ -303,68 +266,126 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     onChange={(event) => {
                       const file = event.target.files?.[0];
                       event.currentTarget.value = "";
-                      if (file) {
-                        void props.onBackgroundImageSelect(file);
-                      }
+                      if (file) void props.onBackgroundImageSelect(file);
                     }}
                   />
                 </label>
               </div>
-            </SettingCard>
-            <SettingCard title="主题">
-              <div className="rounded-[22px] bg-black/30 border border-[#41f2ff]/10 px-4 py-3 text-sm font-bold text-[var(--dm-muted-ink)]">
-                暗黑 / 工业霓虹模式
+            </div>
+            <div className="space-y-3">
+              <SectionHeader>主题</SectionHeader>
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-lg px-3 py-2.5 text-xs text-[var(--app-text-muted)] font-medium">
+                暗黑
               </div>
-            </SettingCard>
+            </div>
           </div>
         );
       case "tools":
         return (
-          <div className="space-y-4">
-            <SettingCard title="扫描">
-              <div className="grid gap-3">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={props.settings.use_everything}
-                  onClick={() => props.onSettingsChange({ ...props.settings, use_everything: !props.settings.use_everything })}
-                  className="text-left"
-                >
-                  <TogglePill checked={props.settings.use_everything} label="使用 Everything 加速扫描" />
-                </button>
-                <textarea
-                  aria-label="扫描排除路径列表"
-                  value={props.settings.scan_excluded_paths.join("\n")}
-                  onChange={(event) =>
-                    props.onSettingsChange({
-                      ...props.settings,
-                      scan_excluded_paths: event.target.value
-                        .split(/\r?\n/)
-                        .flatMap((line) => {
-                          const trimmed = line.trim();
-                          return trimmed ? [trimmed] : [];
-                        })
-                    })
-                  }
-                  placeholder="每行一个排除路径"
-                  className="min-h-28 w-full resize-none rounded-[18px] border border-[var(--dm-border)] bg-[#111213]/40 px-4 py-3 text-sm font-semibold text-[var(--dm-ink)] outline-none transition placeholder:text-[#5f6673] focus:border-[#41f2ff]/40 focus:ring-4 focus:ring-[#41f2ff]/10"
-                />
-              </div>
-            </SettingCard>
+          <div className="space-y-5">
+            <div className="space-y-3">
+              <SectionHeader>扫描</SectionHeader>
+              <Toggle
+                checked={props.settings.use_everything}
+                label="使用 Everything 加速扫描"
+                onChange={() => update({ ...props.settings, use_everything: !props.settings.use_everything })}
+              />
+              <textarea
+                aria-label="扫描排除路径列表"
+                value={props.settings.scan_excluded_paths.join("\n")}
+                onChange={(event) =>
+                  update({
+                    ...props.settings,
+                    scan_excluded_paths: event.target.value
+                      .split(/\r?\n/)
+                      .flatMap((line) => { const t = line.trim(); return t ? [t] : []; })
+                  })
+                }
+                placeholder="每行一个排除路径"
+                className="min-h-24 w-full resize-none bg-[var(--app-input)] border border-[var(--app-border)] rounded-lg px-3.5 py-2 text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-focus)] font-mono"
+              />
+            </div>
           </div>
         );
       case "about":
         return (
-          <div className="rounded-[28px] bg-[var(--dm-soft)] p-5">
-            <div className="flex items-center gap-4">
-              <div className="grid h-14 w-14 place-items-center rounded-2xl bg-white text-[var(--dm-ink)]">
-                <GameIcon name={props.selectedClientType.icon} className="size-8" />
+          <div className="space-y-5 text-xs text-[var(--app-text-muted)] leading-relaxed">
+            <SectionHeader>关于</SectionHeader>
+            <div className="flex items-center space-x-4 p-2 bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl">
+              <img src={logoMark} alt="Logo" className="w-12 h-12 object-contain" />
+              <div className="flex-1">
+                <span className="text-sm font-bold text-[var(--app-text)] block tracking-wide">DDNet Manager</span>
+                <div className="flex items-center space-x-2 mt-1">
+                  <span className="text-[var(--app-text-secondary)] font-semibold">版本 v{appVersion}</span>
+                  <span className="text-[10px] bg-[var(--app-border-strong)] text-[var(--app-text-dim)] px-2 py-0.5 rounded-full font-mono">
+                    {props.selectedClientType.name}
+                  </span>
+                </div>
               </div>
               <div>
-                <div className="text-2xl font-black tracking-[0] text-[var(--dm-ink)]">DDNet Manager</div>
-                <div className="mt-1 text-sm font-bold text-[var(--dm-muted-ink)]">{props.selectedClientType.name}</div>
+                {updateStatus !== "checking" && (
+                  <button
+                    type="button"
+                    onClick={handleCheckUpdate}
+                    className="px-3.5 py-1.5 rounded-lg text-xs font-semibold tracking-wide bg-[var(--app-accent)] text-black hover:bg-cyan-400 hover:shadow-[0_0_12px_rgba(65,242,255,0.4)] transition-all cursor-pointer"
+                  >
+                    检查更新
+                  </button>
+                )}
               </div>
             </div>
+
+            {updateStatus === "checking" && (
+              <div className="flex items-center space-x-2.5 p-3 bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl text-[var(--app-text-secondary)] animate-pulse">
+                <Loader2 className="w-4 h-4 animate-spin text-[var(--app-accent)]" />
+                <span className="font-medium">正在获取最新版本信息...</span>
+              </div>
+            )}
+
+            {updateStatus === "up-to-date" && (
+              <div className="flex items-center space-x-2.5 p-3 bg-emerald-950/20 border border-emerald-500/30 rounded-xl text-emerald-400">
+                <CheckCircle2 className="w-4 h-4" />
+                <span className="font-semibold">当前已是最新版本，无需更新！</span>
+              </div>
+            )}
+
+            {updateStatus === "has-update" && updateInfo && (
+              <div className="space-y-3 p-4 bg-amber-950/20 border border-amber-500/20 rounded-xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5 text-amber-400">
+                    <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    <span className="font-semibold text-sm">发现新版本 v{updateInfo.latest_version}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => window.open(updateInfo.release_url, "_blank", "noreferrer")}
+                    className="flex items-center space-x-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-black hover:bg-amber-400 transition-all cursor-pointer shadow-md shadow-amber-500/10"
+                  >
+                    <span>前往下载</span>
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {updateInfo.release_notes && (
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-bold text-[var(--app-text-dim)] uppercase tracking-wider block">更新日志</span>
+                    <div className="p-3 bg-black/40 border border-[var(--app-border-subtle)] rounded-lg text-xs font-mono text-[var(--app-text-secondary)] max-h-36 overflow-y-auto whitespace-pre-wrap select-text leading-relaxed">
+                      {updateInfo.release_notes}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {updateStatus === "failed" && (
+              <div className="flex items-start space-x-2.5 p-3 bg-red-950/20 border border-red-500/20 rounded-xl text-red-400">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <span className="font-semibold block">检查更新失败</span>
+                  <span className="text-[10px] text-red-300/80 block mt-0.5 leading-normal">{updateError}</span>
+                </div>
+              </div>
+            )}
           </div>
         );
     }
@@ -374,80 +395,74 @@ export function SettingsDialog(props: SettingsDialogProps) {
     <AnimatePresence>
       {props.open ? (
         <motion.div
-          className="fixed inset-0 z-[80] grid place-items-center bg-black/60 p-6 backdrop-blur-sm"
+          className="absolute inset-0 flex items-center justify-center z-50 select-none"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              props.onClose();
-            }
+            if (event.target === event.currentTarget) props.onClose();
           }}
         >
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+          />
           <motion.section
             ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label="设置"
-            initial={{ opacity: 0, y: 18, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.98 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="grid h-[min(78vh,720px)] w-[min(92vw,1120px)] overflow-hidden rounded-[30px] border border-[var(--dm-border)] bg-[var(--dm-paper)] text-[var(--dm-ink)] shadow-[0_0_50px_rgba(0,0,0,0.6)] md:grid-cols-[300px_minmax(0,1fr)]"
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 15 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+            className="relative z-10 w-[720px] h-[540px] bg-[var(--app-surface)] border border-[var(--app-border)] rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.6)] overflow-hidden flex flex-col font-sans text-[var(--app-text-secondary)]"
           >
-            <aside className="border-r border-[var(--dm-border)] bg-[var(--dm-panel)] p-6">
-              <div className="text-3xl font-black tracking-[0]">设置</div>
-              <div className="mt-8 grid gap-2">
-                {sections.map((section) => {
-                  const active = props.activeSection === section.id;
-                  return (
-                    <button
-                      key={section.id}
-                      type="button"
-                      onClick={() => props.onSectionChange(section.id)}
-                      className={`flex h-14 items-center gap-3 rounded-2xl px-4 text-left text-base font-black border transition duration-200 ${
-                        active
-                          ? "bg-[#41f2ff] text-[#111213] border-[#41f2ff] shadow-[0_0_15px_rgba(65,242,255,0.3)]"
-                          : "border-transparent text-[var(--dm-muted-ink)] hover:bg-[#41f2ff]/10 hover:text-[#41f2ff]"
-                      }`}
-                    >
-                      <GameIcon name={section.icon} className="size-5" />
-                      {section.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </aside>
-            <div className="dm-scroll min-h-0 overflow-y-auto p-6">
-              <div className="mb-7 flex items-center justify-between gap-4">
-                <h2 className="text-3xl font-black tracking-[0]">
-                  {sections.find((section) => section.id === props.activeSection)?.label}
-                </h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="关闭设置"
-                  onClick={props.onClose}
-                  className="h-11 w-11 rounded-2xl text-[var(--dm-muted-ink)] hover:bg-[var(--dm-soft)] hover:text-[var(--dm-ink)]"
-                >
-                  ×
-                </Button>
-              </div>
-              <div className="mb-4 flex items-center justify-between gap-3 rounded-[18px] bg-[var(--dm-soft)] px-4 py-3">
-                <div className="text-xs font-bold text-[var(--dm-muted-ink)]">
-                  {props.settingsError ?? (props.settingsState === "saved" ? "设置已保存" : "设置变更会写入本机注册表")}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Left sidebar */}
+              <div className="w-[180px] bg-[var(--app-surface-alt)] border-r border-[var(--app-border-subtle)] p-4 flex flex-col justify-between">
+                <div className="space-y-1.5">
+                  <span className="text-[var(--app-text)] text-base font-bold pl-2.5 pb-2.5 block tracking-wide">设置</span>
+                  {sections.map((section) => {
+                    const isActive = props.activeSection === section.id;
+                    return (
+                      <button
+                        key={section.id}
+                        type="button"
+                        onClick={() => props.onSectionChange(section.id)}
+                        className={`w-full text-left px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer ${
+                          isActive
+                            ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
+                            : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-[var(--app-border-subtle)]"
+                        }`}
+                      >
+                        {section.label}
+                      </button>
+                    );
+                  })}
                 </div>
+                <div className="pl-2.5 text-[10px] text-[var(--app-text-dim)] font-mono">
+                  {props.settingsState === "saving" ? "保存中..." : props.settingsState === "error" ? "保存失败" : ""}
+                </div>
+              </div>
+
+              {/* Right content */}
+              <div className="flex-1 bg-[var(--app-surface)] p-6 overflow-y-auto relative">
                 <button
                   type="button"
-                  onClick={() => void props.onSaveSettings()}
-                  disabled={props.settingsState === "saving" || props.settingsState === "loading"}
-                  className="h-9 rounded-[14px] bg-[#41f2ff] px-4 text-xs font-black text-[#111213] shadow-[0_0_10px_rgba(65,242,255,0.25)] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-55"
+                  aria-label="关闭设置"
+                  onClick={props.onClose}
+                  className="absolute top-4 right-4 w-7 h-7 rounded-full bg-[var(--app-border-subtle)] hover:bg-[var(--app-border)] flex items-center justify-center text-[var(--app-text-muted)] hover:text-[var(--app-text)] transition-colors cursor-pointer z-10"
                 >
-                  {props.settingsState === "saving" ? "保存中" : "保存"}
+                  <X className="w-4 h-4" />
                 </button>
+
+                <h2 className="text-base font-bold text-[var(--app-text)] mb-6 tracking-wide">{activeLabel}</h2>
+                {renderSection()}
               </div>
-              {renderSection()}
             </div>
           </motion.section>
         </motion.div>

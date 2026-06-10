@@ -64,6 +64,45 @@ pub fn build_manifest_url_with_route(
     }
 }
 
+/// 根据显式网络路由配置构造并校验任意公网 HTTPS URL。
+pub fn build_url_with_route(
+    url_str: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<Url, String> {
+    let original = Url::parse(url_str).map_err(|error| format!("invalid url: {error}"))?;
+    let _ = validate_public_https_url(&original)?;
+    let Some(route) = route else {
+        return Ok(original);
+    };
+
+    match route.mode {
+        NetworkRouteMode::Direct => Ok(original),
+        NetworkRouteMode::ProxyPrefix => {
+            let prefix = route
+                .proxy_prefix_url
+                .as_deref()
+                .ok_or_else(|| "proxy prefix url is required".to_string())?;
+            let separator = if prefix.ends_with('/') { "" } else { "/" };
+            let final_url = format!(
+                "{prefix}{separator}{}",
+                percent_encode_url(original.as_str())
+            );
+            parse_network_route_url(&final_url, route)
+        }
+        NetworkRouteMode::MirrorTemplate => {
+            let template = route
+                .mirror_template
+                .as_deref()
+                .ok_or_else(|| "mirror template is required".to_string())?;
+            if !template.contains("{url}") {
+                return Err("mirror template must contain {url}".to_string());
+            }
+            let final_url = template.replace("{url}", original.as_str());
+            parse_network_route_url(&final_url, route)
+        }
+    }
+}
+
 /// 根据显式网络路由配置构造并校验 asset URL。
 pub fn build_asset_url_with_route(
     url: &str,

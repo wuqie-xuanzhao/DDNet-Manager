@@ -798,6 +798,53 @@ fn list_download_job_recoveries_from_registry(
         .collect()
 }
 
+/// 表示软件自身更新检查的返回结构。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppUpdateCheck {
+    /// 当前版本。
+    pub current_version: String,
+    /// 最新版本。
+    pub latest_version: String,
+    /// 是否需要更新。
+    pub has_update: bool,
+    /// 更新发布页面 URL。
+    pub release_url: String,
+    /// 更新说明文本。
+    pub release_notes: Option<String>,
+}
+
+/// 检查 DDNet Manager 自身是否存在可用更新。
+#[tauri::command]
+pub async fn check_app_update(app: AppHandle) -> Result<AppUpdateCheck, String> {
+    let current_version = app.package_info().version.to_string();
+    let registry = registry_for_app(&app)?;
+    let settings = registry.load_app_settings()?;
+
+    let release = crate::github_release::fetch_latest_github_release(
+        "wuqie-xuanzhao",
+        "DDNet-Manager",
+        settings.network_route.as_ref(),
+    )
+    .await?;
+
+    let latest_version = release.tag_name.trim_start_matches(['v', 'V']).to_string();
+    let has_update = crate::version::is_update_needed(Some(&current_version), &latest_version);
+
+    Ok(AppUpdateCheck {
+        current_version,
+        latest_version,
+        has_update,
+        release_url: release.html_url,
+        release_notes: release.body,
+    })
+}
+
+/// 获取当前应用的版本号。
+#[tauri::command]
+pub fn get_app_version(app: AppHandle) -> Result<String, String> {
+    Ok(app.package_info().version.to_string())
+}
+
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()

@@ -6,6 +6,16 @@ export type LauncherState =
   | "running"
   | "error";
 
+export type ClientTypeId =
+  | "qmclient"
+  | "ddnet"
+  | "ddnet-steam"
+  | "qmclient-nightly"
+  | "taterclient"
+  | "bestclient"
+  | "cactusclient"
+  | "third-party";
+
 export type ClientHealth =
   | "ok"
   | "missing_executable"
@@ -212,3 +222,12 @@ export type StartUpdateDownloadRequest = {
   network_route?: NetworkRouteConfig | null;
   use_manifest_source?: boolean;
 };
+
+export type AppUpdateCheck = {
+  current_version: string;
+  latest_version: string;
+  has_update: boolean;
+  release_url: string;
+  release_notes: string | null;
+};
+

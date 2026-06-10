@@ -59,8 +59,12 @@ async fn check_catalog_update(
 ) -> Result<Option<ClientUpdateCheck>, String> {
     match input.entry.update_source {
         crate::client_catalog::UpdateSourceDescriptor::GithubRelease { .. } => {
-            let Some(check) =
-                crate::github_release::check_latest_release(input.entry, &input.platform).await?
+            let Some(check) = crate::github_release::check_latest_release(
+                input.entry,
+                &input.platform,
+                input.request.network_route.as_ref(),
+            )
+            .await?
             else {
                 return Ok(None);
             };

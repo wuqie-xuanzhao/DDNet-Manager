@@ -41,7 +41,10 @@ pub mod version;
 
 mod commands;
 
-use tauri::Manager;
+use tauri::{
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Listener, Manager,
+};
 
 fn main() {
     let run_result = tauri::Builder::default()
@@ -52,6 +55,70 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_shadow(true);
             }
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("DDNet Manager")
+                .on_tray_icon_event(|tray, event| {
+                    match event {
+                        TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } => {
+                            if let Some(window) = tray.app_handle().get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        TrayIconEvent::Click {
+                            button: MouseButton::Right,
+                            button_state: MouseButtonState::Up,
+                            position,
+                            ..
+                        } => {
+                            let app = tray.app_handle();
+                            if let (Some(tray_menu), Some(main)) = (
+                                app.get_webview_window("tray-menu"),
+                                app.get_webview_window("main"),
+                            ) {
+                                // 根据主窗口缩放因子，将托盘图标物理坐标转为逻辑坐标来定位菜单
+                                if let Ok(scale) = main.scale_factor() {
+                                    let logical: tauri::LogicalPosition<f64> =
+                                        position.to_logical(scale);
+                                    let _ = tray_menu.set_position(tauri::Position::Logical(
+                                        tauri::LogicalPosition::new(
+                                            logical.x - 60.0,
+                                            logical.y - 130.0,
+                                        ),
+                                    ));
+                                }
+                                let _ = tray_menu.show();
+                                let _ = tray_menu.set_focus();
+                            }
+                        }
+                        _ => {}
+                    }
+                })
+                .build(app)?;
+
+            // Listen for tray menu actions
+            let app_handle = app.handle().clone();
+            app.listen("tray-menu-action", move |event| {
+                // payload 可能为 JSON 序列化的 "show" (含引号) 或裸字符串 show
+                match event.payload().trim_matches('"') {
+                    "show" => {
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app_handle.exit(0);
+                    }
+                    _ => {}
+                }
+            });
 
             println!("DDNet Manager shell initialized.");
             Ok(())
@@ -77,7 +144,9 @@ fn main() {
             commands::cancel_download,
             commands::get_download_job,
             commands::list_download_job_recoveries,
-            commands::install_downloaded_update
+            commands::install_downloaded_update,
+            commands::check_app_update,
+            commands::get_app_version
         ])
         .run(tauri::generate_context!());
 
