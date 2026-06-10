@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DDNet Manager Tray</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      background: transparent;
+      overflow: hidden;
+      user-select: none;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    .menu {
+      background: rgba(18, 19, 24, 0.82);
+      backdrop-filter: blur(24px) saturate(1.4);
+      -webkit-backdrop-filter: blur(24px) saturate(1.4);
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 4px;
+      min-width: 170px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    .menu-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      border-radius: 7px;
+      color: rgba(255, 255, 255, 0.85);
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.12s ease;
+      letter-spacing: 0.01em;
+    }
+    .menu-item:hover {
+      background: rgba(255, 255, 255, 0.07);
+    }
+    .menu-item svg {
+      width: 14px;
+      height: 14px;
+      opacity: 0.6;
+      flex-shrink: 0;
+    }
+    .menu-item.danger {
+      color: #f87171;
+    }
+    .menu-item.danger:hover {
+      background: rgba(248, 113, 113, 0.08);
+    }
+    .menu-item.danger svg {
+      opacity: 0.7;
+    }
+    .menu-sep {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.04);
+      margin: 3px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="menu">
+    <div class="menu-item" id="btn-show">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+      显示窗口
+    </div>
+    <div class="menu-sep"></div>
+    <div class="menu-item danger" id="btn-quit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+      退出
+    </div>
+  </div>
+  <script>
+    const getCurrentWindow = () => __TAURI__.webviewWindow.getCurrentWebviewWindow();
+    const emitAction = (action) => __TAURI__.event.emit('tray-menu-action', action);
+
+    document.getElementById('btn-show').addEventListener('click', () => {
+      emitAction('show');
+      getCurrentWindow().hide();
+    });
+    document.getElementById('btn-quit').addEventListener('click', () => {
+      emitAction('quit');
+    });
+
+    // 失去焦点时自动关闭（Alt+Tab、点击其他窗口等）
+    window.addEventListener('blur', () => {
+      getCurrentWindow().hide();
+    });
+    // 鼠标离开窗口区域时关闭（兜底）
+    document.body.addEventListener('mouseleave', () => {
+      getCurrentWindow().hide();
+    });
+  </script>
+</body>
+</html>

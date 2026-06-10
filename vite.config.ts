@@ -25,7 +25,13 @@ export default defineConfig({
   build: {
     target: "es2022",
     minify: "esbuild",
-    sourcemap: false
+    sourcemap: false,
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("index.html", import.meta.url)),
+        "tray-menu": fileURLToPath(new URL("tray-menu.html", import.meta.url))
+      }
+    }
   },
   test: {
     environment: "jsdom",

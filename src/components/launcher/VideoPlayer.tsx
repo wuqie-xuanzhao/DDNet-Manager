@@ -89,7 +89,7 @@ export default function VideoPlayer({ isOpen, onClose, title, posterImage }: Vid
           {/* Upper Title Bar overlay on video */}
           <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between z-10 transition-opacity duration-300">
             <span className="text-white text-sm font-semibold tracking-wide drop-shadow-md">
-              正在播放：{title} 官方影视预告
+              {title}
             </span>
             <button
               id="btn-close-video"

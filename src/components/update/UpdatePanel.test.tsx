@@ -150,7 +150,7 @@ describe("UpdatePanel event ownership", () => {
     });
 
     expect(screen.queryByText("9.9.9")).not.toBeInTheDocument();
-    expect(screen.queryByText("下载完成，文件已通过校验，可以直接安装。")).not.toBeInTheDocument();
+    expect(screen.queryByText("已校验")).not.toBeInTheDocument();
   });
 
   it("ignores install progress for jobs outside the current panel", async () => {
@@ -164,7 +164,7 @@ describe("UpdatePanel event ownership", () => {
       listeners.get("install-progress")?.({ payload: "download-external" });
     });
 
-    expect(screen.queryByText("正在安装更新，请保持客户端关闭。")).not.toBeInTheDocument();
+    expect(screen.queryByText("安装中")).not.toBeInTheDocument();
   });
 
   it("uses the validated smoke client instead of the persisted default client in smoke mode", async () => {

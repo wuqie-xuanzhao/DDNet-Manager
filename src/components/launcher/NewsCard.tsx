@@ -80,9 +80,6 @@ export default function NewsCard({
 
         {/* Banner Title Details bottom left */}
         <div className="absolute bottom-2 left-3 right-3 flex flex-col space-y-0.5 pointer-events-none text-left">
-          <span className="text-[9px] uppercase tracking-wider text-[#fed330] font-black drop-shadow font-mono leading-none">
-            官方精彩 PV
-          </span>
           <span className="text-white font-semibold text-xs truncate drop-shadow-md leading-tight">
             {pvTitle}
           </span>
@@ -150,7 +147,7 @@ export default function NewsCard({
               ))
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-[11px] text-gray-500 space-y-1 py-4 select-none">
-                <span>暂无相关的公告资讯</span>
+                <span>空</span>
               </div>
             )}
           </AnimatePresence>

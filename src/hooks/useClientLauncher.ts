@@ -13,11 +13,11 @@ import type {
   AppSettings,
   ClientHealth,
   ClientInstallation,
+  ClientTypeId,
   LauncherState,
   LaunchReadiness,
   LocalSmokeAutomationConfig
 } from "../types";
-import type { ClientTypeId } from "../components/games/GamesPanel";
 
 function normalizeHealth(health: ClientHealth): string {
   switch (health) {
@@ -65,7 +65,7 @@ const browserPreviewReadiness: LaunchReadiness = {
   can_launch: false,
   running: false,
   status_label: "浏览器预览",
-  user_message: "当前为浏览器预览模式，启动能力需在 Tauri 桌面运行时验证。",
+  user_message: "浏览器预览",
   blocking_reasons: ["缺少 Tauri IPC 注入"],
   checked_at: null
 };
@@ -159,7 +159,7 @@ export function useClientLauncher(params: {
 
   const validateClientPath = useCallback(async (path: string, options?: { persistDefault?: boolean }) => {
     if (!tauriRuntime) {
-      markInvalid("当前为浏览器预览模式，目录验证需在 Tauri 桌面运行时验证。", {
+      markInvalid("浏览器预览", {
         clearClient: false
       });
       return false;
@@ -267,7 +267,7 @@ export function useClientLauncher(params: {
 
   const handleBrowse = async () => {
     if (!tauriRuntime) {
-      markInvalid("当前为浏览器预览模式，目录选择需在 Tauri 桌面运行时验证。", {
+      markInvalid("浏览器预览", {
         clearClient: false
       });
       return;
@@ -299,7 +299,7 @@ export function useClientLauncher(params: {
 
   const handlePrimaryAction = async () => {
     if (!tauriRuntime) {
-      markInvalid("当前为浏览器预览模式，启动能力需在 Tauri 桌面运行时验证。", {
+      markInvalid("浏览器预览", {
         clearClient: false
       });
       return;

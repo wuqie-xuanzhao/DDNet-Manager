@@ -19,8 +19,8 @@
         "minWidth": 1024,
         "minHeight": 640,
         "center": true,
-        "resizable": true,
-        "maximizable": true,
+        "resizable": false,
+        "maximizable": false,
         "minimizable": true,
         "closable": true,
         "decorations": false,
@@ -28,8 +28,24 @@
         "shadow": true,
         "fullscreen": false,
         "visible": true
+      },
+      {
+        "label": "tray-menu",
+        "title": "",
+        "url": "tray-menu.html",
+        "width": 180,
+        "height": 120,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false,
+        "focusable": true,
+        "shadow": false
       }
     ],
+    "withGlobalTauri": true,
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5173 https://ddnet.org https://*.ddnet.org; font-src 'self' data:; media-src 'self' asset: https://asset.localhost data: blob:",
       "capabilities": [
@@ -37,17 +53,22 @@
           "identifier": "main-window-core",
           "description": "Core permissions for the primary DDNet Manager launcher window.",
           "windows": [
-            "main"
+            "main",
+            "tray-menu"
           ],
           "permissions": [
             "core:default",
             "core:app:default",
             "core:event:default",
+            "core:event:allow-emit",
             "core:webview:default",
             "core:window:default",
             "core:window:allow-close",
             "core:window:allow-minimize",
             "core:window:allow-start-dragging",
+            "core:window:allow-show",
+            "core:window:allow-set-focus",
+            "core:window:allow-hide",
             "dialog:allow-open"
           ]
         }

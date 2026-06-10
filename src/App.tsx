@@ -4,7 +4,7 @@ import { Gamepad, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type UIEvent, type WheelEvent } from "react";
 import logoMark from "./assets/logo.svg";
 import { GAMES_DATA, GAME_ICON_MAP, type LauncherGameId } from "./components/launcher/data";
-import { ConfirmExitModal, PostDetailModal, SettingsModal } from "./components/launcher/Dialogs";
+import { ConfirmExitModal, PostDetailModal } from "./components/launcher/Dialogs";
 import DownloadButton from "./components/launcher/DownloadButton";
 import NewsCard from "./components/launcher/NewsCard";
 import SocialSidebar from "./components/launcher/SocialSidebar";
@@ -12,6 +12,7 @@ import type { GameConfig, GameNewsItem, SocialLink } from "./components/launcher
 import VideoPlayer from "./components/launcher/VideoPlayer";
 import WindowControls from "./components/launcher/WindowControls";
 import { soundEngine } from "./components/launcher/audio";
+import { SettingsDialog, type SettingsSectionId } from "./components/settings/SettingsDialog";
 import { useAppSettings } from "./hooks/useAppSettings";
 import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { useClientLauncher } from "./hooks/useClientLauncher";
@@ -35,13 +36,6 @@ function resolveLocalSmokeAutomation(): LocalSmokeAutomationConfig | null {
 }
 
 const localSmokeAutomation = resolveLocalSmokeAutomation();
-
-const descriptions: Record<string, string> = {
-  qmclient: "QmClient 是当前主线客户端。DDNet Manager 会围绕它管理默认启动项、版本检测、下载校验、安装事务和失败恢复记录。",
-  ddnet: "DDNet 官方客户端保留原版 DDrace Network 体验。你可以通过扫描或手动定位，把它纳入统一启动与注册表管理。",
-  "ddnet-steam": "Steam 版 DDNet 会从 steamapps/common/DDNet 识别安装位置，并和其他客户端一样参与默认客户端选择与运行检测。",
-  "third-party": "第三方兼容客户端可通过手动路径加入管理。模型预留后续 catalog、更新源和安装历史扩展。"
-};
 
 const particles = Array.from({ length: 14 }, (_, index) => ({
   delay: -index * 1.37,
@@ -95,17 +89,14 @@ export default function App() {
   const [hoveredGameId, setHoveredGameId] = useState<LauncherGameId | null>(null);
   const [hoveredCardIndex, setHoveredCardIndex] = useState<number | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("general");
   const [isExitAlertOpen, setIsExitAlertOpen] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [selectedPost, setSelectedPost] = useState<GameNewsItem | null>(null);
   const [isPostOpen, setIsPostOpen] = useState(false);
   const [isAudioOn, setIsAudioOn] = useState(false);
-  const [speedLimit, setSpeedLimit] = useState(false);
-  const [bgmVolume, setBgmVolume] = useState(65);
-  const [showGameIcons, setShowGameIcons] = useState(true);
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchProgress, setLaunchProgress] = useState(0);
-  const [launchStatusText, setLaunchStatusText] = useState("");
 
   const trackRef = useRef<HTMLDivElement | null>(null);
   const scrollTargetRef = useRef<number | null>(null);
@@ -113,7 +104,7 @@ export default function App() {
   const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { appSettings, savedAppSettings, settingsState } = useAppSettings(tauriRuntime);
+  const { appSettings, savedAppSettings, settingsState, settingsError, updateAndSave } = useAppSettings(tauriRuntime);
   const {
     errorMessage,
     handleBrowse,
@@ -269,16 +260,9 @@ export default function App() {
 
     setIsLaunching(true);
     setLaunchProgress(0);
-    setLaunchStatusText("正在复检默认客户端...");
     const interval = setInterval(() => {
       setLaunchProgress((current) => {
         const next = Math.min(100, current + 8);
-        if (next >= 32) {
-          setLaunchStatusText("正在同步本地注册表与可执行文件...");
-        }
-        if (next >= 68) {
-          setLaunchStatusText("正在拉起客户端进程...");
-        }
         if (next >= 100) {
           clearInterval(interval);
           void handlePrimaryAction().finally(() => setTimeout(() => setIsLaunching(false), 500));
@@ -296,7 +280,7 @@ export default function App() {
 
   const handleConfirmExit = () => {
     setIsExitAlertOpen(false);
-    void currentWindow()?.close();
+    void currentWindow()?.hide();
   };
 
   const handleMinimizeFromExit = () => {
@@ -537,23 +521,6 @@ export default function App() {
                 </motion.div>
 
                 <motion.div
-                  id="library-description-block"
-                  initial={{ opacity: 0, y: 40 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 40 }}
-                  transition={{ duration: 0.55, ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute bottom-[170px] left-10 z-40 flex flex-col select-none text-left max-w-[650px]"
-                >
-                  <AnimatePresence mode="wait">
-                    <motion.div key={`lib-desc-${displayedGameId}`} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}>
-                      <p className="text-[15px] font-medium text-gray-200 leading-relaxed drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] font-sans antialiased">
-                        {descriptions[displayedGameId]}
-                      </p>
-                    </motion.div>
-                  </AnimatePresence>
-                </motion.div>
-
-                <motion.div
                   id="library-carousel-block"
                   initial={{ opacity: 0, y: 280 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -638,17 +605,27 @@ export default function App() {
           onConfirmExit={handleConfirmExit}
           onMinimize={handleMinimizeFromExit}
         />
-        <SettingsModal
-          isOpen={isSettingsOpen}
+        <SettingsDialog
+          open={isSettingsOpen}
+          activeSection={activeSettingsSection}
+          onSectionChange={setActiveSettingsSection}
           onClose={() => setIsSettingsOpen(false)}
-          speedLimit={speedLimit}
-          setSpeedLimit={setSpeedLimit}
-          bgmVolume={bgmVolume}
-          setBgmVolume={setBgmVolume}
-          isAudioOn={isAudioOn}
-          setIsAudioOn={setIsAudioOn}
-          showGameIcons={showGameIcons}
-          setShowGameIcons={setShowGameIcons}
+          tauriRuntime={tauriRuntime}
+          launcherState={launcherState}
+          clientPath={selectedClient?.install_dir ?? ""}
+          selectedClientType={{ name: selectedClient?.display_name ?? "未设置" }}
+          backgroundMode="default"
+          errorMessage={errorMessage}
+          settings={appSettings}
+          settingsState={settingsState}
+          settingsError={settingsError}
+          smokeAutomation={localSmokeAutomation}
+          onUpdateSettings={updateAndSave}
+          onClientPathChange={() => {}}
+          onBrowse={() => Promise.resolve()}
+          onValidate={() => Promise.resolve()}
+          onBackgroundImageSelect={() => Promise.resolve()}
+          onClearBackgroundImage={() => {}}
         />
 
         <AnimatePresence>
@@ -663,16 +640,12 @@ export default function App() {
                 <div className="w-[280px] h-1.5 bg-neutral-900 rounded-full overflow-hidden border border-white/5 relative">
                   <motion.div className="h-full bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 rounded-full" style={{ width: `${launchProgress}%` }} transition={{ ease: "easeOut" }} />
                 </div>
-                <span className="text-[13px] text-gray-400 block h-6 font-medium animate-pulse">{launchStatusText}</span>
-                <span className="text-[11px] text-gray-600 block mt-4 font-mono">启动进度：{launchProgress}% · 加载中...</span>
+                <span className="text-[13px] text-gray-400 block h-6 font-medium">正在启动...</span>
+                <span className="text-[11px] text-gray-600 block mt-4 font-mono">{launchProgress}%</span>
               </motion.div>
             </motion.div>
           ) : null}
         </AnimatePresence>
-
-        <div className="pointer-events-none absolute bottom-3 left-20 z-40 text-[10px] font-mono text-white/35">
-          {launchReadiness?.user_message ?? "正在读取默认客户端状态"}
-        </div>
       </motion.div>
     </div>
   );

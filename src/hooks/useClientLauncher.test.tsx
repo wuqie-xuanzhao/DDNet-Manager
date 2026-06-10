@@ -69,7 +69,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
       can_launch: false,
       running: false,
       status_label: "未设置",
-      user_message: "尚未设置默认客户端。",
+      user_message: "未设置默认客户端",
       blocking_reasons: ["没有默认客户端记录"],
       checked_at: "2026-06-08T00:00:00.000Z"
     });
@@ -169,7 +169,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
       can_launch: true,
       running: false,
       status_label: "可启动",
-      user_message: "QmClient 已准备就绪，可以启动。",
+      user_message: "可启动",
       blocking_reasons: [],
       checked_at: "2026-06-08T00:00:00.000Z"
     });
@@ -203,7 +203,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
       can_launch: true,
       running: false,
       status_label: "可启动",
-      user_message: "QmClient 已准备就绪，可以启动。",
+      user_message: "可启动",
       blocking_reasons: [],
       checked_at: "2026-06-08T00:00:00.000Z"
     });
@@ -212,7 +212,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
       can_launch: true,
       running: true,
       status_label: "正在运行",
-      user_message: "QmClient 正在运行。",
+      user_message: "正在运行",
       blocking_reasons: [],
       checked_at: "2026-06-08T00:00:01.000Z"
     });

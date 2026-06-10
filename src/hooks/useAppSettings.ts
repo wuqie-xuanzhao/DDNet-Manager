@@ -51,8 +51,8 @@ export function useAppSettings(tauriRuntime: boolean) {
     setRuntimeSettingsError(null);
   };
 
-  const saveSettings = async () => {
-    const appSettings = draftAppSettings ?? defaultAppSettings;
+  const saveSettings = async (explicitSettings?: AppSettings) => {
+    const appSettings = explicitSettings ?? draftAppSettings ?? defaultAppSettings;
     const saveDraftVersion = draftVersionRef.current;
     setRuntimeSettingsState("saving");
     setRuntimeSettingsError(null);
@@ -69,6 +69,13 @@ export function useAppSettings(tauriRuntime: boolean) {
     }
   };
 
+  /** Update settings draft and immediately persist to backend. */
+  const updateAndSave = async (settings: AppSettings) => {
+    draftVersionRef.current += 1;
+    setDraftAppSettings(settings);
+    await saveSettings(settings);
+  };
+
   const appSettings = tauriRuntime ? (draftAppSettings ?? defaultAppSettings) : defaultAppSettings;
   const savedAppSettings = tauriRuntime ? (loadedAppSettings ?? defaultAppSettings) : defaultAppSettings;
   const settingsState: SettingsSaveState = tauriRuntime ? runtimeSettingsState : "idle";
@@ -82,6 +89,7 @@ export function useAppSettings(tauriRuntime: boolean) {
     settingsState: visibleSettingsState,
     settingsError,
     changeSettings,
-    saveSettings
+    saveSettings,
+    updateAndSave
   };
 }

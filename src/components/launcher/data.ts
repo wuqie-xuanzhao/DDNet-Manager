@@ -22,9 +22,9 @@ export const GAMES_DATA: GameConfig[] = [
     enName: "QmClient",
     logoText: "DDNet Manager",
     logoSubtext: "DDNET MANAGER",
-    bannerCategory: "主力客户端",
+    bannerCategory: "已安装",
     bannerTitle: "QmClient",
-    bannerSubtitle: "默认客户端 / 更新检查 / 本地注册表集中管理",
+    bannerSubtitle: "社区主流客户端",
     bannerButtonText: "查看更新",
     bgImage: starRailBg,
     pvCardImage: starRailCard,
@@ -33,9 +33,9 @@ export const GAMES_DATA: GameConfig[] = [
     sizeGB: 0.9,
     installSpeedMB: 84.5,
     news: [
-      { title: "QmClient 下载、校验和安装事务接入默认流程", date: "06/09", category: "公告" },
-      { title: "本地客户端目录验证与候选扫描持续优化", date: "06/08", category: "资讯" },
-      { title: "默认客户端启动前会复检可执行文件与运行状态", date: "06/07", category: "活动" }
+      { title: "下载、校验、安装", date: "06/09", category: "公告" },
+      { title: "目录验证", date: "06/08", category: "资讯" },
+      { title: "版本检查", date: "06/07", category: "活动" }
     ],
     socials: [
       { name: "QQ", icon: "QQ", tooltip: "加入 QmClient QQ 群", url: "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=1076765929&card_type=group&source=qrcode" },
@@ -52,7 +52,7 @@ export const GAMES_DATA: GameConfig[] = [
     logoSubtext: "VANILLA CLIENT",
     bannerCategory: "官方客户端",
     bannerTitle: "官方发行版",
-    bannerSubtitle: "原版体验 / 官方渠道 / 统一启动",
+    bannerSubtitle: "官方客户端",
     bannerButtonText: "打开官网",
     bgImage: genshinBg,
     pvCardImage: genshinCard,
@@ -61,9 +61,9 @@ export const GAMES_DATA: GameConfig[] = [
     sizeGB: 0.5,
     installSpeedMB: 93.2,
     news: [
-      { title: "官方客户端可通过目录扫描纳入统一管理", date: "06/08", category: "公告" },
-      { title: "启动器保留多第三方客户端扩展模型", date: "06/07", category: "资讯" },
-      { title: "更新源默认不把开发仓库 Release 目录作为用户源", date: "06/06", category: "活动" }
+      { title: "目录扫描", date: "06/08", category: "公告" },
+      { title: "扩展模型", date: "06/07", category: "资讯" },
+      { title: "更新源", date: "06/06", category: "活动" }
     ],
     socials: [
       { name: "DDNet", icon: "Globe", tooltip: "访问 DDNet 官方网站", url: "https://ddnet.org/" },
@@ -79,7 +79,7 @@ export const GAMES_DATA: GameConfig[] = [
     logoSubtext: "DDNET",
     bannerCategory: "Steam 安装",
     bannerTitle: "Steam 版",
-    bannerSubtitle: "扫描 steamapps/common/DDNet 并保存默认启动项",
+    bannerSubtitle: "Steam 识别",
     bannerButtonText: "扫描目录",
     bgImage: zzzBg,
     pvCardImage: zzzCard,
@@ -88,9 +88,9 @@ export const GAMES_DATA: GameConfig[] = [
     sizeGB: 0.6,
     installSpeedMB: 75.1,
     news: [
-      { title: "Steam 安装路径会被识别为独立客户端类型", date: "06/09", category: "活动" },
-      { title: "默认客户端选择已持久化到本地注册表", date: "06/08", category: "公告" },
-      { title: "运行状态检测用于避免重复启动", date: "06/07", category: "资讯" }
+      { title: "Steam 路径", date: "06/09", category: "活动" },
+      { title: "默认客户端", date: "06/08", category: "公告" },
+      { title: "运行检测", date: "06/07", category: "资讯" }
     ],
     socials: [
       { name: "Steam", icon: "Globe", tooltip: "打开 Steam 商店页", url: "https://store.steampowered.com/app/412220/DDNet/" },
@@ -106,7 +106,7 @@ export const GAMES_DATA: GameConfig[] = [
     logoSubtext: "CUSTOM",
     bannerCategory: "兼容客户端",
     bannerTitle: "兼容客户端",
-    bannerSubtitle: "TaterClient / BestClient / 自定义客户端",
+    bannerSubtitle: "自定义客户端",
     bannerButtonText: "管理客户端",
     bgImage: starRailBg,
     pvCardImage: starRailCard,
@@ -115,9 +115,9 @@ export const GAMES_DATA: GameConfig[] = [
     sizeGB: 0.7,
     installSpeedMB: 65.4,
     news: [
-      { title: "第三方客户端可通过手动路径加入管理", date: "06/08", category: "活动" },
-      { title: "客户端模型保留安装来源、版本与可执行路径", date: "06/07", category: "公告" },
-      { title: "后续更新能力按客户端 catalog 分派来源", date: "06/06", category: "资讯" }
+      { title: "手动路径", date: "06/08", category: "活动" },
+      { title: "安装来源", date: "06/07", category: "公告" },
+      { title: "更新来源", date: "06/06", category: "资讯" }
     ],
     socials: [
       { name: "QQ", icon: "QQ", tooltip: "加入 QmClient QQ 群", url: "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=1076765929&card_type=group&source=qrcode" },

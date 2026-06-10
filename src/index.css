@@ -8,43 +8,56 @@
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  --dm-bg: #111213;
-  --dm-paper: #161719;
-  --dm-panel: rgba(22, 23, 25, 0.82);
-  --dm-sidebar: rgba(17, 18, 19, 0.75);
-  --dm-ink: #f8fafc;
-  --dm-muted-ink: #94a3b8;
-  --dm-soft: rgba(65, 242, 255, 0.05);
-  --dm-border: rgba(65, 242, 255, 0.15);
-  --background: #111213;
-  --foreground: #f8fafc;
-  --card: rgba(22, 23, 25, 0.75);
-  --card-foreground: #f8fafc;
-  --primary: #41f2ff;
-  --primary-foreground: #111213;
-  --secondary: rgba(65, 242, 255, 0.08);
-  --secondary-foreground: #41f2ff;
-  --muted: rgba(255, 255, 255, 0.08);
-  --muted-foreground: rgba(148, 163, 184, 0.7);
-  --accent: rgba(65, 242, 255, 0.12);
-  --accent-foreground: #41f2ff;
-  --border: rgba(65, 242, 255, 0.15);
+
+  /* Surfaces */
+  --app-bg: #111213;
+  --app-surface: #1a1c22;
+  --app-surface-alt: #131418;
+  --app-sunken: #121316;
+  --app-input: rgba(0, 0, 0, 0.3);
+
+  /* Borders */
+  --app-border: rgba(255, 255, 255, 0.1);
+  --app-border-subtle: rgba(255, 255, 255, 0.05);
+  --app-border-strong: rgba(255, 255, 255, 0.15);
+
+  /* Text */
+  --app-text: #ffffff;
+  --app-text-secondary: rgba(255, 255, 255, 0.9);
+  --app-text-muted: #9ca3af;
+  --app-text-dim: #6b7280;
+
+  /* Accent (amber/yellow) */
+  --app-accent: #facc15;
+  --app-accent-hover: #fde047;
+  --app-accent-foreground: #000000;
+  --app-accent-subtle: rgba(250, 204, 21, 0.1);
+  --app-accent-border: rgba(250, 204, 21, 0.2);
+
+  /* Danger */
+  --app-danger: #f87171;
+  --app-danger-subtle: rgba(248, 113, 113, 0.05);
+  --app-danger-border: rgba(248, 113, 113, 0.2);
+
+  /* Focus ring */
+  --app-focus: rgba(250, 204, 21, 0.4);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-border: var(--border);
+  --color-background: var(--app-bg);
+  --color-foreground: var(--app-text);
+  --color-card: var(--app-sunken);
+  --color-card-foreground: var(--app-text);
+  --color-primary: var(--app-accent);
+  --color-primary-foreground: var(--app-accent-foreground);
+  --color-secondary: var(--app-accent-subtle);
+  --color-secondary-foreground: var(--app-accent);
+  --color-muted: var(--app-input);
+  --color-muted-foreground: var(--app-text-muted);
+  --color-accent: var(--app-accent-subtle);
+  --color-accent-foreground: var(--app-accent);
+  --color-border: var(--app-border);
+  --color-danger: var(--app-danger);
 }
 
 * {
@@ -61,7 +74,7 @@ body,
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: var(--dm-bg);
+  background: var(--app-bg);
 }
 
 body {
@@ -88,7 +101,6 @@ svg {
   pointer-events: none;
 }
 
-/* 全局隐藏所有滚动条 */
 ::-webkit-scrollbar {
   display: none;
   width: 0;
@@ -100,32 +112,6 @@ svg {
   -ms-overflow-style: none;
 }
 
-.dm-scroll {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.dm-scroll::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-
-.dm-glass {
-  border: 1px solid var(--dm-border);
-  background:
-    linear-gradient(135deg, rgba(65, 242, 255, 0.08), transparent 36%),
-    rgba(22, 23, 25, 0.72);
-  color: var(--dm-ink);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(24px);
-}
-
-.dm-cut-corner {
-  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 18px 100%, 0 calc(100% - 18px));
-}
-
-/* 自定义聚焦环，防止默认焦点圈 */
 button:focus,
 input:focus,
 textarea:focus {
@@ -135,13 +121,13 @@ textarea:focus {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid #41f2ff;
+  outline: 2px solid var(--app-accent);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: rgba(65, 242, 255, 0.25);
-  color: #ffffff;
+  background: var(--app-accent-subtle);
+  color: var(--app-text);
 }
 
 @keyframes download-bob {

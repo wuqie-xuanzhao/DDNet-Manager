@@ -57,7 +57,7 @@ vi.mock("./hooks/useClientLauncher", () => ({
       can_launch: false,
       running: false,
       status_label: "未设置",
-      user_message: "尚未设置默认客户端，请先定位并保存一个客户端。",
+      user_message: "未设置默认客户端",
       blocking_reasons: ["没有默认客户端记录"],
       checked_at: null
     },
@@ -94,13 +94,14 @@ describe("App launcher shell", () => {
     expect(screen.getByRole("link", { name: "访问 DDNet 官方网站" })).toHaveAttribute("href", "https://ddnet.org/");
   });
 
-  it("opens the recreated launcher settings panel", () => {
+  it("opens the integrated settings panel with section navigation", () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: "设置" }));
 
-    expect(screen.getByRole("button", { name: "下载" })).toBeInTheDocument();
-    expect(screen.getByText("开机自动运行 DDNet Manager")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "设置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "客户端" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "更新" })).toBeInTheDocument();
   });
 
   it("lets users click a game card from the library list", () => {

@@ -175,18 +175,16 @@ export default function DownloadButton({
                   <polyline points="19 12 12 19 5 12" />
                 </motion.svg>
               </div>
-              <span className="font-extrabold text-[16.5px] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1">获取客户端</span>
+              <span className="font-extrabold text-[16.5px] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1">获取</span>
             </motion.button>
 
-            {/* Path Locator Link formatted nicely inside flex layout */}
             <div className="text-[13px] text-white/85 flex items-center space-x-1 font-sans">
-              <span>已安装？</span>
               <button
                 id="locate-game-link"
                 onClick={onLocateGame}
                 className="text-[#fed330] hover:text-[#ffe055] font-semibold cursor-pointer transition-colors focus:outline-none bg-transparent border-none p-0 inline-block"
               >
-                定位游戏
+                定位
               </button>
             </div>
           </motion.div>
@@ -201,11 +199,10 @@ export default function DownloadButton({
             exit={{ opacity: 0, scale: 0.95 }}
             className="w-[240px] bg-black/60 border border-white/10 backdrop-blur-md rounded-2xl p-4 flex flex-col space-y-2.5 shadow-2xl z-30"
           >
-            {/* Speed, Name & Control row */}
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-white text-xs font-bold tracking-wide">
-                  {status === 'downloading' ? '正在获取资源...' : '已暂停'}
+                  {status === 'downloading' ? '下载中' : '暂停'}
                 </span>
                 <p className="text-[10px] text-gray-400 font-mono leading-none mt-0.5">
                   {status === 'downloading' ? `${currentSpeed.toFixed(1)} MB/s` : '0.0 MB/s'}
@@ -236,7 +233,6 @@ export default function DownloadButton({
               </div>
             </div>
 
-            {/* Progress Track */}
             <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden">
               <div
                 className={`h-full absolute left-0 top-0 rounded-full transition-all duration-300 ${getAccentBarColor()}`}
@@ -244,7 +240,6 @@ export default function DownloadButton({
               />
             </div>
 
-            {/* Metrics Footer */}
             <div className="flex items-center justify-between text-[9px] font-mono text-gray-400">
               <span>{progress.toFixed(1)}%</span>
               <span>{timeLeftStr}</span>
@@ -264,7 +259,7 @@ export default function DownloadButton({
             <RefreshCw className="w-6 h-6 text-[#fed330] animate-spin" />
             <div className="text-center">
               <span className="text-white text-xs font-bold tracking-wide block">
-                正在校验游戏文件...
+                校验中
               </span>
             </div>
           </motion.div>
@@ -298,11 +293,6 @@ export default function DownloadButton({
               <span className="font-extrabold text-[16.5px] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1">开始游戏</span>
             </motion.button>
 
-            {/* Sub-text ready message formatted nicely inside flex layout */}
-            <div className="text-[11px] text-white/45 flex items-center space-x-1.5 font-sans">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span>当前已是最新版本 &bull; 随时可以启动</span>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
