@@ -3,7 +3,9 @@ import {
   buildNetworkRoute,
   buildUpdateSourceRequest,
   deriveAutoUpdateView,
+  networkRouteHint,
   networkRouteLabel,
+  networkRoutePlaceholder,
   progressPercent,
   resolveUpdateManifestInput
 } from "./updateLogic";
@@ -44,6 +46,18 @@ describe("buildNetworkRoute", () => {
     expect(networkRouteLabel("direct")).toBe("直接下载");
     expect(networkRouteLabel("proxy_prefix")).toBe("代理前缀");
     expect(networkRouteLabel("mirror_template")).toBe("镜像模板");
+  });
+
+  it("exposes user-facing hint text explaining each route mode", () => {
+    expect(networkRouteHint("direct")).toContain("github.com");
+    expect(networkRouteHint("proxy_prefix")).toContain("拼接");
+    expect(networkRouteHint("mirror_template")).toContain("{url}");
+  });
+
+  it("provides format placeholder examples without hardcoding real proxies", () => {
+    expect(networkRoutePlaceholder("direct")).toBe("");
+    expect(networkRoutePlaceholder("proxy_prefix")).toContain("代理域名");
+    expect(networkRoutePlaceholder("mirror_template")).toContain("{url}");
   });
 
   it("throws for invalid non-direct routes", () => {

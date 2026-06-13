@@ -27,7 +27,9 @@ import { getUpdateErrorMessage } from "../../lib/errors";
 import {
   buildStartUpdateDownloadRequest,
   buildUpdateSourceRequest,
+  networkRouteHint,
   networkRouteLabel,
+  networkRoutePlaceholder,
   progressPercent,
   resolveUpdateManifestInput
 } from "../../lib/updateLogic";
@@ -863,6 +865,9 @@ export function UpdatePanel(props: {
               );
             })}
           </div>
+          <p className="text-xs leading-5 text-[var(--app-text-dim)]">
+            {networkRouteHint(activeRouteMode)}
+          </p>
           {activeRouteMode !== "direct" ? (
             <div className="pt-2 border-t border-[var(--app-border-subtle)]">
               <input
@@ -874,7 +879,7 @@ export function UpdatePanel(props: {
                 }}
                 disabled={isBusy}
                 className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
-                placeholder={activeRouteMode === "proxy_prefix" ? "填写你的代理前缀地址 (如 https://proxy.example/)" : "填写包含 {url} 的镜像模板"}
+                placeholder={networkRoutePlaceholder(activeRouteMode)}
                 spellCheck={false}
               />
             </div>

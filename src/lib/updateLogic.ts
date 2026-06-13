@@ -56,6 +56,30 @@ export function networkRouteLabel(mode: NetworkRouteMode) {
   }
 }
 
+/** 网络路由模式输入框的 placeholder，统一为格式示例（不硬编码实际公共代理）。 */
+export function networkRoutePlaceholder(mode: NetworkRouteMode): string {
+  switch (mode) {
+    case "direct":
+      return "";
+    case "proxy_prefix":
+      return "https://你的代理域名/";
+    case "mirror_template":
+      return "https://镜像站/path?url={url}";
+  }
+}
+
+/** 网络路由模式的用户引导文案：解释行为、URL 格式与示例，帮助用户理解差异。 */
+export function networkRouteHint(mode: NetworkRouteMode): string {
+  switch (mode) {
+    case "direct":
+      return "直接访问 github.com 与 api.github.com。若你的网络无法访问 GitHub，请改用代理前缀或镜像模板。";
+    case "proxy_prefix":
+      return "在原始下载地址前拼接此前缀。例如原始 https://github.com/... 会拼接为 https://你的代理域名/https://github.com/... 。需自行提供可用的 HTTPS 代理。";
+    case "mirror_template":
+      return "用含 {url} 占位符的模板构造访问地址，{url} 会被替换为原始下载地址。需自行提供可用的 HTTPS 镜像。";
+  }
+}
+
 export function buildUpdateSourceRequest(input: {
   clientId: string;
   channel: string;
