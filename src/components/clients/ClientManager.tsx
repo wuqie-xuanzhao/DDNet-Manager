@@ -84,6 +84,24 @@ export function ClientManager() {
     }
   };
 
+  const browse = async () => {
+    setError(null);
+    try {
+      const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+      const selected = await openDialog({
+        filters: [{ name: "DDNet 客户端可执行文件", extensions: ["exe"] }],
+        multiple: false
+      });
+      if (typeof selected === "string") {
+        // 选择 DDNet.exe 后取其所在目录作为安装目录。
+        const dir = selected.replace(/[/\\][^/\\]+$/, "");
+        setPath(dir);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const saveCandidate = async (client: ClientInstallation) => {
     setError(null);
     setIsBusy(true);
@@ -146,6 +164,14 @@ export function ClientManager() {
             className="px-4 py-2 rounded-lg bg-[var(--app-accent)] hover:bg-[var(--app-accent-hover)] text-[var(--app-accent-foreground)] text-sm font-bold cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isBusy ? "请稍候..." : "验证并保存"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void browse()}
+            disabled={isBusy}
+            className="px-4 py-2 rounded-lg bg-[var(--app-border-subtle)] hover:bg-[var(--app-border)] border border-[var(--app-border-subtle)] text-sm font-semibold text-[var(--app-text-secondary)] cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            浏览…
           </button>
           <button
             type="button"
@@ -225,7 +251,9 @@ export function ClientManager() {
             ))}
           </div>
         ) : (
-          <div className="border border-dashed border-[var(--app-border)] rounded-lg px-3 py-6 text-sm text-[var(--app-text-dim)] text-center">点击"扫描常见路径"发现客户端</div>
+          <div className="border border-dashed border-[var(--app-border)] rounded-lg px-3 py-6 text-sm text-[var(--app-text-dim)] text-center">
+            未找到客户端？点击"扫描常见路径"，或"浏览…"手动选择本机的 DDNet.exe。
+          </div>
         )}
       </div>
 

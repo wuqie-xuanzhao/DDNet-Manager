@@ -888,7 +888,7 @@ export function UpdatePanel(props: {
             type="button"
             onClick={() => void check()}
             disabled={!visibleClient || isBusy}
-            className="w-full h-10 rounded-lg bg-[var(--app-accent)] text-black hover:bg-cyan-400 text-sm font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-45"
+            className="w-full h-10 rounded-lg bg-[var(--app-border-subtle)] hover:bg-[var(--app-border)] border border-[var(--app-border-subtle)] text-[var(--app-text-secondary)] text-sm font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-45"
           >
             {isBusy ? "请稍候..." : "检查更新"}
           </button>
