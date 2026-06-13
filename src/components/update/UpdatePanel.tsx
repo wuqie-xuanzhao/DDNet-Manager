@@ -7,9 +7,11 @@ import {
   getDefaultClient,
   installDownloadedUpdate,
   isTauriRuntime,
+  listClientInstallations,
   listDownloadJobRecoveries,
   listInstallHistory,
   reportLocalSmokeResult,
+  setDefaultClient,
   startUpdateDownload,
   upsertClientInstallation,
   validateClientDir
@@ -91,19 +93,6 @@ function downloadStatusLabel(status: DownloadJob["status"]) {
   }
 }
 
-function recoveryStateLabel(state: DownloadJobRecovery["cache_state"]) {
-  switch (state) {
-    case "missing":
-      return "缓存缺失";
-    case "present":
-      return "缓存存在";
-    case "verified":
-      return "缓存已校验";
-    case "corrupted":
-      return "缓存损坏";
-  }
-}
-
 function installHistoryStatusLabel(status: InstallHistoryRecord["status"]) {
   switch (status) {
     case "completed":
@@ -143,6 +132,7 @@ export function UpdatePanel(props: {
   const [channel, setChannel] = useState("stable");
   const [isChannelDropdownOpen, setIsChannelDropdownOpen] = useState(false);
   const [client, setClient] = useState<ClientInstallation | null>(null);
+  const [clients, setClients] = useState<ClientInstallation[]>([]);
   const [update, setUpdate] = useState<ClientUpdateCheck | null>(null);
   const [job, setJob] = useState<DownloadJob | null>(null);
   const [recoveries, setRecoveries] = useState<DownloadJobRecovery[]>([]);
@@ -150,6 +140,7 @@ export function UpdatePanel(props: {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const latestRequestIdRef = useRef(0);
   const currentClientIdRef = useRef<string | null>(null);
   const smokePhaseRef = useRef<SmokePhase>("idle");
@@ -159,6 +150,13 @@ export function UpdatePanel(props: {
 
   const activeRouteMode = props.settings.network_route?.mode ?? "direct";
   const activeRouteUrl = props.settings.network_route?.proxy_prefix_url ?? props.settings.network_route?.mirror_template ?? "";
+  const [routeUrlDraft, setRouteUrlDraft] = useState(activeRouteUrl);
+
+  // 外部变化（模式切换、设置加载、保存回写）同步到本地草稿；
+  // 输入过程只更新草稿，失焦时才落库，避免每键异步保存导致输入框失焦。
+  useEffect(() => {
+    setRouteUrlDraft(activeRouteUrl);
+  }, [activeRouteUrl, activeRouteMode]);
 
   const manifestInput = resolveUpdateManifestInput({
     smokeEnabled,
@@ -283,6 +281,28 @@ export function UpdatePanel(props: {
       currentClientIdRef.current = null;
     };
   }, [hydrationKey, smokeClientInstallDir, smokeEnabled, smokeManifestUrl, tauriRuntime]);
+
+  // 独立拉取客户端列表，供下载面板切换目标客户端（不影响 smoke 自动化 hydrate）
+  useEffect(() => {
+    if (!tauriRuntime || smokeEnabled) {
+      return;
+    }
+
+    let alive = true;
+    void listClientInstallations()
+      .then((next) => {
+        if (alive) {
+          setClients(next);
+        }
+      })
+      .catch(() => {
+        // 客户端列表拉取失败不阻塞更新主流程
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [smokeEnabled, tauriRuntime]);
 
   useEffect(() => {
     if (!tauriRuntime) {
@@ -439,6 +459,27 @@ export function UpdatePanel(props: {
     setJob(null);
     setError(null);
     setNotice(null);
+  };
+
+  const selectClient = async (clientId: string) => {
+    if (!clientId) {
+      return;
+    }
+    setError(null);
+    setIsBusy(true);
+    try {
+      await setDefaultClient(clientId);
+      const nextClient = await getDefaultClient();
+      setClient(nextClient);
+      currentClientIdRef.current = nextClient?.id ?? null;
+      setClients((prev) => prev.map((c) => ({ ...c, is_default: c.id === clientId })));
+      resetResult();
+      await refreshClientArtifacts();
+    } catch (err) {
+      setError(getUpdateErrorMessage(err));
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const check = useCallback(async () => {
@@ -851,7 +892,7 @@ export function UpdatePanel(props: {
                   type="button"
                   onClick={() => {
                     resetResult();
-                    void props.onUpdateSettings(updateNetworkRoute(props.settings, mode, activeRouteUrl));
+                    void props.onUpdateSettings(updateNetworkRoute(props.settings, mode, routeUrlDraft));
                   }}
                   disabled={isBusy}
                   className={`px-3 py-1.5 rounded-lg text-sm font-semibold tracking-wide transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
@@ -872,10 +913,13 @@ export function UpdatePanel(props: {
             <div className="pt-2 border-t border-[var(--app-border-subtle)]">
               <input
                 aria-label={activeRouteMode === "proxy_prefix" ? "代理前缀地址" : "镜像模板地址"}
-                value={activeRouteUrl}
+                value={routeUrlDraft}
                 onChange={(event) => {
                   resetResult();
-                  void props.onUpdateSettings(updateNetworkRoute(props.settings, activeRouteMode, event.target.value));
+                  setRouteUrlDraft(event.target.value);
+                }}
+                onBlur={() => {
+                  void props.onUpdateSettings(updateNetworkRoute(props.settings, activeRouteMode, routeUrlDraft));
                 }}
                 disabled={isBusy}
                 className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
@@ -887,17 +931,38 @@ export function UpdatePanel(props: {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
-        <div className="space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-            <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">默认客户端</span>
-          </div>
-          <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4">
-            <div className="text-sm font-bold text-[var(--app-text)]">{visibleClient?.display_name ?? "未设置"}</div>
-            <div className="mt-1 break-all text-xs text-[var(--app-text-dim)] font-mono">{visibleClient?.install_dir ?? "未设置"}</div>
-            <div className="mt-2 text-xs font-bold text-[var(--app-accent)]">
-              {visibleClient ? `当前版本：${visibleClient.version ?? "未知"}` : "-"}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
+          <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">客户端与更新</span>
+        </div>
+
+        <div className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              {clients.length > 1 && !smokeEnabled ? (
+                <select
+                  value={visibleClient?.id ?? ""}
+                  onChange={(event) => void selectClient(event.target.value)}
+                  disabled={isBusy}
+                  className="w-full bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3 py-2 text-sm font-bold text-[var(--app-text)] focus:outline-none focus:border-[var(--app-accent)] cursor-pointer"
+                >
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.display_name}
+                      {c.is_default ? "（默认）" : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <div className="text-sm font-bold text-[var(--app-text)]">{visibleClient?.display_name ?? "未设置客户端"}</div>
+                  <div className="mt-1 break-all text-xs text-[var(--app-text-dim)] font-mono">{visibleClient?.install_dir ?? "请先在「客户端」页添加"}</div>
+                </>
+              )}
             </div>
+            <span className="shrink-0 text-xs font-bold text-[var(--app-accent)]">
+              {visibleClient ? `v${visibleClient.version ?? "未知"}` : "-"}
+            </span>
           </div>
           <button
             type="button"
@@ -909,167 +974,128 @@ export function UpdatePanel(props: {
           </button>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-            <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">可用更新</span>
-          </div>
-          {update?.action === "open_url" ? (
-            <div className="mt-3 rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-              <div className="flex flex-wrap items-center gap-2 text-sm font-black text-[var(--app-text-muted)]">
-                <span className="rounded-full bg-black/20 px-3 py-1">{updateSourceLabel(update.source_kind)}</span>
-                {update.latest_version ? (
-                  <span className="rounded-full bg-black/20 px-3 py-1">{update.latest_version}</span>
-                ) : null}
-              </div>
-              <div className="mt-3 text-sm font-bold leading-7 text-[var(--app-text-muted)]">
-                {update.message ?? "该更新来源需要打开上游页面手动处理。"}
-              </div>
-              {update.action_url ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (update.action_url) {
-                      window.open(update.action_url, "_blank", "noreferrer");
-                    }
-                  }}
-                  className="mt-4 inline-flex h-10 items-center rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer"
-                >
-                  打开上游页面
-                </button>
-              ) : null}
+        {update?.action === "open_url" ? (
+          <div className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
+              <span className="rounded-full bg-black/20 px-3 py-1">{updateSourceLabel(update.source_kind)}</span>
+              {update.latest_version ? <span className="rounded-full bg-black/20 px-3 py-1">{update.latest_version}</span> : null}
             </div>
-          ) : update ? (
-            <div className="mt-3 rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-              <div className="flex flex-wrap items-center gap-2 text-sm font-black text-[var(--app-text-muted)]">
-                <span className="rounded-full bg-black/20 px-3 py-1">{update.channel}</span>
-                <span className="rounded-full bg-black/20 px-3 py-1">{update.latest_version}</span>
-                <span className="rounded-full bg-black/20 px-3 py-1">{update.asset.platform}</span>
-                <span className="rounded-full bg-black/20 px-3 py-1">{formatAssetSize(update.asset.size)}</span>
-              </div>
-              <div className="mt-3 text-sm font-black text-[var(--app-text-muted)]">
-                {update.needs_update ? "可更新" : "已最新"}
-              </div>
+            <div className="text-sm font-bold leading-7 text-[var(--app-text-muted)]">
+              {update.message ?? "该更新来源需要打开上游页面手动处理。"}
+            </div>
+            {update.action_url ? (
               <button
                 type="button"
-                onClick={() => void download()}
-                disabled={!update.needs_update || isBusy}
-                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                onClick={() => {
+                  if (update.action_url) {
+                    window.open(update.action_url, "_blank", "noreferrer");
+                  }
+                }}
+                className="inline-flex h-10 items-center rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer"
               >
-                开始下载
+                打开上游页面
               </button>
+            ) : null}
+          </div>
+        ) : update ? (
+          <div className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
+              <span className="rounded-full bg-black/20 px-3 py-1">最新 {update.latest_version}</span>
+              <span className="rounded-full bg-black/20 px-3 py-1">{formatAssetSize(update.asset.size)}</span>
             </div>
-          ) : (
-            <div className="mt-3 rounded-xl border border-dashed border-[var(--app-border-subtle)] bg-black/25 px-4 py-6 text-sm font-semibold text-[var(--app-text-muted)] text-center">
-              空
+            <div className="text-sm font-black text-[var(--app-text-muted)]">
+              {update.needs_update ? "发现新版本" : "已是最新版本"}
             </div>
-          )}
+            <button
+              type="button"
+              onClick={() => void download()}
+              disabled={!update.needs_update || isBusy}
+              className="h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              开始下载
+            </button>
+          </div>
+        ) : null}
 
-          {job ? (
-            <div className="mt-4 rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-              <div className="flex items-center justify-between text-sm font-black text-[var(--app-text-muted)]">
-                <span>{downloadStatusLabel(job.status)}</span>
-                <span>{percent}%</span>
-              </div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/20">
-                <div className="h-full bg-[var(--app-accent)] transition-all" style={{ width: `${percent}%` }} />
-              </div>
-              <div className="mt-3 text-sm leading-6 text-[var(--app-text-muted)]">
-                {job.status === "verified"
-                  ? "已校验"
-                  : job.status === "installing"
-                    ? "安装中"
-                    : "已下载"}
-              </div>
-              {job.error ? <div className="mt-2 text-sm font-bold text-red-400">{getUpdateErrorMessage(job.error)}</div> : null}
+        {job ? (
+          <div className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-3">
+            <div className="flex items-center justify-between text-sm font-black text-[var(--app-text-muted)]">
+              <span>{downloadStatusLabel(job.status)}</span>
+              <span>{percent}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-black/20">
+              <div className="h-full bg-[var(--app-accent)] transition-all" style={{ width: `${percent}%` }} />
+            </div>
+            {job.error ? <div className="text-sm font-bold text-red-400">{getUpdateErrorMessage(job.error)}</div> : null}
+            {job.status === "verified" ? (
               <button
                 type="button"
                 onClick={() => void installJob(job.id)}
-                disabled={job.status !== "verified" || isBusy}
-                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={isBusy}
+                className="h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
               >
                 安装更新
               </button>
-            </div>
-          ) : null}
-        </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {error ? <div className="text-sm font-bold text-red-400">{error}</div> : null}
+        {notice ? <div className="text-sm font-bold text-[var(--app-accent)]">{notice}</div> : null}
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <div className="rounded-xl bg-black/20 p-4 border border-[var(--app-border-subtle)]">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-black text-[var(--app-text-muted)]">恢复任务</div>
-            </div>
-            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-xs font-black text-black">{visibleRecoveries.length}</span>
-          </div>
-          {visibleRecoveries.length > 0 ? (
-            <div className="mt-3 grid gap-3">
+      {(visibleRecoveries.length > 0 || visibleInstallHistory.length > 0) ? (
+        <div className="mt-4 space-y-3">
+          <button
+            type="button"
+            onClick={() => setShowHistory((value) => !value)}
+            className="flex w-full items-center justify-between rounded-lg bg-black/20 border border-[var(--app-border-subtle)] px-4 py-2.5 text-sm font-bold text-[var(--app-text-muted)] cursor-pointer transition-colors hover:bg-black/30"
+          >
+            <span>历史记录</span>
+            <span className="text-xs font-semibold">
+              {showHistory ? "收起" : `展开（${visibleRecoveries.length + visibleInstallHistory.length}）`}
+            </span>
+          </button>
+          {showHistory ? (
+            <div className="space-y-3">
               {visibleRecoveries.map((recovery) => (
-                <div key={recovery.job.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
+                <div key={recovery.job.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
-                    <span className="rounded-full bg-black/20 px-3 py-1">{recovery.job.version}</span>
+                    <span className="rounded-full bg-black/20 px-3 py-1">版本 {recovery.job.version}</span>
                     <span className="rounded-full bg-black/20 px-3 py-1">{downloadStatusLabel(recovery.job.status)}</span>
-                    <span className="rounded-full bg-black/20 px-3 py-1">{recoveryStateLabel(recovery.cache_state)}</span>
                   </div>
-                  <div className="mt-3 text-sm font-bold leading-6 text-[var(--app-text)]">{recovery.user_message}</div>
-                  <div className="mt-2 break-all text-sm font-semibold text-[var(--app-text-dim)]">{recovery.job.cache_path}</div>
-                  <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-black text-[var(--app-text-muted)]">
-                    <span>已下载 {formatAssetSize(recovery.job.downloaded_bytes)} / {formatAssetSize(recovery.job.size)}</span>
-                    <span>{recovery.can_retry ? "建议重新下载" : "无需重下"}</span>
+                  <div className="text-sm font-bold leading-6 text-[var(--app-text)]">{recovery.user_message}</div>
+                  <div className="text-xs font-semibold text-[var(--app-text-dim)]">
+                    已下载 {formatAssetSize(recovery.job.downloaded_bytes)} / {formatAssetSize(recovery.job.size)}
                   </div>
                   {recovery.can_install ? (
                     <button
                       type="button"
                       onClick={() => void installJob(recovery.job.id, recovery.job)}
                       disabled={isBusy}
-                      className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                      className="h-9 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       继续安装
                     </button>
                   ) : null}
                 </div>
               ))}
-            </div>
-          ) : (
-            <div className="mt-3 rounded-xl border border-dashed border-[var(--app-border-subtle)] bg-black/25 px-4 py-6 text-sm font-semibold text-[var(--app-text-muted)] text-center">
-              空
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-xl bg-black/20 p-4 border border-[var(--app-border-subtle)]">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-sm font-black text-[var(--app-text-muted)]">安装历史</div>
-            </div>
-            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-xs font-black text-black">{visibleInstallHistory.length}</span>
-          </div>
-          {visibleInstallHistory.length > 0 ? (
-            <div className="mt-3 grid gap-3">
               {visibleInstallHistory.map((record) => (
-                <div key={record.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
+                <div key={record.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
-                    <span className="rounded-full bg-black/20 px-3 py-1">{record.version}</span>
-                    <span className={`rounded-full px-3 py-1 text-xs border ${record.status === "completed" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-red-500/15 text-red-400 border-red-500/30"}`}>
+                    <span className="rounded-full bg-black/20 px-3 py-1">版本 {record.version}</span>
+                    <span className={`rounded-full px-3 py-1 border ${record.status === "completed" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-red-500/15 text-red-400 border-red-500/30"}`}>
                       {installHistoryStatusLabel(record.status)}
                     </span>
-                    <span className="rounded-full bg-black/20 px-3 py-1">{record.package_kind}</span>
                   </div>
-                  <div className="mt-3 text-sm font-bold text-[var(--app-text-muted)]">完成时间：{formatCompletedAt(record.completed_at)}</div>
-                  <div className="mt-2 break-all text-sm font-semibold text-[var(--app-text-dim)]">
-                    回滚目录：{record.rollback_path ?? "未记录"}
-                  </div>
-                  {record.error ? <div className="mt-2 text-sm font-bold text-red-400">{getUpdateErrorMessage(record.error)}</div> : null}
+                  <div className="text-xs font-semibold text-[var(--app-text-dim)]">{formatCompletedAt(record.completed_at)}</div>
+                  {record.error ? <div className="text-sm font-bold text-red-400">{getUpdateErrorMessage(record.error)}</div> : null}
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="mt-3 rounded-xl border border-dashed border-[var(--app-border-subtle)] bg-black/25 px-4 py-6 text-sm font-semibold text-[var(--app-text-muted)] text-center">
-              空
-            </div>
-          )}
+          ) : null}
         </div>
-      </div>
+      ) : null}
 
       {visibleNotice ? <div className="rounded-xl border border-yellow-400/20 bg-[var(--app-accent)]/5 px-3 py-2 text-sm font-semibold text-[var(--app-accent)]">{visibleNotice}</div> : null}
       {visibleError ? <div className="rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2 text-sm font-semibold text-red-400">{visibleError}</div> : null}
