@@ -36,7 +36,7 @@ function normalizeHealth(health: ClientHealth): string {
 function clientTypeIdFromInstallation(client: ClientInstallation): ClientTypeId {
   if (
     (client.client_id === "ddnet" || client.client_id === "ddnet_vanilla") &&
-    client.install_dir.toLowerCase().includes("steamapps")
+    client.install_source === "steam"
   ) {
     return "ddnet-steam";
   }
@@ -91,12 +91,12 @@ function clientMatchesGameId(client: ClientInstallation, gameId: string): boolea
   }
   if (gameId === "ddnet") {
     const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
-    const isSteam = client.install_dir.toLowerCase().includes("steamapps") || client.install_source === "steam";
+    const isSteam = client.install_source === "steam";
     return isDdnet && !isSteam;
   }
   if (gameId === "ddnet-steam") {
     const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
-    const isSteam = client.install_dir.toLowerCase().includes("steamapps") || client.install_source === "steam";
+    const isSteam = client.install_source === "steam";
     return isDdnet && isSteam;
   }
   if (gameId === "third-party") {
