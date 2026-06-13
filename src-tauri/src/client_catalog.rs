@@ -187,3 +187,7 @@ pub fn normalize_client_id(client_id: &str) -> &str {
 pub fn ddnet_steam_url() -> &'static str {
     "https://store.steampowered.com/app/412220/DDNet/"
 }
+
+#[cfg(test)]
+#[path = "test/client_catalog.rs"]
+mod tests;

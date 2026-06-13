@@ -496,3 +496,30 @@ fn stable_installation_id_uses_fixed_fnv1a64_value() {
         "qmclient-0010748f07d5a3e0"
     );
 }
+
+#[test]
+fn infer_client_identity_matches_qmclient_path() {
+    let identity = scan::infer_client_identity(std::path::Path::new("D:/Games/QmClient"));
+    assert_eq!(identity.client_id, "qmclient");
+    assert_eq!(identity.display_name, "QmClient");
+    assert_eq!(identity.install_source, ClientInstallSource::Manual);
+    assert!(identity.upstream_url.is_some());
+}
+
+#[test]
+fn infer_client_identity_marks_steam_ddnet_as_steam_source() {
+    let identity =
+        scan::infer_client_identity(std::path::Path::new("C:/Steam/steamapps/common/ddnet"));
+    assert_eq!(identity.client_id, "ddnet");
+    assert_eq!(identity.display_name, "DDNet");
+    assert_eq!(identity.install_source, ClientInstallSource::Steam);
+}
+
+#[test]
+fn infer_client_identity_falls_back_to_third_party_for_unknown_path() {
+    let identity = scan::infer_client_identity(std::path::Path::new("D:/Games/random-game"));
+    assert_eq!(identity.client_id, "third_party");
+    assert_eq!(identity.display_name, "random-game");
+    assert_eq!(identity.install_source, ClientInstallSource::Manual);
+    assert!(identity.upstream_url.is_none());
+}
