@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { IpcError } from "../types";
 import { getErrorMessage, getUpdateErrorMessage } from "./errors";
 
 describe("getErrorMessage", () => {
@@ -20,5 +21,20 @@ describe("getUpdateErrorMessage", () => {
     expect(getUpdateErrorMessage("failed to create rollback point: access denied")).toBe(
       "操作失败，请稍后重试。failed to create rollback point: access denied"
     );
+  });
+
+  it("maps structured IpcError by stable code", () => {
+    const error: IpcError = { code: "checksum_mismatch", message: "sha256 mismatch detail" };
+    expect(getUpdateErrorMessage(error)).toBe("下载文件校验失败，请重新下载。");
+  });
+
+  it("maps sha256_missing IpcError to manual-download hint", () => {
+    const error: IpcError = { code: "sha256_missing", message: "更新资产缺少 sha256" };
+    expect(getUpdateErrorMessage(error)).toContain("手动下载");
+  });
+
+  it("falls back to message for unknown IpcError code", () => {
+    const error: IpcError = { code: "something_new", message: "未知错误细节" };
+    expect(getUpdateErrorMessage(error)).toBe("操作失败，请稍后重试。未知错误细节");
   });
 });

@@ -227,6 +227,14 @@ export type StartUpdateDownloadRequest = {
   use_manifest_source?: boolean;
 };
 
+/** 后端 IPC 结构化错误契约，携带稳定错误码与可读文案。 */
+export type IpcError = {
+  /** 稳定错误码，与后端 `models.rs` 的 `IPC_ERROR_*` 常量对齐。 */
+  code: string;
+  /** 面向调试的原始信息，前端可兜底展示。 */
+  message: string;
+};
+
 export type AppUpdateCheck = {
   current_version: string;
   latest_version: string;

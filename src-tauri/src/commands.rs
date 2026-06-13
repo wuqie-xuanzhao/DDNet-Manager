@@ -2,7 +2,7 @@ use crate::download::DownloadManager;
 use crate::models::{
     AppSettings, CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
     DownloadJob, DownloadJobRecovery, DownloadJobStatus, InstallHistoryRecord,
-    InstallHistoryStatus, LocalSmokeResultReport, NetworkRouteConfig,
+    InstallHistoryStatus, IpcError, LocalSmokeResultReport, NetworkRouteConfig,
     ScanClientInstallationsOptions, StartUpdateDownloadRequest, UpdateAction,
     UpsertClientInstallationRequest,
 };
@@ -297,8 +297,10 @@ pub fn is_client_running(path: String) -> Result<bool, String> {
 pub async fn load_manifest(
     url: String,
     network_route: Option<NetworkRouteConfig>,
-) -> Result<crate::models::UpdateManifest, String> {
-    crate::manifest::fetch_manifest_with_route(&url, network_route.as_ref()).await
+) -> Result<crate::models::UpdateManifest, IpcError> {
+    crate::manifest::fetch_manifest_with_route(&url, network_route.as_ref())
+        .await
+        .map_err(IpcError::from)
 }
 
 /// 检查指定客户端和渠道是否存在可用更新。
@@ -306,7 +308,7 @@ pub async fn load_manifest(
 pub async fn check_client_update(
     app: AppHandle,
     request: CheckClientUpdateRequest,
-) -> Result<Option<ClientUpdateCheck>, String> {
+) -> Result<Option<ClientUpdateCheck>, IpcError> {
     if request_requires_manifest_url(&request) {
         required_manifest_url(request.manifest_url.as_deref())?;
     }
@@ -320,7 +322,9 @@ pub async fn check_client_update(
         })
         .and_then(|client| client.version);
 
-    crate::update_source::check_client_update(&request, current_version).await
+    crate::update_source::check_client_update(&request, current_version)
+        .await
+        .map_err(IpcError::from)
 }
 
 /// 创建下载任务并开始真实下载更新包。
@@ -329,7 +333,7 @@ pub async fn start_update_download(
     app: AppHandle,
     manager: DownloadManagerState<'_>,
     request: StartUpdateDownloadRequest,
-) -> Result<DownloadJob, String> {
+) -> Result<DownloadJob, IpcError> {
     let prepared = prepare_update_download_job(&app, request).await?;
     let job = prepared.job;
     let cache_path = PathBuf::from(&job.cache_path);
@@ -545,7 +549,7 @@ pub fn cancel_download(
     app: AppHandle,
     manager: DownloadManagerState<'_>,
     job_id: String,
-) -> Result<DownloadJob, String> {
+) -> Result<DownloadJob, IpcError> {
     let job = manager.cancel(&job_id)?;
     persist_download_job_snapshot(&app, &job);
     Ok(job)
@@ -557,9 +561,9 @@ pub fn get_download_job(
     app: AppHandle,
     manager: DownloadManagerState<'_>,
     job_id: String,
-) -> Result<Option<DownloadJob>, String> {
+) -> Result<Option<DownloadJob>, IpcError> {
     let registry = registry_for_app(&app)?;
-    load_download_job_snapshot(manager.inner(), &registry, &job_id)
+    load_download_job_snapshot(manager.inner(), &registry, &job_id).map_err(IpcError::from)
 }
 
 /// 返回指定客户端当前可恢复的下载任务摘要。
@@ -567,9 +571,10 @@ pub fn get_download_job(
 pub fn list_download_job_recoveries(
     app: AppHandle,
     client_installation_id: Option<String>,
-) -> Result<Vec<DownloadJobRecovery>, String> {
+) -> Result<Vec<DownloadJobRecovery>, IpcError> {
     let registry = registry_for_app(&app)?;
     list_download_job_recoveries_from_registry(&registry, client_installation_id.as_deref())
+        .map_err(IpcError::from)
 }
 
 /// 校验并安装已下载的更新包。
@@ -578,7 +583,7 @@ pub fn install_downloaded_update(
     app: AppHandle,
     manager: DownloadManagerState<'_>,
     job_id: String,
-) -> Result<DownloadJob, String> {
+) -> Result<DownloadJob, IpcError> {
     let registry = registry_for_app(&app)?;
     let job = load_download_job_snapshot(manager.inner(), &registry, &job_id)?
         .ok_or_else(|| format!("download job not found: {job_id}"))?;
@@ -589,21 +594,23 @@ pub fn install_downloaded_update(
         return Err(format!(
             "download job must be verified before install: {:?}",
             job.status
-        ));
+        )
+        .into());
     }
     let recovery = crate::download::build_download_job_recovery(&job)?;
     if !recovery.can_install {
         return Err(format!(
             "download job cache is not installable: {:?}",
             recovery.cache_state
-        ));
+        )
+        .into());
     }
 
     let mut client = match load_install_target(&registry, &job) {
         Ok(client) => client,
         Err(error) => {
             record_install_prepare_failure(&registry, &job, &error);
-            return Err(error);
+            return Err(error.into());
         }
     };
     run_install_transaction(
@@ -616,6 +623,7 @@ pub fn install_downloaded_update(
         },
         &mut client,
     )
+    .map_err(IpcError::from)
 }
 
 fn record_install_prepare_failure(
