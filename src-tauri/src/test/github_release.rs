@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use super::{
     build_update_asset, normalize_release_version, parse_expanded_assets_digests,
-    parse_github_sha256_digest, GitHubReleaseAsset, GitHubReleaseCheck, ReleaseSelection,
+    parse_github_sha256_digest, select_release_asset, GitHubReleaseAsset, GitHubReleaseCheck,
+    GitHubReleaseResponse, ReleaseSelection,
 };
 
 #[test]
@@ -124,5 +125,50 @@ fn missing_digest_returns_manual_release_action() {
             assert!(message.contains("sha256"));
         }
         GitHubReleaseCheck::Download { .. } => panic!("缺少 digest 不应返回下载动作"),
+    }
+}
+
+#[test]
+fn select_release_asset_prefers_expanded_digest_over_missing_api_digest() {
+    use crate::client_catalog::catalog_entry_by_id;
+
+    // 模拟真实场景：标准 release API 不返回 asset.digest，digest 来自 expanded_assets。
+    let entry = catalog_entry_by_id("qmclient").expect("qmclient catalog entry 应存在");
+    let release = GitHubReleaseResponse {
+        tag_name: "v2.62.4".to_string(),
+        html_url: "https://github.com/wxj881027/QmClient/releases/tag/v2.62.4".to_string(),
+        body: None,
+        assets: vec![GitHubReleaseAsset {
+            name: "QmClient-windows.zip".to_string(),
+            browser_download_url:
+                "https://github.com/wxj881027/QmClient/releases/download/v2.62.4/QmClient-windows.zip"
+                    .to_string(),
+            size: 89531134,
+            digest: None,
+        }],
+    };
+    let mut digests = HashMap::new();
+    digests.insert(
+        "QmClient-windows.zip".to_string(),
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+    );
+
+    let result = select_release_asset(entry, "windows-x86_64", release, &digests)
+        .expect("应返回更新检查结果")
+        .expect("应存在匹配资产");
+
+    match result {
+        GitHubReleaseCheck::Download { version, asset } => {
+            assert_eq!(version, "2.62.4");
+            assert_eq!(asset.platform, "windows-x86_64");
+            assert_eq!(
+                asset.sha256,
+                "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            );
+            assert_eq!(asset.size, 89531134);
+        }
+        GitHubReleaseCheck::Manual { .. } => {
+            panic!("expanded digest 存在时应返回下载动作，而非降级手动")
+        }
     }
 }
