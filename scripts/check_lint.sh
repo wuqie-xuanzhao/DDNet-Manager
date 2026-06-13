@@ -360,10 +360,16 @@ while IFS= read -r f; do
         if (l == 0 || r <= l) next
         params = substr(sig, l + 1, r - l - 1)
         gsub(/[[:space:]]+/, " ", params)
+        sub(/^ /, "", params)
+        sub(/[[:space:]]*,[[:space:]]*$/, "", params)
         if (params == "") next
         n = 1
+        depth = 0
         for (i = 1; i <= length(params); i++) {
-            if (substr(params, i, 1) == ",") n++
+            c = substr(params, i, 1)
+            if (c == "<") depth++
+            else if (c == ">") depth--
+            else if (c == "," && depth == 0) n++
         }
         if (params ~ /^&?mut?[[:space:]]*self$/ || params ~ /^&self$/ || params ~ /^self$/) n = 0
         if (n > max) {
