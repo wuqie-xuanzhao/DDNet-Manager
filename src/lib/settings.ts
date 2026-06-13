@@ -13,32 +13,21 @@ export const defaultAppSettings: AppSettings = {
   allow_silent_update: true
 };
 
-export function routeHostFromUrl(value: string) {
-  try {
-    return new URL(value).hostname;
-  } catch {
-    return "";
-  }
-}
-
 export function networkRouteUrl(settings: AppSettings) {
-  return settings.network_route?.proxy_prefix_url ?? settings.network_route?.mirror_template ?? "";
+  return settings.network_route?.local_proxy_url ?? "";
 }
 
 export function updateNetworkRoute(settings: AppSettings, mode: NetworkRouteMode, rawUrl: string): AppSettings {
-  const trimmedUrl = rawUrl.trim();
   if (mode === "direct") {
     return { ...settings, network_route: null };
   }
 
-  const host = routeHostFromUrl(trimmedUrl);
+  const trimmedUrl = rawUrl.trim();
   return {
     ...settings,
     network_route: {
       mode,
-      proxy_prefix_url: mode === "proxy_prefix" ? trimmedUrl : null,
-      mirror_template: mode === "mirror_template" ? trimmedUrl : null,
-      enabled_hosts: host ? [host] : []
+      local_proxy_url: trimmedUrl
     }
   };
 }

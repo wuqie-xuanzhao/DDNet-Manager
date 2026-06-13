@@ -44,24 +44,28 @@ describe("buildNetworkRoute", () => {
 
   it("keeps route mode labels stable", () => {
     expect(networkRouteLabel("direct")).toBe("直接下载");
-    expect(networkRouteLabel("proxy_prefix")).toBe("代理前缀");
-    expect(networkRouteLabel("mirror_template")).toBe("镜像模板");
+    expect(networkRouteLabel("local_proxy")).toBe("本地代理");
   });
 
   it("exposes user-facing hint text explaining each route mode", () => {
     expect(networkRouteHint("direct")).toContain("github.com");
-    expect(networkRouteHint("proxy_prefix")).toContain("拼接");
-    expect(networkRouteHint("mirror_template")).toContain("{url}");
+    expect(networkRouteHint("local_proxy")).toContain("127.0.0.1:7890");
   });
 
-  it("provides format placeholder examples without hardcoding real proxies", () => {
+  it("provides a common local proxy placeholder example", () => {
     expect(networkRoutePlaceholder("direct")).toBe("");
-    expect(networkRoutePlaceholder("proxy_prefix")).toContain("代理域名");
-    expect(networkRoutePlaceholder("mirror_template")).toContain("{url}");
+    expect(networkRoutePlaceholder("local_proxy")).toContain("127.0.0.1");
   });
 
-  it("throws for invalid non-direct routes", () => {
-    expect(() => buildNetworkRoute("mirror_template", "not a url")).toThrow("route_url_invalid");
+  it("throws for empty non-direct routes", () => {
+    expect(() => buildNetworkRoute("local_proxy", "   ")).toThrow("route_url_invalid");
+  });
+
+  it("builds a local proxy route from a trimmed url", () => {
+    expect(buildNetworkRoute("local_proxy", " http://127.0.0.1:7890 ")).toEqual({
+      mode: "local_proxy",
+      local_proxy_url: "http://127.0.0.1:7890"
+    });
   });
 });
 
@@ -137,14 +141,14 @@ describe("resolveUpdateManifestInput", () => {
     });
   });
 
-  it("builds a manifest update request with a configured mirror route", () => {
+  it("builds a manifest update request with a configured local proxy route", () => {
     expect(
       buildUpdateSourceRequest({
         clientId: "qmclient",
         channel: "stable",
         manifestUrl: " https://example.com/manifest.json ",
-        routeMode: "mirror_template",
-        routeUrl: "https://mirror.example.com/{url}",
+        routeMode: "local_proxy",
+        routeUrl: " http://127.0.0.1:7890 ",
         useManifestSource: true
       })
     ).toEqual({
@@ -152,10 +156,8 @@ describe("resolveUpdateManifestInput", () => {
       channel: "stable",
       manifest_url: "https://example.com/manifest.json",
       network_route: {
-        mode: "mirror_template",
-        proxy_prefix_url: null,
-        mirror_template: "https://mirror.example.com/{url}",
-        enabled_hosts: ["mirror.example.com"]
+        mode: "local_proxy",
+        local_proxy_url: "http://127.0.0.1:7890"
       },
       use_manifest_source: true
     });

@@ -96,7 +96,11 @@ async fn check_catalog_update(
             }
         }
         crate::client_catalog::UpdateSourceDescriptor::DdnetOfficial => {
-            let Some(asset) = crate::ddnet_source::check_official_download(&input.platform).await?
+            let Some(asset) = crate::ddnet_source::check_official_download(
+                &input.platform,
+                input.request.network_route.as_ref(),
+            )
+            .await?
             else {
                 return Ok(None);
             };

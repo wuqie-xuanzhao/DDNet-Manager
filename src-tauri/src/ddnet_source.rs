@@ -1,4 +1,4 @@
-use crate::models::UpdateAsset;
+use crate::models::{NetworkRouteConfig, UpdateAsset};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -49,13 +49,17 @@ pub fn select_official_asset_from_text(
     }))
 }
 
-/// 从 DDNet 官方下载页和 sha256sums.txt 拉取当前平台可校验资产。
-pub async fn check_official_download(platform: &str) -> Result<Option<DdnetDownloadAsset>, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(|error| format!("failed to create DDNet official client: {error}"))?;
+/// 从 DDNet 官网下载页和 sha256sums.txt 拉取当前平台可校验资产。
+pub async fn check_official_download(
+    platform: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<Option<DdnetDownloadAsset>, String> {
+    let client = crate::network_route::build_routed_client(
+        route,
+        Some(Duration::from_secs(15)),
+        Some(USER_AGENT),
+        true,
+    )?;
     let downloads_html = fetch_text(&client, DDNET_DOWNLOADS_URL, "DDNet downloads page").await?;
     let sha256sums = fetch_text(&client, DDNET_SHA256_URL, "DDNet sha256sums.txt").await?;
     let Some(mut asset) = select_official_asset_from_text(&downloads_html, &sha256sums, platform)?

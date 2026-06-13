@@ -1,7 +1,7 @@
 use crate::local_smoke;
 use crate::models::{
-    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, NetworkRouteMode, UpdateAction,
-    UpdateManifest, UpdateSourceKind,
+    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, UpdateAction, UpdateManifest,
+    UpdateSourceKind,
 };
 use reqwest::Url;
 use std::net::{IpAddr, Ipv6Addr};
@@ -48,115 +48,36 @@ pub fn build_manifest_url(url: &str) -> Result<Url, String> {
 }
 
 /// 根据显式网络路由配置构造并校验 manifest URL。
+///
+/// 本地代理模式不改写 URL（代理在 reqwest 客户端层注入），仅复用 manifest 层
+/// 的 SSRF 校验确保目标 host 公开且可信。保留 route 参数供调用方语义对齐。
 pub fn build_manifest_url_with_route(
     url: &str,
-    route: Option<&NetworkRouteConfig>,
+    _route: Option<&NetworkRouteConfig>,
 ) -> Result<Url, String> {
-    let original = build_manifest_url(url)?;
-    let Some(route) = route else {
-        return Ok(original);
-    };
-
-    match route.mode {
-        NetworkRouteMode::Direct => Ok(original),
-        NetworkRouteMode::ProxyPrefix => build_proxy_prefix_url(&original, route),
-        NetworkRouteMode::MirrorTemplate => build_mirror_template_url(&original, route),
-    }
-}
-
-/// 根据显式网络路由配置构造并校验任意公网 HTTPS URL。
-pub fn build_url_with_route(
-    url_str: &str,
-    route: Option<&NetworkRouteConfig>,
-) -> Result<Url, String> {
-    let original = Url::parse(url_str).map_err(|error| format!("invalid url: {error}"))?;
-    let _ = validate_public_https_url(&original)?;
-    let Some(route) = route else {
-        return Ok(original);
-    };
-
-    match route.mode {
-        NetworkRouteMode::Direct => Ok(original),
-        NetworkRouteMode::ProxyPrefix => {
-            let prefix = route
-                .proxy_prefix_url
-                .as_deref()
-                .ok_or_else(|| "proxy prefix url is required".to_string())?;
-            let separator = if prefix.ends_with('/') { "" } else { "/" };
-            let final_url = format!(
-                "{prefix}{separator}{}",
-                percent_encode_url(original.as_str())
-            );
-            parse_network_route_url(&final_url, route)
-        }
-        NetworkRouteMode::MirrorTemplate => {
-            let template = route
-                .mirror_template
-                .as_deref()
-                .ok_or_else(|| "mirror template is required".to_string())?;
-            if !template.contains("{url}") {
-                return Err("mirror template must contain {url}".to_string());
-            }
-            let final_url = template.replace("{url}", original.as_str());
-            parse_network_route_url(&final_url, route)
-        }
-    }
-}
-
-/// 根据显式网络路由配置构造并校验 asset URL。
-pub fn build_asset_url_with_route(
-    url: &str,
-    route: Option<&NetworkRouteConfig>,
-) -> Result<Url, String> {
-    if local_smoke::has_ambiguous_numeric_url_host(url) {
-        return Err("manifest url host must be public".to_string());
-    }
-
-    let original =
-        Url::parse(url).map_err(|error| format!("invalid manifest asset_url: {error}"))?;
-    validate_asset_url(&original)?;
-    let Some(route) = route else {
-        return Ok(original);
-    };
-
-    match route.mode {
-        NetworkRouteMode::Direct => Ok(original),
-        NetworkRouteMode::ProxyPrefix => build_proxy_prefix_url(&original, route),
-        NetworkRouteMode::MirrorTemplate => build_mirror_template_url(&original, route),
-    }
+    build_manifest_url(url)
 }
 
 /// 从远程地址拉取更新 manifest，并复用本地解析校验逻辑。
 pub async fn fetch_manifest(url: &str) -> Result<UpdateManifest, String> {
-    let final_url = build_manifest_url(url)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| format!("failed to fetch manifest: {error}"))?;
-
-    let response = client
-        .get(final_url)
-        .send()
-        .await
-        .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("failed to fetch manifest: {error}"))?;
-    let text = read_limited_manifest_response(response).await?;
-
-    parse_manifest(&text)
+    fetch_manifest_with_route(url, None).await
 }
 
 /// 使用显式网络路由配置从远程地址拉取更新 manifest。
+///
+/// 本地代理模式通过 reqwest 客户端层注入代理隧道，URL 本身不改写；目标 host
+/// 仍由 build_manifest_url 校验为公开可信地址。
 pub async fn fetch_manifest_with_route(
     url: &str,
     route: Option<&NetworkRouteConfig>,
 ) -> Result<UpdateManifest, String> {
     let final_url = build_manifest_url_with_route(url, route)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| format!("failed to fetch manifest: {error}"))?;
+    let client = crate::network_route::build_routed_client(
+        route,
+        Some(Duration::from_secs(15)),
+        None,
+        true,
+    )?;
 
     let response = client
         .get(final_url)
@@ -284,67 +205,6 @@ fn validate_asset_url(url: &Url) -> Result<(), String> {
         TRUSTED_ASSET_HOSTS,
         "manifest asset_url host is not trusted",
     )
-}
-
-fn build_proxy_prefix_url(original: &Url, route: &NetworkRouteConfig) -> Result<Url, String> {
-    let prefix = route
-        .proxy_prefix_url
-        .as_deref()
-        .ok_or_else(|| "proxy prefix url is required".to_string())?;
-    let separator = if prefix.ends_with('/') { "" } else { "/" };
-    let final_url = format!(
-        "{prefix}{separator}{}",
-        percent_encode_url(original.as_str())
-    );
-    parse_network_route_url(&final_url, route)
-}
-
-fn build_mirror_template_url(original: &Url, route: &NetworkRouteConfig) -> Result<Url, String> {
-    let template = route
-        .mirror_template
-        .as_deref()
-        .ok_or_else(|| "mirror template is required".to_string())?;
-    if !template.contains("{url}") {
-        return Err("mirror template must contain {url}".to_string());
-    }
-
-    let final_url = template.replace("{url}", original.as_str());
-    parse_network_route_url(&final_url, route)
-}
-
-fn parse_network_route_url(input: &str, route: &NetworkRouteConfig) -> Result<Url, String> {
-    if local_smoke::has_ambiguous_numeric_url_host(input) {
-        return Err("manifest url host must be public".to_string());
-    }
-
-    let url = Url::parse(input).map_err(|error| format!("invalid manifest url: {error}"))?;
-    let host = validate_public_https_url(&url)?;
-    validate_enabled_route_host(&host, &route.enabled_hosts)?;
-    Ok(url)
-}
-
-fn validate_enabled_route_host(host: &str, enabled_hosts: &[String]) -> Result<(), String> {
-    if enabled_hosts
-        .iter()
-        .any(|enabled| enabled.trim_end_matches('.').eq_ignore_ascii_case(host))
-    {
-        Ok(())
-    } else {
-        Err("network route host is not enabled".to_string())
-    }
-}
-
-fn percent_encode_url(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                encoded.push(char::from(byte));
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
 }
 
 fn validate_public_https_url(url: &Url) -> Result<String, String> {

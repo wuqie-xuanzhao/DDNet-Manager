@@ -28,12 +28,12 @@ struct DownloadTaskContext {
     manager: DownloadManager,
     job: DownloadJob,
     cache_path: PathBuf,
-    enabled_route_hosts: Vec<String>,
+    route: Option<NetworkRouteConfig>,
 }
 
 struct PreparedUpdateDownload {
     job: DownloadJob,
-    enabled_route_hosts: Vec<String>,
+    route: Option<NetworkRouteConfig>,
 }
 
 struct InstallHistoryInput<'a> {
@@ -345,7 +345,7 @@ pub async fn start_update_download(
         manager: manager.inner().clone(),
         job: job.clone(),
         cache_path,
-        enabled_route_hosts: prepared.enabled_route_hosts,
+        route: prepared.route,
     });
 
     Ok(job)
@@ -371,7 +371,7 @@ async fn prepare_update_download_job(
         network_route: network_route.clone(),
         use_manifest_source: request.use_manifest_source,
     };
-    let mut update = crate::update_source::check_client_update(&update_request, client.version)
+    let update = crate::update_source::check_client_update(&update_request, client.version)
         .await?
         .ok_or_else(|| "no downloadable update is available for this client".to_string())?;
     if update.action != UpdateAction::Download {
@@ -380,23 +380,13 @@ async fn prepare_update_download_job(
             .clone()
             .unwrap_or_else(|| "update source does not provide a downloadable asset".to_string()));
     }
-    update.asset.asset_url = crate::manifest::build_asset_url_with_route(
-        &update.asset.asset_url,
-        network_route.as_ref(),
-    )?
-    .to_string();
-    let enabled_route_hosts = network_route
-        .as_ref()
-        .map(|route| route.enabled_hosts.clone())
-        .unwrap_or_default();
-
     let downloads_dir = app_cache_dir(app)?.join("downloads");
     let mut job =
         crate::download::create_download_job(&client_installation_id, &update, &downloads_dir);
     job.status = DownloadJobStatus::Downloading;
     Ok(PreparedUpdateDownload {
         job,
-        enabled_route_hosts,
+        route: network_route,
     })
 }
 
@@ -470,7 +460,7 @@ fn spawn_download_task(context: DownloadTaskContext) {
     let app = context.app;
     let manager = context.manager;
     let cache_path = context.cache_path;
-    let enabled_route_hosts = context.enabled_route_hosts;
+    let route = context.route;
 
     tokio::spawn(async move {
         let result = crate::download::download_asset_to_file(
@@ -478,7 +468,7 @@ fn spawn_download_task(context: DownloadTaskContext) {
                 asset_url: &job_for_task.asset_url,
                 cache_path: &cache_path,
                 expected_size: job_for_task.size,
-                enabled_route_hosts: &enabled_route_hosts,
+                route: route.as_ref(),
             },
             |downloaded_bytes| {
                 let Ok(job) = manager.update(&job_id, |job| {

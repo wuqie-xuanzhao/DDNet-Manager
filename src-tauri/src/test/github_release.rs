@@ -59,7 +59,7 @@ fn parse_expanded_assets_digests_skips_assets_without_digest() {
         <clipboard-copy aria-label="Copy to clipboard digest for with-digest.zip" value="sha256:1111111111111111111111111111111111111111111111111111111111111111"></clipboard-copy>
     "#;
     let map = parse_expanded_assets_digests(html);
-    assert!(map.get("no-digest.zip").is_none());
+    assert!(!map.contains_key("no-digest.zip"));
     assert_eq!(
         map.get("with-digest.zip").map(String::as_str),
         Some("1111111111111111111111111111111111111111111111111111111111111111")

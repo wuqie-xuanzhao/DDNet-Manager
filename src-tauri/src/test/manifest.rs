@@ -1,14 +1,11 @@
 use crate::manifest::{
-    build_asset_url_with_route, build_manifest_url, build_manifest_url_with_route,
-    build_url_with_route, parse_manifest, select_client_update,
+    build_manifest_url, build_manifest_url_with_route, parse_manifest, select_client_update,
 };
 use crate::models::{ClientUpdateSelector, NetworkRouteConfig, NetworkRouteMode};
 
 const VALID_SHA256: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TEST_MANIFEST_URL: &str =
     "https://raw.githubusercontent.com/example/ddnet-manager-manifest/main/manifest.json";
-const ENCODED_TEST_MANIFEST_URL: &str =
-        "https%3A%2F%2Fraw.githubusercontent.com%2Fexample%2Fddnet-manager-manifest%2Fmain%2Fmanifest.json";
 
 #[test]
 fn parses_manifest_with_qmclient_asset() {
@@ -156,23 +153,6 @@ fn build_manifest_url_still_rejects_public_http_when_local_smoke_enabled() {
 }
 
 #[test]
-fn build_manifest_url_with_route_rejects_ambiguous_numeric_hosts_even_when_enabled() {
-    for host in ["127.1", "2130706433", "0177.0.0.1"] {
-        let route = NetworkRouteConfig {
-            mode: NetworkRouteMode::ProxyPrefix,
-            proxy_prefix_url: Some(format!("https://{host}/proxy/")),
-            mirror_template: None,
-            enabled_hosts: vec![host.to_string()],
-        };
-
-        let error = build_manifest_url_with_route(TEST_MANIFEST_URL, Some(&route))
-            .expect_err("歧义数字 host 即使显式启用也应拒绝");
-
-        assert_eq!(error, "manifest url host must be public", "{host}");
-    }
-}
-
-#[test]
 fn build_manifest_url_with_direct_route_keeps_original_url() {
     let route = NetworkRouteConfig::direct();
 
@@ -183,105 +163,17 @@ fn build_manifest_url_with_direct_route_keeps_original_url() {
 }
 
 #[test]
-fn build_manifest_url_with_proxy_prefix_requires_enabled_public_host() {
+fn build_manifest_url_with_local_proxy_route_keeps_original_url() {
+    // 本地代理模式不改写 URL（代理在 reqwest 客户端层注入），仅校验原始 manifest URL。
     let route = NetworkRouteConfig {
-        mode: NetworkRouteMode::ProxyPrefix,
-        proxy_prefix_url: Some("https://proxy.invalid/proxy/".to_string()),
-        mirror_template: None,
-        enabled_hosts: vec!["proxy.invalid".to_string()],
+        mode: NetworkRouteMode::LocalProxy,
+        local_proxy_url: Some("http://127.0.0.1:7890".to_string()),
     };
 
     let url = build_manifest_url_with_route(TEST_MANIFEST_URL, Some(&route))
-        .expect("显式启用的 HTTPS 代理前缀应可用");
+        .expect("本地代理路由应接受可信 manifest URL，不改写地址");
 
-    assert_eq!(
-        url.as_str(),
-        format!("https://proxy.invalid/proxy/{ENCODED_TEST_MANIFEST_URL}")
-    );
-}
-
-#[test]
-fn build_manifest_url_with_proxy_prefix_rejects_unenabled_host() {
-    let route = NetworkRouteConfig {
-        mode: NetworkRouteMode::ProxyPrefix,
-        proxy_prefix_url: Some("https://proxy.invalid/proxy/".to_string()),
-        mirror_template: None,
-        enabled_hosts: vec!["mirror.invalid".to_string()],
-    };
-
-    let error = build_manifest_url_with_route(TEST_MANIFEST_URL, Some(&route))
-        .expect_err("未显式启用的代理 host 应被拒绝");
-
-    assert_eq!(error, "network route host is not enabled");
-}
-
-#[test]
-fn build_manifest_url_with_mirror_template_replaces_url_placeholder() {
-    let route = NetworkRouteConfig {
-        mode: NetworkRouteMode::MirrorTemplate,
-        proxy_prefix_url: None,
-        mirror_template: Some("https://mirror.invalid/fetch/{url}".to_string()),
-        enabled_hosts: vec!["mirror.invalid".to_string()],
-    };
-
-    let url = build_manifest_url_with_route(TEST_MANIFEST_URL, Some(&route))
-        .expect("显式启用的镜像模板应可用");
-
-    assert_eq!(
-        url.as_str(),
-        format!("https://mirror.invalid/fetch/{TEST_MANIFEST_URL}")
-    );
-}
-
-#[test]
-fn build_manifest_url_with_mirror_template_requires_placeholder() {
-    let route = NetworkRouteConfig {
-        mode: NetworkRouteMode::MirrorTemplate,
-        proxy_prefix_url: None,
-        mirror_template: Some("https://mirror.invalid/fetch".to_string()),
-        enabled_hosts: vec!["mirror.invalid".to_string()],
-    };
-
-    let error = build_manifest_url_with_route(TEST_MANIFEST_URL, Some(&route))
-        .expect_err("缺少 {url} 占位符的镜像模板应被拒绝");
-
-    assert_eq!(error, "mirror template must contain {url}");
-}
-
-#[test]
-fn build_asset_url_with_proxy_prefix_uses_enabled_route_host() {
-    let route = NetworkRouteConfig {
-        mode: NetworkRouteMode::ProxyPrefix,
-        proxy_prefix_url: Some("https://proxy.invalid/proxy/".to_string()),
-        mirror_template: None,
-        enabled_hosts: vec!["proxy.invalid".to_string()],
-    };
-
-    let url = build_asset_url_with_route(
-        "https://github.com/ddnet/ddnet/releases/download/v1/qmclient.zip",
-        Some(&route),
-    )
-    .expect("显式启用的 asset 代理前缀应可用");
-
-    assert_eq!(
-            url.as_str(),
-            "https://proxy.invalid/proxy/https%3A%2F%2Fgithub.com%2Fddnet%2Fddnet%2Freleases%2Fdownload%2Fv1%2Fqmclient.zip"
-        );
-}
-
-#[test]
-fn build_asset_url_allows_local_smoke_hosts_when_enabled() {
-    crate::local_smoke::with_local_smoke_test_env(true, || {
-        for url in [
-            "http://127.0.0.1/qmclient.zip",
-            "https://localhost/qmclient.zip",
-            "http://[::1]/qmclient.zip",
-        ] {
-            let parsed = build_asset_url_with_route(url, None)
-                .expect("显式开启 local smoke 后应允许本地 asset 地址");
-            assert_eq!(parsed.as_str(), url);
-        }
-    });
+    assert_eq!(url.as_str(), TEST_MANIFEST_URL);
 }
 
 #[test]
@@ -505,19 +397,4 @@ fn valid_manifest() -> String {
                     ]
                 }}"#
     )
-}
-
-#[test]
-fn build_url_with_route_handles_generic_url_routing() {
-    let route = NetworkRouteConfig {
-        mode: NetworkRouteMode::ProxyPrefix,
-        proxy_prefix_url: Some("https://proxy.example/".to_string()),
-        mirror_template: None,
-        enabled_hosts: vec!["proxy.example".to_string()],
-    };
-    let url = build_url_with_route("https://api.github.com/some/path", Some(&route)).unwrap();
-    assert_eq!(
-        url.as_str(),
-        "https://proxy.example/https%3A%2F%2Fapi.github.com%2Fsome%2Fpath"
-    );
 }

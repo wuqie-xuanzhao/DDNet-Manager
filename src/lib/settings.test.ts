@@ -7,28 +7,24 @@ describe("updateNetworkRoute", () => {
       {
         ...defaultAppSettings,
         network_route: {
-          mode: "proxy_prefix",
-          proxy_prefix_url: "https://proxy.example/",
-          mirror_template: null,
-          enabled_hosts: ["proxy.example"]
+          mode: "local_proxy",
+          local_proxy_url: "http://127.0.0.1:7890"
         }
       },
       "direct",
-      "https://proxy.example/"
+      "http://127.0.0.1:7890"
     );
 
     expect(next.network_route).toBeNull();
   });
 
-  it("derives enabled host for proxy routes", () => {
-    const next = updateNetworkRoute(defaultAppSettings, "proxy_prefix", " https://proxy.example/path ");
+  it("stores the trimmed local proxy url for local proxy mode", () => {
+    const next = updateNetworkRoute(defaultAppSettings, "local_proxy", " http://127.0.0.1:7890 ");
 
     expect(next.network_route).toEqual({
-      mode: "proxy_prefix",
-      proxy_prefix_url: "https://proxy.example/path",
-      mirror_template: null,
-      enabled_hosts: ["proxy.example"]
+      mode: "local_proxy",
+      local_proxy_url: "http://127.0.0.1:7890"
     });
-    expect(networkRouteUrl(next)).toBe("https://proxy.example/path");
+    expect(networkRouteUrl(next)).toBe("http://127.0.0.1:7890");
   });
 });

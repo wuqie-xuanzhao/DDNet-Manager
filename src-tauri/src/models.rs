@@ -270,27 +270,20 @@ pub struct ScanClientInstallationsOptions {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NetworkRouteMode {
-    /// 不使用代理或镜像，直接访问原始地址。
+    /// 不使用代理，直接访问原始地址。
     #[default]
     Direct,
-    /// 使用代理前缀拼接原始 URL。
-    ProxyPrefix,
-    /// 使用包含 `{url}` 占位符的镜像模板构造访问 URL。
-    MirrorTemplate,
+    /// 通过本地 HTTP 代理隧道访问（如 Clash 的 http://127.0.0.1:7890）。
+    LocalProxy,
 }
 
-/// 表示用户显式启用的网络代理或镜像路由配置。
+/// 表示用户显式启用的本地代理路由配置。
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct NetworkRouteConfig {
     /// 网络路由模式。
     pub mode: NetworkRouteMode,
-    /// 代理前缀 URL，仅 `proxy_prefix` 模式使用。
-    pub proxy_prefix_url: Option<String>,
-    /// 镜像模板 URL，仅 `mirror_template` 模式使用。
-    pub mirror_template: Option<String>,
-    /// 显式启用的代理或镜像 host 列表。
-    #[serde(default)]
-    pub enabled_hosts: Vec<String>,
+    /// 本地代理地址，仅 `local_proxy` 模式使用（如 http://127.0.0.1:7890）。
+    pub local_proxy_url: Option<String>,
 }
 
 impl NetworkRouteConfig {
@@ -298,9 +291,7 @@ impl NetworkRouteConfig {
     pub fn direct() -> Self {
         Self {
             mode: NetworkRouteMode::Direct,
-            proxy_prefix_url: None,
-            mirror_template: None,
-            enabled_hosts: Vec::new(),
+            local_proxy_url: None,
         }
     }
 }

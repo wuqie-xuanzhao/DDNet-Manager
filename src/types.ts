@@ -83,13 +83,11 @@ export type UpsertClientInstallationRequest = {
   is_default?: boolean;
 };
 
-export type NetworkRouteMode = "direct" | "proxy_prefix" | "mirror_template";
+export type NetworkRouteMode = "direct" | "local_proxy";
 
 export type NetworkRouteConfig = {
   mode: NetworkRouteMode;
-  proxy_prefix_url?: string | null;
-  mirror_template?: string | null;
-  enabled_hosts?: string[];
+  local_proxy_url?: string | null;
 };
 
 export type AppSettings = {

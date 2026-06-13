@@ -149,7 +149,7 @@ export function UpdatePanel(props: {
   const hydrationKey = `${tauriRuntime ? "tauri" : "browser"}:${smokeEnabled ? smokeManifestUrl : "manual"}`;
 
   const activeRouteMode = props.settings.network_route?.mode ?? "direct";
-  const activeRouteUrl = props.settings.network_route?.proxy_prefix_url ?? props.settings.network_route?.mirror_template ?? "";
+  const activeRouteUrl = props.settings.network_route?.local_proxy_url ?? "";
   const [routeUrlDraft, setRouteUrlDraft] = useState(activeRouteUrl);
 
   // 外部变化（模式切换、设置加载、保存回写）同步到本地草稿；
@@ -884,7 +884,7 @@ export function UpdatePanel(props: {
         </div>
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
           <div className="flex flex-wrap gap-2">
-            {(["direct", "proxy_prefix", "mirror_template"] as const).map((mode) => {
+            {(["direct", "local_proxy"] as const).map((mode) => {
               const active = activeRouteMode === mode;
               return (
                 <button
@@ -912,7 +912,7 @@ export function UpdatePanel(props: {
           {activeRouteMode !== "direct" ? (
             <div className="pt-2 border-t border-[var(--app-border-subtle)]">
               <input
-                aria-label={activeRouteMode === "proxy_prefix" ? "代理前缀地址" : "镜像模板地址"}
+                aria-label="本地代理地址"
                 value={routeUrlDraft}
                 onChange={(event) => {
                   resetResult();

@@ -6,7 +6,6 @@ import type {
   NetworkRouteMode,
   StartUpdateDownloadRequest
 } from "../types";
-import { routeHostFromUrl } from "./settings";
 
 export type AutoUpdateViewState = "disabled" | "idle" | "checking" | "available" | "current" | "manual" | "error";
 
@@ -32,16 +31,13 @@ export function buildNetworkRoute(routeMode: NetworkRouteMode, routeUrl: string)
   }
 
   const trimmedUrl = routeUrl.trim();
-  const host = routeHostFromUrl(trimmedUrl);
-  if (!trimmedUrl || !host) {
+  if (!trimmedUrl) {
     throw new Error("route_url_invalid");
   }
 
   return {
     mode: routeMode,
-    proxy_prefix_url: routeMode === "proxy_prefix" ? trimmedUrl : null,
-    mirror_template: routeMode === "mirror_template" ? trimmedUrl : null,
-    enabled_hosts: [host]
+    local_proxy_url: trimmedUrl
   };
 }
 
@@ -49,34 +45,28 @@ export function networkRouteLabel(mode: NetworkRouteMode) {
   switch (mode) {
     case "direct":
       return "直接下载";
-    case "proxy_prefix":
-      return "代理前缀";
-    case "mirror_template":
-      return "镜像模板";
+    case "local_proxy":
+      return "本地代理";
   }
 }
 
-/** 网络路由模式输入框的 placeholder，统一为格式示例（不硬编码实际公共代理）。 */
+/** 本地代理地址输入框的 placeholder，给出常见本地代理端口示例。 */
 export function networkRoutePlaceholder(mode: NetworkRouteMode): string {
   switch (mode) {
     case "direct":
       return "";
-    case "proxy_prefix":
-      return "https://你的代理域名/";
-    case "mirror_template":
-      return "https://镜像站/path?url={url}";
+    case "local_proxy":
+      return "http://127.0.0.1:7890";
   }
 }
 
-/** 网络路由模式的用户引导文案：解释行为、URL 格式与示例，帮助用户理解差异。 */
+/** 网络路由模式的用户引导文案：用白话解释行为，帮助用户理解直接下载与本地代理的差异。 */
 export function networkRouteHint(mode: NetworkRouteMode): string {
   switch (mode) {
     case "direct":
-      return "直接访问 github.com 与 api.github.com。若你的网络无法访问 GitHub，请改用代理前缀或镜像模板。";
-    case "proxy_prefix":
-      return "在原始下载地址前拼接此前缀。例如原始 https://github.com/... 会拼接为 https://你的代理域名/https://github.com/... 。需自行提供可用的 HTTPS 代理。";
-    case "mirror_template":
-      return "用含 {url} 占位符的模板构造访问地址，{url} 会被替换为原始下载地址。需自行提供可用的 HTTPS 镜像。";
+      return "直接访问 github.com 与 api.github.com。若你的网络无法访问 GitHub，请改用本地代理。";
+    case "local_proxy":
+      return "通过本地代理（如 Clash、v2ray 的本地端口）访问 GitHub。填写你的代理地址，常见为 http://127.0.0.1:7890。所有下载与更新请求都会走这个代理隧道。";
   }
 }
 

@@ -1,6 +1,7 @@
 use crate::local_smoke;
 use crate::models::{
     ClientUpdateCheck, DownloadCacheState, DownloadJob, DownloadJobRecovery, DownloadJobStatus,
+    NetworkRouteConfig,
 };
 use reqwest::Url;
 use sha2::{Digest, Sha256};
@@ -44,8 +45,8 @@ pub struct DownloadFileRequest<'a> {
     pub cache_path: &'a Path,
     /// manifest 中声明的期望大小。
     pub expected_size: u64,
-    /// 用户显式启用的代理或镜像下载 host。
-    pub enabled_route_hosts: &'a [String],
+    /// 用户配置的网络路由（本地代理）；为空表示直连。
+    pub route: Option<&'a NetworkRouteConfig>,
 }
 
 /// 管理当前进程内的下载任务状态。
@@ -248,7 +249,7 @@ pub async fn download_asset_to_file<F>(
 where
     F: FnMut(u64) -> bool + Send,
 {
-    validate_download_url_with_hosts(request.asset_url, request.enabled_route_hosts)?;
+    validate_download_url(request.asset_url)?;
     let part_path = part_file_path(request.cache_path);
     if let Some(parent) = request.cache_path.parent() {
         fs::create_dir_all(parent)
@@ -259,12 +260,8 @@ where
             .map_err(|error| format!("failed to clear partial download file: {error}"))?;
     }
 
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|error| format!("failed to create download client: {error}"))?;
-    let mut response =
-        send_download_request(&client, request.asset_url, request.enabled_route_hosts).await?;
+    let client = crate::network_route::build_routed_client(request.route, None, None, false)?;
+    let mut response = send_download_request(&client, request.asset_url).await?;
 
     if response
         .content_length()
@@ -822,10 +819,7 @@ fn copy_symlink(source_path: &Path, destination_path: &Path) -> Result<(), Strin
 }
 
 /// 校验下载 URL，并允许用户显式启用的代理或镜像 host。
-pub(crate) fn validate_download_url_with_hosts(
-    url: &str,
-    enabled_route_hosts: &[String],
-) -> Result<(), String> {
+pub(crate) fn validate_download_url(url: &str) -> Result<(), String> {
     if local_smoke::has_ambiguous_numeric_url_host(url) {
         return Err("download url host must be public".to_string());
     }
@@ -852,12 +846,7 @@ pub(crate) fn validate_download_url_with_hosts(
     if let Ok(ip) = ip_host.parse::<IpAddr>() {
         validate_public_ip(ip)?;
     }
-    let route_host_enabled = enabled_route_hosts.iter().any(|enabled| {
-        enabled
-            .trim_end_matches('.')
-            .eq_ignore_ascii_case(&normalized_host)
-    });
-    if !TRUSTED_DOWNLOAD_HOSTS.contains(&normalized_host.as_str()) && !route_host_enabled {
+    if !TRUSTED_DOWNLOAD_HOSTS.contains(&normalized_host.as_str()) {
         return Err("download url host is not trusted".to_string());
     }
     Ok(())
@@ -866,13 +855,12 @@ pub(crate) fn validate_download_url_with_hosts(
 async fn send_download_request(
     client: &reqwest::Client,
     asset_url: &str,
-    enabled_route_hosts: &[String],
 ) -> Result<reqwest::Response, String> {
     let mut current_url =
         Url::parse(asset_url).map_err(|error| format!("invalid download url: {error}"))?;
 
     for _ in 0..=MAX_DOWNLOAD_REDIRECTS {
-        validate_download_url_with_hosts(current_url.as_str(), enabled_route_hosts)?;
+        validate_download_url(current_url.as_str())?;
         let response = client
             .get(current_url.clone())
             .send()

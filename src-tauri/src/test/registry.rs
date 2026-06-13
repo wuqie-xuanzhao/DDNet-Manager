@@ -217,10 +217,8 @@ fn registry_persists_app_settings() {
     let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
     let settings = AppSettings {
         network_route: Some(NetworkRouteConfig {
-            mode: NetworkRouteMode::ProxyPrefix,
-            proxy_prefix_url: Some("https://proxy.example/".to_string()),
-            mirror_template: None,
-            enabled_hosts: vec!["proxy.example".to_string()],
+            mode: NetworkRouteMode::LocalProxy,
+            local_proxy_url: Some("http://127.0.0.1:7890".to_string()),
         }),
         scan_excluded_paths: vec!["D:/Archive".to_string()],
         use_everything: true,

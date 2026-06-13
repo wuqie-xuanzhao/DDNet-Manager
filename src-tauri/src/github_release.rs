@@ -58,23 +58,22 @@ struct ReleaseSelection {
     asset: GitHubReleaseAsset,
 }
 
-/// 从 GitHub 获取最新的 release 数据，并处理网络路由（代理/镜像）。
+/// 从 GitHub 获取最新的 release 数据，并通过本地代理隧道（如已配置）访问。
 pub async fn fetch_latest_github_release(
     owner: &str,
     repo: &str,
     route: Option<&NetworkRouteConfig>,
 ) -> Result<GitHubReleaseResponse, String> {
-    let url_str = format!("{GITHUB_API_BASE}/{owner}/{repo}/releases/latest");
-    let final_url = crate::manifest::build_url_with_route(&url_str, route)?;
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(|error| format!("failed to create GitHub client: {error}"))?;
+    let url = format!("{GITHUB_API_BASE}/{owner}/{repo}/releases/latest");
+    let client = crate::network_route::build_routed_client(
+        route,
+        Some(Duration::from_secs(15)),
+        Some(USER_AGENT),
+        true,
+    )?;
 
     let response = client
-        .get(final_url)
+        .get(&url)
         .send()
         .await
         .and_then(|response| response.error_for_status())
@@ -246,16 +245,15 @@ async fn fetch_expanded_assets_digests(
     route: Option<&NetworkRouteConfig>,
 ) -> Result<HashMap<String, String>, String> {
     let url = format!("https://github.com/{owner}/{repo}/releases/expanded_assets/{tag}");
-    let final_url = crate::manifest::build_url_with_route(&url, route)?;
-
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(|error| format!("failed to create expanded-assets client: {error}"))?;
+    let client = crate::network_route::build_routed_client(
+        route,
+        Some(Duration::from_secs(15)),
+        Some(USER_AGENT),
+        true,
+    )?;
 
     let html = client
-        .get(final_url)
+        .get(&url)
         .send()
         .await
         .and_then(|response| response.error_for_status())
