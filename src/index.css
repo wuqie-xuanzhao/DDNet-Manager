@@ -144,3 +144,41 @@ textarea:focus-visible {
     transform: translateY(0);
   }
 }
+
+.theme-light {
+  color: #1f2937;
+  background: #f3f4f6;
+
+  /* Surfaces */
+  --app-bg: #f3f4f6;
+  --app-surface: #ffffff;
+  --app-surface-alt: #f9fafb;
+  --app-sunken: #f3f4f6;
+  --app-input: rgba(0, 0, 0, 0.05);
+
+  /* Borders */
+  --app-border: rgba(0, 0, 0, 0.1);
+  --app-border-subtle: rgba(0, 0, 0, 0.05);
+  --app-border-strong: rgba(0, 0, 0, 0.15);
+
+  /* Text */
+  --app-text: #111827;
+  --app-text-secondary: rgba(0, 0, 0, 0.85);
+  --app-text-muted: #4b5563;
+  --app-text-dim: #9ca3af;
+
+  /* Accent (amber) */
+  --app-accent: #d97706;
+  --app-accent-hover: #b45309;
+  --app-accent-foreground: #ffffff;
+  --app-accent-subtle: rgba(217, 119, 6, 0.1);
+  --app-accent-border: rgba(217, 119, 6, 0.2);
+
+  /* Danger */
+  --app-danger: #ef4444;
+  --app-danger-subtle: rgba(239, 68, 68, 0.05);
+  --app-danger-border: rgba(239, 68, 68, 0.2);
+
+  /* Focus ring */
+  --app-focus: rgba(217, 119, 6, 0.4);
+}

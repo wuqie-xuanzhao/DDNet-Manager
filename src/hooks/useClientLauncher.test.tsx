@@ -10,11 +10,15 @@ const upsertClientInstallation = vi.fn();
 const validateClientDir = vi.fn();
 const closeWindow = vi.fn();
 const minimizeWindow = vi.fn();
+const hideWindow = vi.fn();
+const listClientInstallations = vi.fn();
+const launchClient = vi.fn();
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     close: closeWindow,
-    minimize: minimizeWindow
+    minimize: minimizeWindow,
+    hide: hideWindow
   })
 }));
 
@@ -27,7 +31,9 @@ vi.mock("../lib/tauri", () => ({
   launchDefaultClient: (...args: unknown[]) => launchDefaultClient(...args),
   reportLocalSmokeResult: (...args: unknown[]) => reportLocalSmokeResult(...args),
   upsertClientInstallation: (...args: unknown[]) => upsertClientInstallation(...args),
-  validateClientDir: (...args: unknown[]) => validateClientDir(...args)
+  validateClientDir: (...args: unknown[]) => validateClientDir(...args),
+  listClientInstallations: (...args: unknown[]) => listClientInstallations(...args),
+  launchClient: (...args: unknown[]) => launchClient(...args)
 }));
 
 const readyClient = {
@@ -63,6 +69,8 @@ describe("useClientLauncher local smoke bootstrap", () => {
     closeWindow.mockResolvedValue(undefined);
     minimizeWindow.mockResolvedValue(undefined);
     launchDefaultClient.mockResolvedValue(undefined);
+    launchClient.mockResolvedValue(undefined);
+    listClientInstallations.mockResolvedValue([readyClient]);
     reportLocalSmokeResult.mockResolvedValue(undefined);
     getLaunchReadiness.mockResolvedValue({
       client: null,
@@ -80,6 +88,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
 
     renderHook(() =>
       useClientLauncher({
+        activeGameId: "qmclient",
         appSettings: defaultAppSettings,
         localSmokeAutomation: {
           clientInstallDir: "D:/Missing/QmClient",
@@ -105,6 +114,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
 
     renderHook(() =>
       useClientLauncher({
+        activeGameId: "qmclient",
         appSettings: defaultAppSettings,
         localSmokeAutomation: {
           clientInstallDir: "D:/Missing/QmClient",
@@ -144,6 +154,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
 
     renderHook(() =>
       useClientLauncher({
+        activeGameId: "qmclient",
         appSettings: defaultAppSettings,
         localSmokeAutomation: {
           clientInstallDir: "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient",
@@ -177,6 +188,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
 
     const { result } = renderHook(() =>
       useClientLauncher({
+        activeGameId: "qmclient",
         appSettings: {
           ...defaultAppSettings,
           close_panel_after_launch: true
@@ -193,7 +205,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
 
     await result.current.handlePrimaryAction();
 
-    expect(launchDefaultClient).toHaveBeenCalledTimes(1);
+    expect(launchClient).toHaveBeenCalledTimes(1);
     expect(minimizeWindow).toHaveBeenCalledTimes(1);
   });
 
@@ -220,6 +232,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
 
     const { result } = renderHook(() =>
       useClientLauncher({
+        activeGameId: "qmclient",
         appSettings: {
           ...defaultAppSettings,
           close_panel_after_launch: true
@@ -238,7 +251,7 @@ describe("useClientLauncher local smoke bootstrap", () => {
       await result.current.handlePrimaryAction();
     });
 
-    expect(launchDefaultClient).toHaveBeenCalledTimes(1);
+    expect(launchClient).toHaveBeenCalledTimes(1);
     await waitFor(() => {
       expect(result.current.launcherState).toBe("running");
       expect(result.current.errorMessage).toContain("启动成功，但最小化启动器失败");

@@ -16,7 +16,7 @@ import { SettingsDialog, type SettingsSectionId } from "./components/settings/Se
 import { useAppSettings } from "./hooks/useAppSettings";
 import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { useClientLauncher } from "./hooks/useClientLauncher";
-import { isTauriRuntime } from "./lib/tauri";
+import { isTauriRuntime, convertFileSrc } from "./lib/tauri";
 import type { LocalSmokeAutomationConfig } from "./types";
 
 function localSmokeEnvEnabled(value: string | undefined) {
@@ -98,6 +98,40 @@ export default function App() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [launchProgress, setLaunchProgress] = useState(0);
 
+  const [customBgs, setCustomBgs] = useState<Record<string, { type: "default" | "image" | "video"; path: string }>>(() => {
+    try {
+      const saved = localStorage.getItem("ddnet_manager_custom_bgs");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [themeMode, setThemeMode] = useState<"dark" | "light">(() => {
+    return (localStorage.getItem("ddnet_manager_theme") as "dark" | "light") || "dark";
+  });
+
+  useEffect(() => {
+    if (themeMode === "light") {
+      document.documentElement.classList.add("theme-light");
+    } else {
+      document.documentElement.classList.remove("theme-light");
+    }
+  }, [themeMode]);
+
+  const handleCustomBgChange = (gameId: string, type: "default" | "image" | "video", path: string) => {
+    const nextBgs = {
+      ...customBgs,
+      [gameId]: { type, path }
+    };
+    setCustomBgs(nextBgs);
+    localStorage.setItem("ddnet_manager_custom_bgs", JSON.stringify(nextBgs));
+  };
+
+  const handleThemeChange = (theme: "dark" | "light") => {
+    setThemeMode(theme);
+    localStorage.setItem("ddnet_manager_theme", theme);
+  };
+
   const trackRef = useRef<HTMLDivElement | null>(null);
   const scrollTargetRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -113,9 +147,13 @@ export default function App() {
     launcherState,
     selectedClient
   } = useClientLauncher({
+    activeGameId,
     appSettings,
     localSmokeAutomation,
-    onOpenUpdateView: () => undefined,
+    onOpenUpdateView: () => {
+      setIsSettingsOpen(true);
+      setActiveSettingsSection("download");
+    },
     tauriRuntime
   });
   useAutoUpdate({
@@ -127,7 +165,23 @@ export default function App() {
 
   const activeGame = GAMES_DATA.find((game) => game.id === activeGameId) ?? GAMES_DATA[0];
   const displayedGame = GAMES_DATA.find((game) => game.id === displayedGameId) ?? activeGame;
-  const activeWallpaper = isLibraryOpen && hoveredGameId ? (GAMES_DATA.find((game) => game.id === hoveredGameId)?.bgImage ?? activeGame.bgImage) : activeGame.bgImage;
+  const currentBgConfig = useMemo(() => {
+    const targetGameId = isLibraryOpen && hoveredGameId ? hoveredGameId : activeGameId;
+    const defaultBg = (GAMES_DATA.find((game) => game.id === targetGameId) ?? activeGame).bgImage;
+    const custom = customBgs[targetGameId];
+    if (custom && custom.type !== "default" && custom.path) {
+      return {
+        type: custom.type,
+        path: convertFileSrc(custom.path),
+        fallbackUrl: defaultBg
+      };
+    }
+    return {
+      type: "default" as const,
+      path: defaultBg,
+      fallbackUrl: defaultBg
+    };
+  }, [isLibraryOpen, hoveredGameId, activeGameId, customBgs, activeGame]);
   const repeatedGames = useMemo(() => [...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA], []);
   const canLaunch = Boolean(launchReadiness?.can_launch) && launcherState === "ready";
   const primaryDisabled = !tauriRuntime || launcherState === "validating" || launcherState === "launching" || launcherState === "running";
@@ -280,12 +334,12 @@ export default function App() {
 
   const handleConfirmExit = () => {
     setIsExitAlertOpen(false);
-    void currentWindow()?.hide();
+    void currentWindow()?.close();
   };
 
   const handleMinimizeFromExit = () => {
     setIsExitAlertOpen(false);
-    void currentWindow()?.minimize();
+    void currentWindow()?.hide();
   };
 
   const selectGame = (gameId: string) => {
@@ -301,14 +355,29 @@ export default function App() {
         <div className="absolute inset-0 z-0 select-none pointer-events-none overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeWallpaper}
+              key={`${currentBgConfig.type}:${currentBgConfig.path}`}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.55 }}
               className="absolute inset-0"
             >
-              <img src={activeWallpaper} alt={`${activeGame.name} 背景`} className="w-full h-full object-cover select-none pointer-events-none" />
+              {currentBgConfig.type === "video" ? (
+                <video
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover select-none pointer-events-none"
+                  src={currentBgConfig.path}
+                />
+              ) : (
+                <img
+                  src={currentBgConfig.path}
+                  alt={`${activeGame.name} 背景`}
+                  className="w-full h-full object-cover select-none pointer-events-none"
+                />
+              )}
               <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/30 to-black/10" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-[#000000]/25 to-black/40" />
             </motion.div>
@@ -359,14 +428,14 @@ export default function App() {
 
           <div className="flex flex-col items-center w-full mb-2 select-none font-sans">
             <div className="relative group flex items-center justify-center w-full">
-              <div className={`absolute w-[44px] h-[44px] rounded-[13px] border-[2px] transition-all duration-200 pointer-events-none z-0 ${isLibraryOpen ? "border-black/65 opacity-100" : "border-black/35 opacity-0 group-hover:opacity-100"}`} />
+              <div className={`absolute w-[44px] h-[44px] rounded-[14px] border-[2px] transition-all duration-200 pointer-events-none z-0 ${isLibraryOpen ? "border-white/50 bg-[#1e2024]/40" : "border-white/10 group-hover:border-white/35"}`} />
               <motion.button
                 id="btn-all-games-sidebar"
                 type="button"
                 aria-label="全部游戏"
                 onClick={() => setIsLibraryOpen((value) => !value)}
                 whileTap={{ scale: 0.94 }}
-                className="w-9 h-9 rounded-[10px] flex items-center justify-center cursor-pointer transition-all duration-150 relative z-10 focus:outline-none bg-[#28292e] border-transparent"
+                className={`w-9 h-9 rounded-[11px] flex items-center justify-center cursor-pointer transition-all duration-150 relative z-10 focus:outline-none bg-[#24262b] border ${isLibraryOpen ? "border-white/20 bg-[#2b2d35]" : "border-white/5 hover:bg-[#2e3037] hover:border-white/15"}`}
               >
                 <svg viewBox="0 0 24 24" className={`w-[21px] h-[21px] fill-current text-white/55 transition-all duration-200 ${isLibraryOpen ? "text-white opacity-100 font-bold" : "group-hover:text-white group-hover:opacity-100"}`}>
                   <rect x="3" y="3" width="7" height="7" rx="2" />
@@ -387,7 +456,15 @@ export default function App() {
           <div className="relative z-40 h-16 w-full flex items-center justify-end px-8 select-none pointer-events-auto shrink-0" data-tauri-drag-region>
             <WindowControls
               onOpenSettings={() => setIsSettingsOpen(true)}
-              onCloseLauncher={() => setIsExitAlertOpen(true)}
+              onCloseLauncher={() => {
+                if (appSettings.close_behavior === "minimize_to_tray") {
+                  void currentWindow()?.hide();
+                } else if (appSettings.close_behavior === "exit_launcher") {
+                  void currentWindow()?.close();
+                } else {
+                  setIsExitAlertOpen(true);
+                }
+              }}
               onMinimize={() => void currentWindow()?.minimize()}
               isAudioOn={isAudioOn}
               onToggleAudio={() => setIsAudioOn((value) => !value)}
@@ -497,10 +574,19 @@ export default function App() {
                 accentColor={activeGame.accentColor}
                 onLaunchGame={() => void handleLaunchGame()}
                 onLocateGame={() => void handleBrowse()}
+                onGetGame={() => {
+                  if (activeGameId === "qmclient") {
+                    setIsSettingsOpen(true);
+                    setActiveSettingsSection("download");
+                  } else if (activeGameId === "ddnet") {
+                    window.open("https://ddrace.cn/downloads/", "_blank", "noreferrer");
+                  } else if (activeGameId === "ddnet-steam") {
+                    window.open("steam://store/412220", "_blank");
+                  }
+                }}
                 canLaunch={canLaunch}
                 disabled={primaryDisabled}
               />
-              {errorMessage ? <div className="mt-2 max-w-[280px] rounded-lg bg-red-500/12 px-3 py-2 text-center text-[11px] font-semibold text-red-200">{errorMessage}</div> : null}
             </motion.div>
 
             {isLibraryOpen ? (
@@ -614,7 +700,11 @@ export default function App() {
           launcherState={launcherState}
           clientPath={selectedClient?.install_dir ?? ""}
           selectedClientType={{ name: selectedClient?.display_name ?? "未设置" }}
-          backgroundMode="default"
+          customBgs={customBgs}
+          activeGameId={activeGameId}
+          onCustomBgChange={handleCustomBgChange}
+          themeMode={themeMode}
+          onThemeChange={handleThemeChange}
           errorMessage={errorMessage}
           settings={appSettings}
           settingsState={settingsState}
@@ -622,10 +712,8 @@ export default function App() {
           smokeAutomation={localSmokeAutomation}
           onUpdateSettings={updateAndSave}
           onClientPathChange={() => {}}
-          onBrowse={() => Promise.resolve()}
-          onValidate={() => Promise.resolve()}
-          onBackgroundImageSelect={() => Promise.resolve()}
-          onClearBackgroundImage={() => {}}
+          onBrowse={handleBrowse}
+          onValidate={handlePrimaryAction}
         />
 
         <AnimatePresence>

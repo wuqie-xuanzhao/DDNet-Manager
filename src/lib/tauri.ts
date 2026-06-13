@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc as tauriConvertFileSrc } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   AppUpdateCheck,
@@ -59,8 +59,8 @@ export function getDefaultClient(): Promise<ClientInstallation | null> {
   return invoke<ClientInstallation | null>("get_default_client");
 }
 
-export async function getLaunchReadiness(): Promise<LaunchReadiness> {
-  const client = await getDefaultClient();
+export async function getLaunchReadiness(targetClient?: ClientInstallation | null): Promise<LaunchReadiness> {
+  const client = targetClient !== undefined ? targetClient : await getDefaultClient();
   const checkedAt = new Date().toISOString();
 
   if (!client) {
@@ -177,3 +177,12 @@ export function getAppVersion(): Promise<string> {
 export function checkAppUpdate(): Promise<AppUpdateCheck> {
   return invoke<AppUpdateCheck>("check_app_update");
 }
+
+export function convertFileSrc(path: string): string {
+  try {
+    return tauriConvertFileSrc(path);
+  } catch {
+    return path;
+  }
+}
+

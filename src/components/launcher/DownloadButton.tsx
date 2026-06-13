@@ -11,6 +11,7 @@ interface DownloadButtonProps {
   canLaunch: boolean;
   disabled: boolean;
   onLocateGame: () => void;
+  onGetGame?: () => void;
 }
 
 type InstallStatus = 'uninstalled' | 'downloading' | 'paused' | 'verifying' | 'installed';
@@ -24,6 +25,7 @@ export default function DownloadButton({
   canLaunch,
   disabled,
   onLocateGame,
+  onGetGame,
 }: DownloadButtonProps) {
   const [status, setStatus] = useState<InstallStatus>(canLaunch ? 'installed' : 'uninstalled');
   const [progress, setProgress] = useState(0); // 0 to 100
@@ -146,11 +148,11 @@ export default function DownloadButton({
           >
             <motion.button
               id="btn-install-game"
-              onClick={handleStartDownload}
+              onClick={onGetGame || handleStartDownload}
               disabled={disabled}
               whileHover={{ scale: 1.03, y: -1 }}
               whileTap={{ scale: 0.97 }}
-              className="group/btn w-[172px] h-[52px] rounded-full flex items-center justify-start pl-[11px] pr-[16px] transition-all duration-200 cursor-pointer select-none no-underline border-none bg-[#fed330] hover:bg-[#252932] text-[#121319] hover:text-[#fed330] shadow-[0_4px_16px_rgba(254,211,48,0.25)] hover:shadow-[0_4px_16px_rgba(37,41,50,0.3)] focus:outline-none"
+              className="group/btn w-[196px] h-[52px] rounded-full flex items-center justify-start pl-[11px] pr-[16px] transition-all duration-200 cursor-pointer select-none no-underline border-none bg-[#fed330] hover:bg-[#252932] text-[#121319] hover:text-[#fed330] shadow-[0_4px_16px_rgba(254,211,48,0.25)] hover:shadow-[0_4px_16px_rgba(37,41,50,0.3)] focus:outline-none"
             >
               {/* Left circular panel enclosing the looping/bouncing downward arrow */}
               <div className="w-8 h-8 rounded-full bg-[#121319] group-hover/btn:bg-[#fed330] flex items-center justify-center mr-2.5 shrink-0 relative transition-colors duration-200">
@@ -175,16 +177,17 @@ export default function DownloadButton({
                   <polyline points="19 12 12 19 5 12" />
                 </motion.svg>
               </div>
-              <span className="font-extrabold text-[16.5px] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1">获取</span>
+              <span className="font-extrabold text-[16px] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1.5">获取游戏</span>
             </motion.button>
 
-            <div className="text-[13px] text-white/85 flex items-center space-x-1 font-sans">
+            <div className="text-[12px] text-white/60 flex items-center space-x-1 font-sans justify-center mt-1">
+              <span>已安装？</span>
               <button
                 id="locate-game-link"
                 onClick={onLocateGame}
-                className="text-[#fed330] hover:text-[#ffe055] font-semibold cursor-pointer transition-colors focus:outline-none bg-transparent border-none p-0 inline-block"
+                className="text-[#fed330] hover:text-[#ffe055] font-bold cursor-pointer transition-colors focus:outline-none bg-transparent border-none p-0 inline-block ml-0.5"
               >
-                定位
+                定位游戏
               </button>
             </div>
           </motion.div>
@@ -292,7 +295,6 @@ export default function DownloadButton({
               </div>
               <span className="font-extrabold text-[16.5px] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1">开始游戏</span>
             </motion.button>
-
           </motion.div>
         )}
       </AnimatePresence>

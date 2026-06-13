@@ -104,7 +104,11 @@ const mockSettings = {
   use_everything: false,
   close_panel_after_launch: true,
   auto_check_updates: false,
-  advanced_manifest_url: null
+  advanced_manifest_url: null,
+  autostart: false,
+  exit_game_show_launcher: true,
+  close_behavior: "minimize_to_tray",
+  allow_silent_update: true
 };
 const mockOnUpdateSettings = vi.fn().mockResolvedValue(undefined);
 
@@ -187,9 +191,9 @@ describe("UpdatePanel event ownership", () => {
       expect(validateClientDir).toHaveBeenCalledWith(
         "E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient"
       );
+      expect(screen.getByText("E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("E:/Coding/DDNet/DDNet-Manager/tmp/tauri-update-smoke/run/client-install/QmClient")).toBeInTheDocument();
     expect(listDownloadJobRecoveries).toHaveBeenCalledWith("client-smoke-persisted");
     expect(listDownloadJobRecoveries).not.toHaveBeenCalledWith("client-current");
     expect(getDefaultClient).not.toHaveBeenCalled();

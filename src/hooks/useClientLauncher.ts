@@ -4,10 +4,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { getErrorMessage } from "../lib/errors";
 import {
   getLaunchReadiness,
-  launchDefaultClient,
   reportLocalSmokeResult,
   upsertClientInstallation,
-  validateClientDir
+  validateClientDir,
+  listClientInstallations,
+  launchClient
 } from "../lib/tauri";
 import type {
   AppSettings,
@@ -84,13 +85,36 @@ async function closeSmokeWindowIfRequested(enabled: boolean) {
   }
 }
 
+function clientMatchesGameId(client: ClientInstallation, gameId: string): boolean {
+  if (gameId === "qmclient") {
+    return client.client_id === "qmclient" || client.client_id === "qmclient_nightly";
+  }
+  if (gameId === "ddnet") {
+    const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
+    const isSteam = client.install_dir.toLowerCase().includes("steamapps") || client.install_source === "steam";
+    return isDdnet && !isSteam;
+  }
+  if (gameId === "ddnet-steam") {
+    const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
+    const isSteam = client.install_dir.toLowerCase().includes("steamapps") || client.install_source === "steam";
+    return isDdnet && isSteam;
+  }
+  if (gameId === "third-party") {
+    const isQm = client.client_id === "qmclient" || client.client_id === "qmclient_nightly";
+    const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
+    return !isQm && !isDdnet;
+  }
+  return false;
+}
+
 export function useClientLauncher(params: {
+  activeGameId: string;
   appSettings: AppSettings;
   localSmokeAutomation: LocalSmokeAutomationConfig | null;
   onOpenUpdateView: () => void;
   tauriRuntime: boolean;
 }) {
-  const { appSettings, localSmokeAutomation, onOpenUpdateView, tauriRuntime } = params;
+  const { activeGameId, appSettings, localSmokeAutomation, onOpenUpdateView, tauriRuntime } = params;
   const [runtimeLauncherState, setRuntimeLauncherState] = useState<LauncherState>("unconfigured");
   const [clientPath, setClientPath] = useState("");
   const [selectedClient, setSelectedClient] = useState<ClientInstallation | null>(null);
@@ -131,7 +155,45 @@ export function useClientLauncher(params: {
     return readiness;
   }, []);
 
-  const refreshLaunchReadiness = useCallback(async () => applyReadiness(await getLaunchReadiness()), [applyReadiness]);
+  const refreshLaunchReadiness = useCallback(async () => {
+    if (!tauriRuntime) {
+      applyReadiness(browserPreviewReadiness);
+      return browserPreviewReadiness;
+    }
+
+    try {
+      const installations = await listClientInstallations();
+      const matched = installations.find((inst) => clientMatchesGameId(inst, activeGameId)) || null;
+
+      if (!matched) {
+        setSelectedClient(null);
+        setClientPath("");
+        setSelectedClientTypeId(activeGameId as ClientTypeId);
+        setRuntimeLauncherState("unconfigured");
+        setRuntimeErrorMessage("游戏未录入，请点击“获取”或“定位”游戏。");
+
+        const uninstalledReadiness: LaunchReadiness = {
+          client: null,
+          can_launch: false,
+          running: false,
+          status_label: "未配置",
+          user_message: "未配置",
+          blocking_reasons: ["未检测到对应的客户端安装"],
+          checked_at: new Date().toISOString()
+        };
+        setRuntimeLaunchReadiness(uninstalledReadiness);
+        return uninstalledReadiness;
+      }
+
+      const readiness = await getLaunchReadiness(matched);
+      applyReadiness(readiness);
+      return readiness;
+    } catch (error) {
+      const msg = getErrorMessage(error);
+      markInvalid(`刷新状态失败：${msg}`);
+      throw error;
+    }
+  }, [activeGameId, applyReadiness, tauriRuntime]);
 
   useEffect(() => {
     if (!tauriRuntime) {
@@ -140,12 +202,7 @@ export function useClientLauncher(params: {
 
     let alive = true;
 
-    void getLaunchReadiness()
-      .then((readiness) => {
-        if (alive) {
-          applyReadiness(readiness);
-        }
-      })
+    void refreshLaunchReadiness()
       .catch((error) => {
         if (alive) {
           setRuntimeErrorMessage(getErrorMessage(error));
@@ -155,7 +212,7 @@ export function useClientLauncher(params: {
     return () => {
       alive = false;
     };
-  }, [applyReadiness, tauriRuntime]);
+  }, [refreshLaunchReadiness, tauriRuntime]);
 
   const validateClientPath = useCallback(async (path: string, options?: { persistDefault?: boolean }) => {
     if (!tauriRuntime) {
@@ -202,9 +259,7 @@ export function useClientLauncher(params: {
       setSelectedClient(savedInstallation);
       setClientPath(savedInstallation.install_dir);
       setRuntimeLauncherState("ready");
-      if (shouldPersistDefault) {
-        await refreshLaunchReadiness();
-      }
+      await refreshLaunchReadiness();
       return true;
     } catch (error) {
       if (requestId !== validationRequestId.current) {
@@ -323,7 +378,7 @@ export function useClientLauncher(params: {
     setRuntimeErrorMessage(null);
 
     try {
-      await launchDefaultClient();
+      await launchClient(selectedClient.executable_path);
       let launchWarning: string | null = null;
       if (appSettings.close_panel_after_launch && tauriRuntime) {
         try {

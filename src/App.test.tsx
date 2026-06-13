@@ -10,13 +10,15 @@ const handlePrimaryAction = vi.fn();
 const handleValidate = vi.fn();
 const minimizeWindow = vi.fn();
 const closeWindow = vi.fn();
+const hideWindow = vi.fn();
 const saveSettings = vi.fn();
 const selectClientType = vi.fn();
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     close: closeWindow,
-    minimize: minimizeWindow
+    minimize: minimizeWindow,
+    hide: hideWindow
   })
 }));
 
@@ -132,7 +134,7 @@ describe("App launcher shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     fireEvent.click(screen.getByRole("button", { name: "确 认" }));
 
-    expect(minimizeWindow).toHaveBeenCalledTimes(1);
+    expect(hideWindow).toHaveBeenCalledTimes(1);
     expect(closeWindow).not.toHaveBeenCalled();
   });
 });

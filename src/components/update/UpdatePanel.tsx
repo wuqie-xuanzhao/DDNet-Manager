@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   checkClientUpdate,
@@ -138,6 +139,7 @@ export function UpdatePanel(props: {
   const smokeCloseWindowOnFinish = smokeAutomation?.closeWindowOnFinish ?? false;
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
   const [channel, setChannel] = useState("stable");
+  const [isChannelDropdownOpen, setIsChannelDropdownOpen] = useState(false);
   const [client, setClient] = useState<ClientInstallation | null>(null);
   const [update, setUpdate] = useState<ClientUpdateCheck | null>(null);
   const [job, setJob] = useState<DownloadJob | null>(null);
@@ -678,41 +680,94 @@ export function UpdatePanel(props: {
     <div className="space-y-5">
       <div className="space-y-3">
         <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">更新源</span>
+          <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">更新源</span>
         </div>
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
           <div className="flex items-center justify-between py-1">
-            <span className="text-xs font-medium text-[var(--app-text-secondary)]">类型</span>
-            <span className="text-xs font-bold text-[var(--app-text)]">
+            <span className="text-sm font-medium text-[var(--app-text-secondary)]">类型</span>
+            <span className="text-sm font-bold text-[var(--app-text)]">
               {props.settings.advanced_manifest_url !== null ? "自定义更新配置文件" : "内置客户端更新源"}
             </span>
           </div>
           <div className="border-t border-[var(--app-border-subtle)]" />
-          <div className="flex items-center justify-between py-1">
-            <label className="text-xs font-medium text-[var(--app-text-secondary)]" htmlFor="channel-select">更新渠道</label>
-            <select
-              id="channel-select"
-              value={channel}
-              onChange={(event) => { resetResult(); setChannel(event.target.value); }}
-              disabled={isBusy}
-              className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-2 py-1 text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors cursor-pointer w-32"
-            >
-              <option value="stable">stable (稳定版)</option>
-              <option value="nightly">nightly (测试版)</option>
-            </select>
+          <div className="flex items-center justify-between py-1 relative">
+            <span className="text-sm font-medium text-[var(--app-text-secondary)]">更新渠道</span>
+            <div className="relative">
+              <button
+                id="channel-select"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded={isChannelDropdownOpen}
+                onClick={() => setIsChannelDropdownOpen((prev) => !prev)}
+                disabled={isBusy}
+                className="bg-[#1f2229] border-[1.5px] border-[#fed330] hover:bg-white/5 rounded-full px-4 py-1.5 text-sm text-[#fed330] font-semibold flex items-center justify-between space-x-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <span>{channel === "stable" ? "stable (稳定版)" : "nightly (测试版)"}</span>
+                <svg
+                  viewBox="0 0 24 24"
+                  className={`w-3.5 h-3.5 fill-none stroke-current stroke-[3] transition-transform duration-200 ${
+                    isChannelDropdownOpen ? "rotate-180" : ""
+                  }`}
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <AnimatePresence>
+                {isChannelDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40 cursor-default"
+                      onClick={() => setIsChannelDropdownOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: -8 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: -8 }}
+                      transition={{ duration: 0.15, ease: "easeOut" }}
+                      className="absolute right-0 mt-1.5 w-44 bg-[#1f2229] border border-[#fed330]/30 rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] py-1.5 z-50 overflow-hidden"
+                    >
+                      {[
+                        { value: "stable", label: "stable (稳定版)" },
+                        { value: "nightly", label: "nightly (测试版)" }
+                      ].map((opt) => {
+                        const isSelected = channel === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              resetResult();
+                              setChannel(opt.value);
+                              setIsChannelDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2 text-sm font-semibold transition-colors duration-150 ${
+                              isSelected
+                                ? "bg-white/10 text-white font-bold"
+                                : "text-[#c8c9cc] hover:bg-white/5 hover:text-white"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">自定义更新配置</span>
+          <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">自定义更新配置</span>
         </div>
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3">
           <div className="flex items-start justify-between py-1">
             <div className="space-y-1">
-              <span className="text-xs font-medium text-[var(--app-text-secondary)] block">使用自定义更新源 (高级)</span>
-              <span className="text-[10px] text-[var(--app-text-dim)] block leading-relaxed max-w-[280px]">
+              <span className="text-sm font-medium text-[var(--app-text-secondary)] block">使用自定义更新源 (高级)</span>
+              <span className="text-xs text-[var(--app-text-dim)] block leading-relaxed max-w-[280px]">
                 启用后将使用自定义的 Manifest JSON 配置文件作为客户端更新源，通常用于第三方或开发版客户端。
               </span>
             </div>
@@ -729,15 +784,32 @@ export function UpdatePanel(props: {
                 });
               }}
               disabled={isBusy}
-              className={`w-10 h-5 rounded-full flex items-center transition-colors px-[3px] cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
-                props.settings.advanced_manifest_url !== null ? "bg-[var(--app-accent)]" : "bg-[var(--app-surface)] border border-[var(--app-border-subtle)]"
+              className={`w-11 h-6 rounded-full flex items-center transition-all duration-200 px-[3px] cursor-pointer border-[2.5px] bg-[#1f2229] disabled:cursor-not-allowed disabled:opacity-55 ${
+                props.settings.advanced_manifest_url !== null
+                  ? "border-[#fed330]"
+                  : "border-[#4e525a]"
               }`}
             >
               <div
-                className={`w-[14px] h-[14px] rounded-full transition-transform bg-white shadow-sm ${
-                  props.settings.advanced_manifest_url !== null ? "translate-x-5" : "translate-x-0"
+                className={`w-3.5 h-3.5 rounded-full transition-all duration-200 flex items-center justify-center shadow-sm ${
+                  props.settings.advanced_manifest_url !== null
+                    ? "translate-x-5 bg-white text-[#111215]"
+                    : "translate-x-0 bg-[#c8c9cc] text-transparent"
                 }`}
-              />
+              >
+                {props.settings.advanced_manifest_url !== null && (
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="w-2.5 h-2.5 stroke-[4.5]"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </div>
             </button>
           </div>
           {props.settings.advanced_manifest_url !== null ? (
@@ -754,7 +826,7 @@ export function UpdatePanel(props: {
                   });
                 }}
                 disabled={isBusy}
-                className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
+                className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
                 placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
                 spellCheck={false}
               />
@@ -765,7 +837,7 @@ export function UpdatePanel(props: {
 
       <div className="space-y-3">
         <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">网络路由</span>
+          <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">网络路由</span>
         </div>
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
           <div className="flex flex-wrap gap-2">
@@ -780,7 +852,7 @@ export function UpdatePanel(props: {
                     void props.onUpdateSettings(updateNetworkRoute(props.settings, mode, activeRouteUrl));
                   }}
                   disabled={isBusy}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold tracking-wide transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
+                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold tracking-wide transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
                     active
                       ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
                       : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-black/20"
@@ -801,7 +873,7 @@ export function UpdatePanel(props: {
                   void props.onUpdateSettings(updateNetworkRoute(props.settings, activeRouteMode, event.target.value));
                 }}
                 disabled={isBusy}
-                className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-xs text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
+                className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
                 placeholder={activeRouteMode === "proxy_prefix" ? "填写你的代理前缀地址 (如 https://proxy.example/)" : "填写包含 {url} 的镜像模板"}
                 spellCheck={false}
               />
@@ -813,12 +885,12 @@ export function UpdatePanel(props: {
       <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
         <div className="space-y-3">
           <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-            <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">默认客户端</span>
+            <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">默认客户端</span>
           </div>
           <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4">
             <div className="text-sm font-bold text-[var(--app-text)]">{visibleClient?.display_name ?? "未设置"}</div>
-            <div className="mt-1 break-all text-[10px] text-[var(--app-text-dim)] font-mono">{visibleClient?.install_dir ?? "未设置"}</div>
-            <div className="mt-2 text-[10px] font-bold text-[var(--app-accent)]">
+            <div className="mt-1 break-all text-xs text-[var(--app-text-dim)] font-mono">{visibleClient?.install_dir ?? "未设置"}</div>
+            <div className="mt-2 text-xs font-bold text-[var(--app-accent)]">
               {visibleClient ? `当前版本：${visibleClient.version ?? "未知"}` : "-"}
             </div>
           </div>
@@ -826,7 +898,7 @@ export function UpdatePanel(props: {
             type="button"
             onClick={() => void check()}
             disabled={!visibleClient || isBusy}
-            className="w-full h-10 rounded-lg bg-[var(--app-accent)] text-black hover:bg-cyan-400 text-xs font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-45"
+            className="w-full h-10 rounded-lg bg-[var(--app-accent)] text-black hover:bg-cyan-400 text-sm font-bold cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-45"
           >
             {isBusy ? "请稍候..." : "检查更新"}
           </button>
@@ -834,11 +906,11 @@ export function UpdatePanel(props: {
 
         <div className="space-y-3">
           <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-            <span className="text-[var(--app-text-muted)] text-xs font-bold uppercase tracking-wider">可用更新</span>
+            <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">可用更新</span>
           </div>
           {update?.action === "open_url" ? (
             <div className="mt-3 rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-black text-[var(--app-text-muted)]">
                 <span className="rounded-full bg-black/20 px-3 py-1">{updateSourceLabel(update.source_kind)}</span>
                 {update.latest_version ? (
                   <span className="rounded-full bg-black/20 px-3 py-1">{update.latest_version}</span>
@@ -855,7 +927,7 @@ export function UpdatePanel(props: {
                       window.open(update.action_url, "_blank", "noreferrer");
                     }
                   }}
-                  className="mt-4 inline-flex h-10 items-center rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer"
+                  className="mt-4 inline-flex h-10 items-center rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer"
                 >
                   打开上游页面
                 </button>
@@ -863,20 +935,20 @@ export function UpdatePanel(props: {
             </div>
           ) : update ? (
             <div className="mt-3 rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-black text-[var(--app-text-muted)]">
                 <span className="rounded-full bg-black/20 px-3 py-1">{update.channel}</span>
                 <span className="rounded-full bg-black/20 px-3 py-1">{update.latest_version}</span>
                 <span className="rounded-full bg-black/20 px-3 py-1">{update.asset.platform}</span>
                 <span className="rounded-full bg-black/20 px-3 py-1">{formatAssetSize(update.asset.size)}</span>
               </div>
-              <div className="mt-3 text-xs font-black text-[var(--app-text-muted)]">
+              <div className="mt-3 text-sm font-black text-[var(--app-text-muted)]">
                 {update.needs_update ? "可更新" : "已最新"}
               </div>
               <button
                 type="button"
                 onClick={() => void download()}
                 disabled={!update.needs_update || isBusy}
-                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
               >
                 开始下载
               </button>
@@ -889,26 +961,26 @@ export function UpdatePanel(props: {
 
           {job ? (
             <div className="mt-4 rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-              <div className="flex items-center justify-between text-xs font-black text-[var(--app-text-muted)]">
+              <div className="flex items-center justify-between text-sm font-black text-[var(--app-text-muted)]">
                 <span>{downloadStatusLabel(job.status)}</span>
                 <span>{percent}%</span>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/20">
                 <div className="h-full bg-[var(--app-accent)] transition-all" style={{ width: `${percent}%` }} />
               </div>
-              <div className="mt-3 text-xs leading-6 text-[var(--app-text-muted)]">
+              <div className="mt-3 text-sm leading-6 text-[var(--app-text-muted)]">
                 {job.status === "verified"
                   ? "已校验"
                   : job.status === "installing"
                     ? "安装中"
                     : "已下载"}
               </div>
-              {job.error ? <div className="mt-2 text-xs font-bold text-red-400">{getUpdateErrorMessage(job.error)}</div> : null}
+              {job.error ? <div className="mt-2 text-sm font-bold text-red-400">{getUpdateErrorMessage(job.error)}</div> : null}
               <button
                 type="button"
                 onClick={() => void installJob(job.id)}
                 disabled={job.status !== "verified" || isBusy}
-                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
               >
                 安装更新
               </button>
@@ -921,22 +993,22 @@ export function UpdatePanel(props: {
         <div className="rounded-xl bg-black/20 p-4 border border-[var(--app-border-subtle)]">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-black text-[var(--app-text-muted)]">恢复任务</div>
+              <div className="text-sm font-black text-[var(--app-text-muted)]">恢复任务</div>
             </div>
-            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-[11px] font-black text-black">{visibleRecoveries.length}</span>
+            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-xs font-black text-black">{visibleRecoveries.length}</span>
           </div>
           {visibleRecoveries.length > 0 ? (
             <div className="mt-3 grid gap-3">
               {visibleRecoveries.map((recovery) => (
                 <div key={recovery.job.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-black text-[var(--app-text-muted)]">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
                     <span className="rounded-full bg-black/20 px-3 py-1">{recovery.job.version}</span>
                     <span className="rounded-full bg-black/20 px-3 py-1">{downloadStatusLabel(recovery.job.status)}</span>
                     <span className="rounded-full bg-black/20 px-3 py-1">{recoveryStateLabel(recovery.cache_state)}</span>
                   </div>
                   <div className="mt-3 text-sm font-bold leading-6 text-[var(--app-text)]">{recovery.user_message}</div>
-                  <div className="mt-2 break-all text-xs font-semibold text-[var(--app-text-dim)]">{recovery.job.cache_path}</div>
-                  <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] font-black text-[var(--app-text-muted)]">
+                  <div className="mt-2 break-all text-sm font-semibold text-[var(--app-text-dim)]">{recovery.job.cache_path}</div>
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-black text-[var(--app-text-muted)]">
                     <span>已下载 {formatAssetSize(recovery.job.downloaded_bytes)} / {formatAssetSize(recovery.job.size)}</span>
                     <span>{recovery.can_retry ? "建议重新下载" : "无需重下"}</span>
                   </div>
@@ -945,7 +1017,7 @@ export function UpdatePanel(props: {
                       type="button"
                       onClick={() => void installJob(recovery.job.id, recovery.job)}
                       disabled={isBusy}
-                      className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-xs font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                      className="mt-4 h-10 rounded-lg bg-[var(--app-accent)] px-4 text-sm font-bold text-black hover:bg-cyan-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
                     >
                       继续安装
                     </button>
@@ -963,26 +1035,26 @@ export function UpdatePanel(props: {
         <div className="rounded-xl bg-black/20 p-4 border border-[var(--app-border-subtle)]">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <div className="text-xs font-black text-[var(--app-text-muted)]">安装历史</div>
+              <div className="text-sm font-black text-[var(--app-text-muted)]">安装历史</div>
             </div>
-            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-[11px] font-black text-black">{visibleInstallHistory.length}</span>
+            <span className="rounded-full bg-[var(--app-accent)] px-3 py-1 text-xs font-black text-black">{visibleInstallHistory.length}</span>
           </div>
           {visibleInstallHistory.length > 0 ? (
             <div className="mt-3 grid gap-3">
               {visibleInstallHistory.map((record) => (
                 <div key={record.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-black text-[var(--app-text-muted)]">
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
                     <span className="rounded-full bg-black/20 px-3 py-1">{record.version}</span>
-                    <span className={`rounded-full px-3 py-1 border ${record.status === "completed" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-red-500/15 text-red-400 border-red-500/30"}`}>
+                    <span className={`rounded-full px-3 py-1 text-xs border ${record.status === "completed" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-red-500/15 text-red-400 border-red-500/30"}`}>
                       {installHistoryStatusLabel(record.status)}
                     </span>
                     <span className="rounded-full bg-black/20 px-3 py-1">{record.package_kind}</span>
                   </div>
-                  <div className="mt-3 text-xs font-bold text-[var(--app-text-muted)]">完成时间：{formatCompletedAt(record.completed_at)}</div>
-                  <div className="mt-2 break-all text-xs font-semibold text-[var(--app-text-dim)]">
+                  <div className="mt-3 text-sm font-bold text-[var(--app-text-muted)]">完成时间：{formatCompletedAt(record.completed_at)}</div>
+                  <div className="mt-2 break-all text-sm font-semibold text-[var(--app-text-dim)]">
                     回滚目录：{record.rollback_path ?? "未记录"}
                   </div>
-                  {record.error ? <div className="mt-2 text-xs font-bold text-red-400">{getUpdateErrorMessage(record.error)}</div> : null}
+                  {record.error ? <div className="mt-2 text-sm font-bold text-red-400">{getUpdateErrorMessage(record.error)}</div> : null}
                 </div>
               ))}
             </div>
@@ -994,8 +1066,8 @@ export function UpdatePanel(props: {
         </div>
       </div>
 
-      {visibleNotice ? <div className="rounded-xl border border-yellow-400/20 bg-[var(--app-accent)]/5 px-3 py-2 text-xs font-semibold text-[var(--app-accent)]">{visibleNotice}</div> : null}
-      {visibleError ? <div className="rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2 text-xs font-semibold text-red-400">{visibleError}</div> : null}
+      {visibleNotice ? <div className="rounded-xl border border-yellow-400/20 bg-[var(--app-accent)]/5 px-3 py-2 text-sm font-semibold text-[var(--app-accent)]">{visibleNotice}</div> : null}
+      {visibleError ? <div className="rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2 text-sm font-semibold text-red-400">{visibleError}</div> : null}
     </div>
   );
 }
