@@ -99,6 +99,10 @@ export type AppSettings = {
   close_panel_after_launch: boolean;
   auto_check_updates: boolean;
   advanced_manifest_url: string | null;
+  autostart: boolean;
+  exit_game_show_launcher: boolean;
+  close_behavior: string;
+  allow_silent_update: boolean;
 };
 
 export type LocalSmokeResultStatus = "succeeded" | "failed";

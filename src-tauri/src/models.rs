@@ -235,6 +235,18 @@ pub struct AppSettings {
     pub auto_check_updates: bool,
     /// 高级 manifest 调试入口地址。
     pub advanced_manifest_url: Option<String>,
+    /// 是否开机自动启动。
+    #[serde(default = "default_autostart")]
+    pub autostart: bool,
+    /// 退出游戏后是否自动弹出启动器主界面。
+    #[serde(default = "default_exit_game_show_launcher")]
+    pub exit_game_show_launcher: bool,
+    /// 关闭主窗口的行为。
+    #[serde(default = "default_close_behavior")]
+    pub close_behavior: String,
+    /// 是否允许静默更新。
+    #[serde(default = "default_allow_silent_update")]
+    pub allow_silent_update: bool,
 }
 
 /// 表示本地 smoke 自动验收最终结果。
@@ -268,11 +280,31 @@ impl Default for AppSettings {
             close_panel_after_launch: default_close_panel_after_launch(),
             auto_check_updates: false,
             advanced_manifest_url: None,
+            autostart: default_autostart(),
+            exit_game_show_launcher: default_exit_game_show_launcher(),
+            close_behavior: default_close_behavior(),
+            allow_silent_update: default_allow_silent_update(),
         }
     }
 }
 
 fn default_close_panel_after_launch() -> bool {
+    true
+}
+
+fn default_autostart() -> bool {
+    false
+}
+
+fn default_exit_game_show_launcher() -> bool {
+    true
+}
+
+fn default_close_behavior() -> String {
+    "ask".to_string()
+}
+
+fn default_allow_silent_update() -> bool {
     true
 }
 

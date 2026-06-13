@@ -130,10 +130,55 @@ pub fn get_default_client(app: AppHandle) -> Result<Option<ClientInstallation>, 
     registry_for_app(&app)?.get_default_client()
 }
 
+fn monitor_client_exit(app: AppHandle, executable_path: String) {
+    tokio::spawn(async move {
+        // 先等 2 秒，确保进程已经初始化启动
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let path = std::path::PathBuf::from(&executable_path);
+
+        let mut was_running = false;
+        for _ in 0..60 {
+            if let Ok(true) = crate::process::is_client_running(&path) {
+                was_running = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        if !was_running {
+            return;
+        }
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            match crate::process::is_client_running(&path) {
+                Ok(false) => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
+
+        if let Ok(registry) = registry_for_app(&app) {
+            if let Ok(settings) = registry.load_app_settings() {
+                if settings.exit_game_show_launcher {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.unminimize();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// 启动指定路径的客户端可执行文件。
 #[tauri::command]
-pub fn launch_client(path: String) -> Result<(), String> {
-    crate::process::launch_executable(&path)
+pub fn launch_client(app: AppHandle, path: String) -> Result<(), String> {
+    crate::process::launch_executable(&path)?;
+    monitor_client_exit(app, path);
+    Ok(())
 }
 
 /// 重新验证并启动默认客户端。
@@ -163,6 +208,8 @@ pub fn launch_default_client(app: AppHandle) -> Result<(), String> {
         status: probe.status,
         message: &probe.message,
     })?;
+
+    monitor_client_exit(app, verified.executable_path.clone());
     Ok(())
 }
 
@@ -172,10 +219,55 @@ pub fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     registry_for_app(&app)?.load_app_settings()
 }
 
+#[cfg(target_os = "windows")]
+fn set_autostart_registry(enabled: bool) -> Result<(), String> {
+    let exe_path =
+        std::env::current_exe().map_err(|e| format!("Failed to get current exe path: {}", e))?;
+    let exe_str = exe_path.to_string_lossy().to_string();
+
+    let status = if enabled {
+        std::process::Command::new("reg")
+            .args([
+                "add",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "/v",
+                "DDNetManager",
+                "/t",
+                "REG_SZ",
+                "/d",
+                &exe_str,
+                "/f",
+            ])
+            .status()
+    } else {
+        std::process::Command::new("reg")
+            .args([
+                "delete",
+                "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                "/v",
+                "DDNetManager",
+                "/f",
+            ])
+            .status()
+    };
+
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(_) => Err("reg command returned non-zero status".to_string()),
+        Err(e) => Err(format!("Failed to run reg command: {}", e)),
+    }
+}
+
 /// 保存 MVP 应用设置，并立即成为后续后端命令使用的配置。
 #[tauri::command]
 pub fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
     registry_for_app(&app)?.save_app_settings(&settings)?;
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = set_autostart_registry(settings.autostart) {
+            println!("Failed to set autostart registry: {}", e);
+        }
+    }
     Ok(settings)
 }
 
