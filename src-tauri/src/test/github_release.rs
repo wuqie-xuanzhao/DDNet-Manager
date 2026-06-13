@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use super::{
-    build_update_asset, normalize_release_version, parse_github_sha256_digest, GitHubReleaseAsset,
-    GitHubReleaseCheck, ReleaseSelection,
+    build_update_asset, normalize_release_version, parse_expanded_assets_digests,
+    parse_github_sha256_digest, GitHubReleaseAsset, GitHubReleaseCheck, ReleaseSelection,
 };
 
 #[test]
@@ -23,17 +25,96 @@ fn normalizes_release_version_prefix() {
 }
 
 #[test]
-fn missing_digest_returns_manual_release_action() {
-    let result = build_update_asset(ReleaseSelection {
-        platform: "windows-x86_64".to_string(),
-        tag_name: "v2.62.4".to_string(),
-        asset: GitHubReleaseAsset {
-            name: "QmClient-windows.zip".to_string(),
-            browser_download_url: "https://github.com/example/release.zip".to_string(),
-            size: 42,
-            digest: None,
+fn parse_expanded_assets_digests_maps_asset_name_to_sha256() {
+    // GitHub expanded_assets 端点返回的 HTML 片段结构（脱敏简化）。
+    // digest 只出现在 clipboard-copy 元素的 aria-label + value 属性对里。
+    let html = r#"
+        <li>
+            <a href="/o/r/releases/download/v1/QmClient-windows.zip"><span class="text-bold">QmClient-windows.zip</span></a>
+            <clipboard-copy aria-label="Copy to clipboard digest for QmClient-windows.zip" value="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"></clipboard-copy>
+        </li>
+        <li>
+            <a href="/o/r/releases/download/v1/QmClient-android.apk"><span class="text-bold">QmClient-android.apk</span></a>
+            <clipboard-copy aria-label="Copy to clipboard digest for QmClient-android.apk" value="sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"></clipboard-copy>
+        </li>
+    "#;
+    let map = parse_expanded_assets_digests(html);
+    assert_eq!(
+        map.get("QmClient-windows.zip").map(String::as_str),
+        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(
+        map.get("QmClient-android.apk").map(String::as_str),
+        Some("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210")
+    );
+}
+
+#[test]
+fn parse_expanded_assets_digests_skips_assets_without_digest() {
+    let html = r#"
+        <li>
+            <a href="/o/r/releases/download/v1/no-digest.zip"><span class="text-bold">no-digest.zip</span></a>
+        </li>
+        <clipboard-copy aria-label="Copy to clipboard digest for with-digest.zip" value="sha256:1111111111111111111111111111111111111111111111111111111111111111"></clipboard-copy>
+    "#;
+    let map = parse_expanded_assets_digests(html);
+    assert!(map.get("no-digest.zip").is_none());
+    assert_eq!(
+        map.get("with-digest.zip").map(String::as_str),
+        Some("1111111111111111111111111111111111111111111111111111111111111111")
+    );
+}
+
+#[test]
+fn build_update_asset_prefers_expanded_assets_digest() {
+    let mut digests = HashMap::new();
+    digests.insert(
+        "QmClient-windows.zip".to_string(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+    );
+    let result = build_update_asset(
+        ReleaseSelection {
+            platform: "windows-x86_64".to_string(),
+            tag_name: "v2.62.4".to_string(),
+            asset: GitHubReleaseAsset {
+                name: "QmClient-windows.zip".to_string(),
+                browser_download_url: "https://github.com/example/release.zip".to_string(),
+                size: 42,
+                digest: None,
+            },
         },
-    })
+        &digests,
+    )
+    .expect("应返回更新检查结果")
+    .expect("应存在匹配资产");
+
+    match result {
+        GitHubReleaseCheck::Download { version, asset } => {
+            assert_eq!(version, "2.62.4");
+            assert_eq!(
+                asset.sha256,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            );
+        }
+        GitHubReleaseCheck::Manual { .. } => panic!("expanded digest 存在时应返回下载动作"),
+    }
+}
+
+#[test]
+fn missing_digest_returns_manual_release_action() {
+    let result = build_update_asset(
+        ReleaseSelection {
+            platform: "windows-x86_64".to_string(),
+            tag_name: "v2.62.4".to_string(),
+            asset: GitHubReleaseAsset {
+                name: "QmClient-windows.zip".to_string(),
+                browser_download_url: "https://github.com/example/release.zip".to_string(),
+                size: 42,
+                digest: None,
+            },
+        },
+        &HashMap::new(),
+    )
     .expect("缺少 digest 应返回手动动作")
     .expect("应存在匹配资产");
 

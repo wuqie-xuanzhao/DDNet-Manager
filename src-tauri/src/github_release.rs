@@ -1,6 +1,7 @@
 use crate::client_catalog::ClientCatalogEntry;
 use crate::models::{NetworkRouteConfig, UpdateAsset};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::Duration;
 
 const GITHUB_API_BASE: &str = "https://api.github.com/repos";
@@ -98,14 +99,18 @@ pub async fn check_latest_release(
     };
 
     let release = fetch_latest_github_release(owner, repo, route).await?;
+    let digests = fetch_expanded_assets_digests(owner, repo, &release.tag_name, route)
+        .await
+        .unwrap_or_default();
 
-    select_release_asset(entry, platform, release)
+    select_release_asset(entry, platform, release, &digests)
 }
 
 fn select_release_asset(
     entry: &ClientCatalogEntry,
     platform: &str,
     release: GitHubReleaseResponse,
+    digests: &HashMap<String, String>,
 ) -> Result<Option<GitHubReleaseCheck>, String> {
     let patterns = asset_patterns_for_platform(entry, platform);
     if patterns.is_empty() {
@@ -120,21 +125,27 @@ fn select_release_asset(
         return Ok(None);
     };
 
-    build_update_asset(ReleaseSelection {
-        platform: platform.to_string(),
-        tag_name: release.tag_name,
-        asset,
-    })
+    build_update_asset(
+        ReleaseSelection {
+            platform: platform.to_string(),
+            tag_name: release.tag_name,
+            asset,
+        },
+        digests,
+    )
 }
 
-fn build_update_asset(selection: ReleaseSelection) -> Result<Option<GitHubReleaseCheck>, String> {
+fn build_update_asset(
+    selection: ReleaseSelection,
+    digests: &HashMap<String, String>,
+) -> Result<Option<GitHubReleaseCheck>, String> {
     let version = normalize_release_version(&selection.tag_name);
-    let Some(sha256) = selection
-        .asset
-        .digest
-        .as_deref()
-        .and_then(parse_github_sha256_digest)
-    else {
+    // 优先用 expanded_assets 的 digest（标准 release API 默认不返回），回退到 asset.digest
+    let sha256 = digests
+        .get(&selection.asset.name)
+        .cloned()
+        .or_else(|| selection.asset.digest.as_deref().and_then(parse_github_sha256_digest));
+    let Some(sha256) = sha256 else {
         return Ok(Some(GitHubReleaseCheck::Manual {
             version,
             message: "更新资产缺少 sha256，自动安装已禁用，请打开 Release 页面手动下载。"
@@ -186,6 +197,71 @@ fn parse_github_sha256_digest(input: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// 从 GitHub expanded_assets HTML 片段解析 asset 名到 sha256 digest 的映射。
+///
+/// expanded_assets 端点返回 HTML（非 JSON），digest 只出现在每个 asset 的
+/// `clipboard-copy` 元素属性对里：`aria-label="Copy to clipboard digest for {name}"`
+/// 配 `value="sha256:{digest}"`。这里用稳定属性锚点做轻量解析，避免引入 HTML 依赖。
+pub fn parse_expanded_assets_digests(html: &str) -> HashMap<String, String> {
+    const LABEL_PREFIX: &str = "aria-label=\"Copy to clipboard digest for ";
+    const VALUE_PREFIX: &str = "value=\"sha256:";
+
+    let mut map = HashMap::new();
+    for chunk in html.split(LABEL_PREFIX) {
+        // LABEL_PREFIX 后紧跟 asset 名，到第一个 "
+        let Some((name, _)) = chunk.split_once('"') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() || name.contains('<') || name.contains('>') {
+            continue;
+        }
+        // 同一 chunk 内找 value="sha256:..."，取 64 位十六进制
+        let Some(pos) = chunk.find(VALUE_PREFIX) else {
+            continue;
+        };
+        let after = &chunk[pos + VALUE_PREFIX.len()..];
+        let digest: String = after.chars().take(64).collect();
+        if digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()) {
+            map.insert(name.to_string(), digest.to_ascii_lowercase());
+        }
+    }
+    map
+}
+
+/// 拉取 GitHub expanded_assets 页面并解析 asset 名到 sha256 digest 的映射。
+///
+/// expanded_assets 端点 `https://github.com/{owner}/{repo}/releases/expanded_assets/{tag}`
+/// 返回 HTML，包含标准 release API 不提供的 digest。失败时调用方应回退空映射，
+/// 不应阻塞更新检查主流程。
+async fn fetch_expanded_assets_digests(
+    owner: &str,
+    repo: &str,
+    tag: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<HashMap<String, String>, String> {
+    let url = format!("https://github.com/{owner}/{repo}/releases/expanded_assets/{tag}");
+    let final_url = crate::manifest::build_url_with_route(&url, route)?;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent(USER_AGENT)
+        .build()
+        .map_err(|error| format!("failed to create expanded-assets client: {error}"))?;
+
+    let html = client
+        .get(final_url)
+        .send()
+        .await
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| format!("failed to fetch expanded-assets: {error}"))?
+        .text()
+        .await
+        .map_err(|error| format!("failed to read expanded-assets body: {error}"))?;
+
+    Ok(parse_expanded_assets_digests(&html))
 }
 
 fn normalize_release_version(tag_name: &str) -> String {
