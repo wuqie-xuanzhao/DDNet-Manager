@@ -112,9 +112,7 @@ describe("resolveUpdateManifestInput", () => {
     expect(
       resolveUpdateManifestInput({
         smokeEnabled: true,
-        smokeManifestUrl: "https://example.com/smoke.json",
-        useManifestSource: false,
-        manifestUrl: ""
+        smokeManifestUrl: "https://example.com/smoke.json"
       })
     ).toEqual({
       useManifestSource: true,

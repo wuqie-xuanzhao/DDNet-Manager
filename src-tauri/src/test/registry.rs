@@ -224,9 +224,6 @@ fn registry_persists_app_settings() {
         use_everything: true,
         close_panel_after_launch: true,
         auto_check_updates: true,
-        advanced_manifest_url: Some(
-            "https://gitee.com/example/manifest/raw/main/ddnet.json".to_string(),
-        ),
         autostart: false,
         exit_game_show_launcher: true,
         close_behavior: "minimize_to_tray".to_string(),
@@ -255,7 +252,6 @@ fn registry_does_not_persist_github_token_in_app_settings_json() {
         use_everything: false,
         close_panel_after_launch: true,
         auto_check_updates: false,
-        advanced_manifest_url: None,
         autostart: false,
         exit_game_show_launcher: true,
         close_behavior: "minimize_to_tray".to_string(),

@@ -54,7 +54,7 @@ describe("useAppSettings", () => {
       result.current.changeSettings({
         ...defaultAppSettings,
         auto_check_updates: false,
-        advanced_manifest_url: "https://example.com/manifest.json"
+        use_everything: true
       });
     });
 
@@ -69,7 +69,7 @@ describe("useAppSettings", () => {
     expect(result.current.appSettings).toEqual({
       ...defaultAppSettings,
       auto_check_updates: false,
-      advanced_manifest_url: "https://example.com/manifest.json"
+      use_everything: true
     });
   });
 });

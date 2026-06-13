@@ -160,9 +160,7 @@ export function UpdatePanel(props: {
 
   const manifestInput = resolveUpdateManifestInput({
     smokeEnabled,
-    smokeManifestUrl,
-    useManifestSource: props.settings.advanced_manifest_url !== null,
-    manifestUrl: props.settings.advanced_manifest_url ?? ""
+    smokeManifestUrl
   });
   const activeUseManifestSource = manifestInput.useManifestSource;
   const activeManifestUrl = manifestInput.manifestUrl;
@@ -728,9 +726,7 @@ export function UpdatePanel(props: {
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
           <div className="flex items-center justify-between py-1">
             <span className="text-sm font-medium text-[var(--app-text-secondary)]">类型</span>
-            <span className="text-sm font-bold text-[var(--app-text)]">
-              {props.settings.advanced_manifest_url !== null ? "自定义更新配置文件" : "内置客户端更新源"}
-            </span>
+            <span className="text-sm font-bold text-[var(--app-text)]">内置客户端更新源</span>
           </div>
           <div className="border-t border-[var(--app-border-subtle)]" />
           <div className="flex items-center justify-between py-1 relative">
@@ -799,82 +795,6 @@ export function UpdatePanel(props: {
               </AnimatePresence>
             </div>
           </div>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">自定义更新配置</span>
-        </div>
-        <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3">
-          <div className="flex items-start justify-between py-1">
-            <div className="space-y-1">
-              <span className="text-sm font-medium text-[var(--app-text-secondary)] block">使用自定义更新源 (高级)</span>
-              <span className="text-xs text-[var(--app-text-dim)] block leading-relaxed max-w-[280px]">
-                启用后将使用自定义的 Manifest JSON 配置文件作为客户端更新源，通常用于第三方或开发版客户端。
-              </span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={props.settings.advanced_manifest_url !== null}
-              onClick={() => {
-                resetResult();
-                const isCurrentlyActive = props.settings.advanced_manifest_url !== null;
-                void props.onUpdateSettings({
-                  ...props.settings,
-                  advanced_manifest_url: isCurrentlyActive ? null : ""
-                });
-              }}
-              disabled={isBusy}
-              className={`w-11 h-6 rounded-full flex items-center transition-all duration-200 px-[3px] cursor-pointer border-[2.5px] bg-[#1f2229] disabled:cursor-not-allowed disabled:opacity-55 ${
-                props.settings.advanced_manifest_url !== null
-                  ? "border-[#fed330]"
-                  : "border-[#4e525a]"
-              }`}
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded-full transition-all duration-200 flex items-center justify-center shadow-sm ${
-                  props.settings.advanced_manifest_url !== null
-                    ? "translate-x-5 bg-white text-[#111215]"
-                    : "translate-x-0 bg-[#c8c9cc] text-transparent"
-                }`}
-              >
-                {props.settings.advanced_manifest_url !== null && (
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="w-2.5 h-2.5 stroke-[4.5]"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                )}
-              </div>
-            </button>
-          </div>
-          {props.settings.advanced_manifest_url !== null ? (
-            <div className="pt-2 border-t border-[var(--app-border-subtle)]">
-              <input
-                id="manifest-url-input"
-                aria-label="自定义 manifest 地址"
-                value={props.settings.advanced_manifest_url}
-                onChange={(event) => {
-                  resetResult();
-                  void props.onUpdateSettings({
-                    ...props.settings,
-                    advanced_manifest_url: event.target.value
-                  });
-                }}
-                disabled={isBusy}
-                className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
-                placeholder="https://gitee.com/example/manifest/raw/main/ddnet.json"
-                spellCheck={false}
-              />
-            </div>
-          ) : null}
         </div>
       </div>
 

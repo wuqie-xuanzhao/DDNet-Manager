@@ -164,8 +164,6 @@ export function deriveAutoUpdateView(input: {
 export function resolveUpdateManifestInput(input: {
   smokeEnabled: boolean;
   smokeManifestUrl: string;
-  useManifestSource: boolean;
-  manifestUrl: string;
 }) {
   if (input.smokeEnabled) {
     return {
@@ -175,7 +173,7 @@ export function resolveUpdateManifestInput(input: {
   }
 
   return {
-    useManifestSource: input.useManifestSource,
-    manifestUrl: input.manifestUrl
+    useManifestSource: false,
+    manifestUrl: ""
   };
 }

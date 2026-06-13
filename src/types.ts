@@ -96,7 +96,6 @@ export type AppSettings = {
   use_everything: boolean;
   close_panel_after_launch: boolean;
   auto_check_updates: boolean;
-  advanced_manifest_url: string | null;
   autostart: boolean;
   exit_game_show_launcher: boolean;
   close_behavior: string;

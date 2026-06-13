@@ -313,8 +313,6 @@ pub struct AppSettings {
     /// 应用启动后是否自动检查默认客户端更新。
     #[serde(default)]
     pub auto_check_updates: bool,
-    /// 高级 manifest 调试入口地址。
-    pub advanced_manifest_url: Option<String>,
     /// 是否开机自动启动。
     #[serde(default = "default_autostart")]
     pub autostart: bool,
@@ -359,7 +357,6 @@ impl Default for AppSettings {
             use_everything: false,
             close_panel_after_launch: default_close_panel_after_launch(),
             auto_check_updates: false,
-            advanced_manifest_url: None,
             autostart: default_autostart(),
             exit_game_show_launcher: default_exit_game_show_launcher(),
             close_behavior: default_close_behavior(),

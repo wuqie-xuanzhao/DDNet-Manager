@@ -22,10 +22,10 @@ export function useAutoUpdate(params: {
       return null;
     }
 
-    return `${selectedClient.id}:${selectedClient.version ?? ""}:${savedAppSettings.advanced_manifest_url ?? ""}:${JSON.stringify(
+    return `${selectedClient.id}:${selectedClient.version ?? ""}:${JSON.stringify(
       savedAppSettings.network_route
     )}`;
-  }, [savedAppSettings.advanced_manifest_url, savedAppSettings.network_route, selectedClient]);
+  }, [savedAppSettings.network_route, selectedClient]);
 
   const mode: AutoUpdateMode = !savedAppSettings.auto_check_updates
     ? "disabled"
@@ -56,9 +56,9 @@ export function useAutoUpdate(params: {
     void checkClientUpdate({
       client_id: selectedClient.client_id,
       channel: "stable",
-      manifest_url: savedAppSettings.advanced_manifest_url,
+      manifest_url: null,
       network_route: savedAppSettings.network_route,
-      use_manifest_source: Boolean(savedAppSettings.advanced_manifest_url)
+      use_manifest_source: false
     })
       .then((result) => {
         if (!alive) {
@@ -77,7 +77,7 @@ export function useAutoUpdate(params: {
     return () => {
       alive = false;
     };
-  }, [mode, requestKey, savedAppSettings.advanced_manifest_url, savedAppSettings.network_route, selectedClient]);
+  }, [mode, requestKey, savedAppSettings.network_route, selectedClient]);
 
   const autoUpdateView = deriveAutoUpdateView({
     mode,

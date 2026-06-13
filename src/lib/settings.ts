@@ -6,7 +6,6 @@ export const defaultAppSettings: AppSettings = {
   use_everything: false,
   close_panel_after_launch: true,
   auto_check_updates: false,
-  advanced_manifest_url: null,
   autostart: false,
   exit_game_show_launcher: true,
   close_behavior: "ask",
