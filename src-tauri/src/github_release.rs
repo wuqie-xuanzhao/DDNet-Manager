@@ -141,10 +141,13 @@ fn build_update_asset(
 ) -> Result<Option<GitHubReleaseCheck>, String> {
     let version = normalize_release_version(&selection.tag_name);
     // 优先用 expanded_assets 的 digest（标准 release API 默认不返回），回退到 asset.digest
-    let sha256 = digests
-        .get(&selection.asset.name)
-        .cloned()
-        .or_else(|| selection.asset.digest.as_deref().and_then(parse_github_sha256_digest));
+    let sha256 = digests.get(&selection.asset.name).cloned().or_else(|| {
+        selection
+            .asset
+            .digest
+            .as_deref()
+            .and_then(parse_github_sha256_digest)
+    });
     let Some(sha256) = sha256 else {
         return Ok(Some(GitHubReleaseCheck::Manual {
             version,

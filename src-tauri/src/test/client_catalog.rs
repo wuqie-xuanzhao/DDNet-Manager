@@ -48,7 +48,10 @@ fn match_catalog_entry_returns_none_when_no_alias_matches() {
 
 #[test]
 fn catalog_entries_contains_core_clients_and_fallback() {
-    let ids: Vec<&str> = catalog_entries().iter().map(|entry| entry.client_id).collect();
+    let ids: Vec<&str> = catalog_entries()
+        .iter()
+        .map(|entry| entry.client_id)
+        .collect();
     assert!(ids.contains(&"qmclient"));
     assert!(ids.contains(&"ddnet"));
     assert!(ids.contains(&"third_party"));

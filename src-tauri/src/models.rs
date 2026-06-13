@@ -72,9 +72,7 @@ pub fn classify_error_code(message: &str) -> &'static str {
         && (lower.contains("missing") || lower.contains("缺少") || lower.contains("禁用"))
     {
         IPC_ERROR_SHA256_MISSING
-    } else if lower.contains("checksum")
-        || lower.contains("sha256")
-        || lower.contains("校验失败")
+    } else if lower.contains("checksum") || lower.contains("sha256") || lower.contains("校验失败")
     {
         IPC_ERROR_CHECKSUM_MISMATCH
     } else if lower.contains("is running") || lower.contains("正在运行") {

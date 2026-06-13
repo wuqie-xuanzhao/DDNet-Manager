@@ -131,7 +131,10 @@ fn classifies_known_error_messages_to_stable_codes() {
 
 #[test]
 fn classifies_unknown_message_to_unknown_code() {
-    assert_eq!(classify_error_code("一些未分类的随机错误"), IPC_ERROR_UNKNOWN);
+    assert_eq!(
+        classify_error_code("一些未分类的随机错误"),
+        IPC_ERROR_UNKNOWN
+    );
 }
 
 #[test]
