@@ -3,6 +3,7 @@ use crate::models::{
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// 表示一次启动探测写回请求。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,8 +27,19 @@ pub struct LaunchProbeRecord<'a> {
 }
 
 /// 管理 DDNet 兼容客户端安装记录的 SQLite 注册表。
+///
+/// 内部使用 `Mutex<Connection>` 包装 SQLite 连接，使 `ClientRegistry` 满足
+/// `Send + Sync`，可作为 Tauri managed 状态跨 IPC command 复用同一连接。
 pub struct ClientRegistry {
-    conn: Connection,
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl Clone for ClientRegistry {
+    fn clone(&self) -> Self {
+        Self {
+            conn: Arc::clone(&self.conn),
+        }
+    }
 }
 
 impl ClientRegistry {
@@ -40,15 +52,24 @@ impl ClientRegistry {
 
         let conn =
             Connection::open(path).map_err(|error| format!("failed to open registry: {error}"))?;
-        let registry = Self { conn };
+        let registry = Self {
+            conn: Arc::new(Mutex::new(conn)),
+        };
         registry.init_schema()?;
         Ok(registry)
     }
 
+    /// 获取互斥锁保护的 SQLite 连接，供内部方法使用。
+    pub(crate) fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+        self.conn
+            .lock()
+            .map_err(|_| "registry connection is poisoned".to_string())
+    }
+
     /// 保存或更新客户端安装记录。若记录为默认客户端，会清除其他默认标记。
     pub fn upsert_client_installation(&self, client: &ClientInstallation) -> Result<(), String> {
-        let tx = self
-            .conn
+        let conn = self.lock_conn()?;
+        let tx = conn
             .unchecked_transaction()
             .map_err(|error| format!("failed to start registry transaction: {error}"))?;
 
@@ -103,8 +124,8 @@ impl ClientRegistry {
 
     /// 返回已保存的所有客户端安装记录。
     pub fn list_client_installations(&self) -> Result<Vec<ClientInstallation>, String> {
-        let mut statement = self
-            .conn
+        let conn = self.lock_conn()?;
+        let mut statement = conn
             .prepare(
                 "SELECT client_json, is_default
                  FROM client_installations
@@ -143,8 +164,8 @@ impl ClientRegistry {
             return Err("local smoke client cannot be set as default".to_string());
         }
 
-        let tx = self
-            .conn
+        let conn = self.lock_conn()?;
+        let tx = conn
             .unchecked_transaction()
             .map_err(|error| format!("failed to start registry transaction: {error}"))?;
         let changed = tx
@@ -174,8 +195,8 @@ impl ClientRegistry {
             self.remove_local_smoke_client_installations()?;
         }
 
-        let row = self
-            .conn
+        let conn = self.lock_conn()?;
+        let row = conn
             .query_row(
                 "SELECT client_json FROM client_installations WHERE is_default = 1 LIMIT 1",
                 [],
@@ -207,19 +228,19 @@ impl ClientRegistry {
 
     /// 从注册表移除客户端安装记录，不删除本地文件。
     pub fn remove_client_installation(&self, id: &str) -> Result<(), String> {
-        self.conn
-            .execute(
-                "DELETE FROM client_installations WHERE id = ?1",
-                params![id],
-            )
-            .map(|_| ())
-            .map_err(|error| format!("failed to remove client installation: {error}"))
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "DELETE FROM client_installations WHERE id = ?1",
+            params![id],
+        )
+        .map(|_| ())
+        .map_err(|error| format!("failed to remove client installation: {error}"))
     }
 
     /// 读取应用设置。未保存过设置时返回默认值。
     pub fn load_app_settings(&self) -> Result<AppSettings, String> {
-        let value = self
-            .conn
+        let conn = self.lock_conn()?;
+        let value = conn
             .query_row(
                 "SELECT value FROM app_settings WHERE key = 'settings' LIMIT 1",
                 [],
@@ -235,7 +256,11 @@ impl ClientRegistry {
         let settings = serde_json::from_str(&json)
             .map_err(|error| format!("failed to parse app settings: {error}"))?;
         if json.contains("\"github_token\"") {
+            // 释放锁后再调用 save_app_settings 以避免死锁（save 内部也会获取同一把锁）。
+            // 当前单进程场景下不存在竞态；若未来引入多线程并发写入设置，需改用重入锁或合并读写路径。
+            drop(conn);
             self.save_app_settings(&settings)?;
+            return Ok(settings);
         }
         Ok(settings)
     }
@@ -244,58 +269,57 @@ impl ClientRegistry {
     pub fn save_app_settings(&self, settings: &AppSettings) -> Result<(), String> {
         let value = serde_json::to_string(settings)
             .map_err(|error| format!("failed to serialize app settings: {error}"))?;
-        self.conn
-            .execute(
-                "INSERT INTO app_settings (key, value) VALUES ('settings', ?1)
-                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                params![value],
-            )
-            .map(|_| ())
-            .map_err(|error| format!("failed to save app settings: {error}"))
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('settings', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![value],
+        )
+        .map(|_| ())
+        .map_err(|error| format!("failed to save app settings: {error}"))
     }
 
     /// 保存或更新下载任务快照。
     pub fn upsert_download_job(&self, job: &DownloadJob) -> Result<(), String> {
-        self.conn
-            .execute(
-                "INSERT INTO download_jobs (
-                    id, client_installation_id, client_id, channel, version, asset_url,
-                    sha256, size, status, downloaded_bytes, cache_path, error, job_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                ON CONFLICT(id) DO UPDATE SET
-                    client_installation_id = excluded.client_installation_id,
-                    client_id = excluded.client_id,
-                    channel = excluded.channel,
-                    version = excluded.version,
-                    asset_url = excluded.asset_url,
-                    sha256 = excluded.sha256,
-                    size = excluded.size,
-                    status = excluded.status,
-                    downloaded_bytes = excluded.downloaded_bytes,
-                    cache_path = excluded.cache_path,
-                    error = excluded.error,
-                    job_json = excluded.job_json",
-                params![
-                    job.id,
-                    job.client_installation_id,
-                    job.client_id,
-                    job.channel,
-                    job.version,
-                    job.asset_url,
-                    job.sha256,
-                    job.size,
-                    serde_json::to_string(&job.status).map_err(|error| format!(
-                        "failed to serialize download job status: {error}"
-                    ))?,
-                    job.downloaded_bytes,
-                    job.cache_path,
-                    job.error,
-                    serde_json::to_string(job)
-                        .map_err(|error| format!("failed to serialize download job: {error}"))?
-                ],
-            )
-            .map(|_| ())
-            .map_err(|error| format!("failed to upsert download job: {error}"))
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT INTO download_jobs (
+                id, client_installation_id, client_id, channel, version, asset_url,
+                sha256, size, status, downloaded_bytes, cache_path, error, job_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ON CONFLICT(id) DO UPDATE SET
+                client_installation_id = excluded.client_installation_id,
+                client_id = excluded.client_id,
+                channel = excluded.channel,
+                version = excluded.version,
+                asset_url = excluded.asset_url,
+                sha256 = excluded.sha256,
+                size = excluded.size,
+                status = excluded.status,
+                downloaded_bytes = excluded.downloaded_bytes,
+                cache_path = excluded.cache_path,
+                error = excluded.error,
+                job_json = excluded.job_json",
+            params![
+                job.id,
+                job.client_installation_id,
+                job.client_id,
+                job.channel,
+                job.version,
+                job.asset_url,
+                job.sha256,
+                job.size,
+                serde_json::to_string(&job.status)
+                    .map_err(|error| format!("failed to serialize download job status: {error}"))?,
+                job.downloaded_bytes,
+                job.cache_path,
+                job.error,
+                serde_json::to_string(job)
+                    .map_err(|error| format!("failed to serialize download job: {error}"))?
+            ],
+        )
+        .map(|_| ())
+        .map_err(|error| format!("failed to upsert download job: {error}"))
     }
 
     /// 返回指定客户端的下载任务列表；为空时返回全部任务。
@@ -303,6 +327,7 @@ impl ClientRegistry {
         &self,
         client_installation_id: Option<&str>,
     ) -> Result<Vec<DownloadJob>, String> {
+        let conn = self.lock_conn()?;
         let sql = if client_installation_id.is_some() {
             "SELECT job_json
              FROM download_jobs
@@ -313,8 +338,7 @@ impl ClientRegistry {
              FROM download_jobs
              ORDER BY id DESC"
         };
-        let mut statement = self
-            .conn
+        let mut statement = conn
             .prepare(sql)
             .map_err(|error| format!("failed to query download jobs: {error}"))?;
         let mut jobs = Vec::new();
@@ -350,8 +374,8 @@ impl ClientRegistry {
 
     /// 按下载任务 ID 读取任务快照。
     pub fn download_job_by_id(&self, id: &str) -> Result<Option<DownloadJob>, String> {
-        let row = self
-            .conn
+        let conn = self.lock_conn()?;
+        let row = conn
             .query_row(
                 "SELECT job_json FROM download_jobs WHERE id = ?1 LIMIT 1",
                 params![id],
@@ -369,8 +393,8 @@ impl ClientRegistry {
 
     /// 删除已不再需要的下载任务快照。
     pub fn remove_download_job(&self, id: &str) -> Result<(), String> {
-        self.conn
-            .execute("DELETE FROM download_jobs WHERE id = ?1", params![id])
+        let conn = self.lock_conn()?;
+        conn.execute("DELETE FROM download_jobs WHERE id = ?1", params![id])
             .map(|_| ())
             .map_err(|error| format!("failed to remove download job: {error}"))
     }
@@ -379,43 +403,42 @@ impl ClientRegistry {
     pub fn record_install_history(&self, record: &InstallHistoryRecord) -> Result<(), String> {
         let status = serde_json::to_string(&record.status)
             .map_err(|error| format!("failed to serialize install status: {error}"))?;
-        self.conn
-            .execute(
-                "INSERT INTO install_history (
-                    id, job_id, client_installation_id, client_id, version, asset_url,
-                    package_kind, status, rollback_path, error, completed_at, record_json
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-                ON CONFLICT(id) DO UPDATE SET
-                    job_id = excluded.job_id,
-                    client_installation_id = excluded.client_installation_id,
-                    client_id = excluded.client_id,
-                    version = excluded.version,
-                    asset_url = excluded.asset_url,
-                    package_kind = excluded.package_kind,
-                    status = excluded.status,
-                    rollback_path = excluded.rollback_path,
-                    error = excluded.error,
-                    completed_at = excluded.completed_at,
-                    record_json = excluded.record_json",
-                params![
-                    record.id,
-                    record.job_id,
-                    record.client_installation_id,
-                    record.client_id,
-                    record.version,
-                    record.asset_url,
-                    record.package_kind,
-                    status,
-                    record.rollback_path,
-                    record.error,
-                    record.completed_at,
-                    serde_json::to_string(record).map_err(|error| {
-                        format!("failed to serialize install history: {error}")
-                    })?
-                ],
-            )
-            .map(|_| ())
-            .map_err(|error| format!("failed to record install history: {error}"))
+        let conn = self.lock_conn()?;
+        conn.execute(
+            "INSERT INTO install_history (
+                id, job_id, client_installation_id, client_id, version, asset_url,
+                package_kind, status, rollback_path, error, completed_at, record_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            ON CONFLICT(id) DO UPDATE SET
+                job_id = excluded.job_id,
+                client_installation_id = excluded.client_installation_id,
+                client_id = excluded.client_id,
+                version = excluded.version,
+                asset_url = excluded.asset_url,
+                package_kind = excluded.package_kind,
+                status = excluded.status,
+                rollback_path = excluded.rollback_path,
+                error = excluded.error,
+                completed_at = excluded.completed_at,
+                record_json = excluded.record_json",
+            params![
+                record.id,
+                record.job_id,
+                record.client_installation_id,
+                record.client_id,
+                record.version,
+                record.asset_url,
+                record.package_kind,
+                status,
+                record.rollback_path,
+                record.error,
+                record.completed_at,
+                serde_json::to_string(record)
+                    .map_err(|error| { format!("failed to serialize install history: {error}") })?
+            ],
+        )
+        .map(|_| ())
+        .map_err(|error| format!("failed to record install history: {error}"))
     }
 
     /// 返回指定客户端的安装历史，最新记录排在前面。
@@ -423,8 +446,8 @@ impl ClientRegistry {
         &self,
         client_installation_id: &str,
     ) -> Result<Vec<InstallHistoryRecord>, String> {
-        let mut statement = self
-            .conn
+        let conn = self.lock_conn()?;
+        let mut statement = conn
             .prepare(
                 "SELECT record_json
                  FROM install_history
@@ -479,8 +502,8 @@ impl ClientRegistry {
         &self,
         id: &str,
     ) -> Result<Option<ClientInstallation>, String> {
-        let row = self
-            .conn
+        let conn = self.lock_conn()?;
+        let row = conn
             .query_row(
                 "SELECT client_json, is_default FROM client_installations WHERE id = ?1 LIMIT 1",
                 params![id],
@@ -500,64 +523,58 @@ impl ClientRegistry {
     }
 
     fn init_schema(&self) -> Result<(), String> {
-        self.conn
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS client_installations (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    client_id TEXT NOT NULL,
-                    display_name TEXT NOT NULL,
-                    install_dir TEXT NOT NULL,
-                    executable_path TEXT NOT NULL,
-                    storage_cfg_path TEXT NOT NULL,
-                    data_dir TEXT NOT NULL,
-                    user_data_dir TEXT,
-                    version TEXT,
-                    health TEXT NOT NULL,
-                    last_scanned_at TEXT,
-                    is_default INTEGER NOT NULL DEFAULT 0,
-                    client_json TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS app_settings (
-                    key TEXT PRIMARY KEY NOT NULL,
-                    value TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS scan_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    scanned_at TEXT NOT NULL,
-                    root TEXT NOT NULL,
-                    candidate_count INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS download_jobs (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    client_installation_id TEXT NOT NULL,
-                    client_id TEXT NOT NULL,
-                    channel TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    asset_url TEXT NOT NULL,
-                    sha256 TEXT NOT NULL,
-                    size INTEGER NOT NULL,
-                    status TEXT NOT NULL,
-                    downloaded_bytes INTEGER NOT NULL,
-                    cache_path TEXT NOT NULL,
-                    error TEXT,
-                    job_json TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS install_history (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    job_id TEXT NOT NULL,
-                    client_installation_id TEXT NOT NULL,
-                    client_id TEXT NOT NULL,
-                    version TEXT NOT NULL,
-                    asset_url TEXT NOT NULL,
-                    package_kind TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    rollback_path TEXT,
-                    error TEXT,
-                    completed_at TEXT,
-                    record_json TEXT NOT NULL
-                );",
-            )
-            .map_err(|error| format!("failed to initialize registry schema: {error}"))
+        let conn = self.lock_conn()?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS client_installations (
+                id TEXT PRIMARY KEY NOT NULL,
+                client_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                install_dir TEXT NOT NULL,
+                executable_path TEXT NOT NULL,
+                storage_cfg_path TEXT NOT NULL,
+                data_dir TEXT NOT NULL,
+                user_data_dir TEXT,
+                version TEXT,
+                health TEXT NOT NULL,
+                last_scanned_at TEXT,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                client_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS download_jobs (
+                id TEXT PRIMARY KEY NOT NULL,
+                client_installation_id TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                version TEXT NOT NULL,
+                asset_url TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                downloaded_bytes INTEGER NOT NULL,
+                cache_path TEXT NOT NULL,
+                error TEXT,
+                job_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS install_history (
+                id TEXT PRIMARY KEY NOT NULL,
+                job_id TEXT NOT NULL,
+                client_installation_id TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                version TEXT NOT NULL,
+                asset_url TEXT NOT NULL,
+                package_kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                rollback_path TEXT,
+                error TEXT,
+                completed_at TEXT,
+                record_json TEXT NOT NULL
+            );",
+        )
+        .map_err(|error| format!("failed to initialize registry schema: {error}"))
     }
 }
 

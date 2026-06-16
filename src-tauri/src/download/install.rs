@@ -1,0 +1,354 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// 将 staging 中的客户端安装到目标目录，并为旧安装创建回滚目录。
+pub fn install_staged_client(
+    staged_client_dir: &Path,
+    install_dir: &Path,
+    rollback_dir: &Path,
+) -> Result<(), String> {
+    let replacement_dir = replacement_dir_for(install_dir);
+    if replacement_dir.exists() {
+        fs::remove_dir_all(&replacement_dir)
+            .map_err(|error| format!("failed to clear replacement dir: {error}"))?;
+    }
+    if rollback_dir.exists() {
+        fs::remove_dir_all(rollback_dir)
+            .map_err(|error| format!("failed to clear rollback dir: {error}"))?;
+    }
+    if let Some(parent) = rollback_dir.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create rollback parent: {error}"))?;
+    }
+
+    copy_dir_recursive(staged_client_dir, &replacement_dir)?;
+    let replacement_client = crate::client_scan::validate_client_dir(&replacement_dir)?;
+    if replacement_client.health != crate::models::ClientHealth::Ok {
+        let _ = fs::remove_dir_all(&replacement_dir);
+        return Err(format!(
+            "replacement client is not healthy: {:?}",
+            replacement_client.health
+        ));
+    }
+
+    let had_existing_install = install_dir.exists();
+    if had_existing_install {
+        // Windows 上若 install_dir 仍被进程占用（典型场景：安装中段用户重新启动了
+        // DDNet），rename 会以 AccessDenied 失败。这里给出明确诊断，避免上层把
+        // 这种可恢复错误归类为内部错误。
+        if let Err(error) = fs::rename(install_dir, rollback_dir) {
+            let running_hint = if crate::process::is_install_dir_busy(install_dir) {
+                " (target install dir is busy; close the running client and retry)"
+            } else {
+                ""
+            };
+            return Err(format!(
+                "failed to create rollback point{running_hint}: {error}"
+            ));
+        }
+    }
+
+    if let Err(error) = fs::rename(&replacement_dir, install_dir) {
+        if had_existing_install && rollback_dir.exists() {
+            if let Err(restore_error) = fs::rename(rollback_dir, install_dir) {
+                // 双失败：原 install_dir 已被改名为 rollback_dir，激活与恢复都失败，
+                // rollback_dir 仍保留在磁盘上。错误信息显式带上 rollback_dir 路径，
+                // 让用户/运维知道从哪里手动恢复旧版本。
+                return Err(format!(
+                    "failed to activate replacement: {error}; failed to restore rollback: {restore_error}; \
+                     rollback_dir={} (recover manually if needed)",
+                    rollback_dir.display()
+                ));
+            }
+        }
+        return Err(format!("failed to activate replacement: {error}"));
+    }
+
+    Ok(())
+}
+
+/// 返回位于安装目录同级的回滚目录，避免 Windows 跨盘 rename 失败。
+pub fn rollback_dir_for(install_dir: &Path, install_id: &str) -> PathBuf {
+    let name = install_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("ddnet-client");
+    install_dir.with_file_name(format!("{name}.ddnet-manager-rollback-{install_id}"))
+}
+
+/// 使用已创建的回滚目录恢复目标安装目录。
+pub fn restore_rollback(install_dir: &Path, rollback_dir: &Path) -> Result<(), String> {
+    if !rollback_dir.exists() {
+        return Err(format!(
+            "rollback dir does not exist: {}",
+            rollback_dir.display()
+        ));
+    }
+
+    let failed_dir = failed_restore_dir_for(install_dir);
+    if failed_dir.exists() {
+        fs::remove_dir_all(&failed_dir)
+            .map_err(|error| format!("failed to clear failed restore dir: {error}"))?;
+    }
+
+    let had_active_install = install_dir.exists();
+    if had_active_install {
+        fs::rename(install_dir, &failed_dir)
+            .map_err(|error| format!("failed to move active install before rollback: {error}"))?;
+    }
+
+    if let Err(error) = fs::rename(rollback_dir, install_dir) {
+        if had_active_install && failed_dir.exists() {
+            if let Err(restore_error) = fs::rename(&failed_dir, install_dir) {
+                return Err(format!(
+                    "failed to restore rollback: {error}; failed to restore active install: {restore_error}"
+                ));
+            }
+        }
+        return Err(format!("failed to restore rollback: {error}"));
+    }
+
+    if failed_dir.exists() {
+        fs::remove_dir_all(&failed_dir)
+            .map_err(|error| format!("failed to clear replaced install after rollback: {error}"))?;
+    }
+
+    Ok(())
+}
+
+/// 判断目录项名称是否为本管理器产生的安装残留产物。
+///
+/// 仅匹配三类后缀模式，避免 `contains` 模糊匹配误伤用户在客户端父目录下
+/// 自建的合法目录（例如 `ddnet-manager-rollback-tutorial`、
+/// `my.ddnet-manager-rollback.backup` 等）。
+///
+/// 识别规则：
+/// - marker 必须以 dot 开头，且 marker 之前必须有非空 prefix
+/// - rollback 模式的 suffix（即 install_id）至少 4 字符且不含 dot，
+///   因为 install_id 形如 `install-<uuid>`，而合法目录常有 `.backup` 等
+///   扩展名 —— 这条规则用来排除 `my.ddnet-manager-rollback-notes.backup` 这类
+///   形似但非本管理器产生的目录
+/// - replacement / restore-failed 模式必须出现在文件名末尾
+fn is_install_artifact_name(name: &str) -> bool {
+    const ROLLBACK_MARKER: &str = ".ddnet-manager-rollback-";
+    const REPLACEMENT_MARKER: &str = ".ddnet-manager-replacement";
+    const RESTORE_FAILED_MARKER: &str = ".ddnet-manager-restore-failed";
+
+    // rollback: <prefix>.ddnet-manager-rollback-<install_id>
+    //   prefix 非空，install_id 非空、不含 dot、长度 >= 4
+    if let Some(idx) = name.find(ROLLBACK_MARKER) {
+        let prefix = &name[..idx];
+        let suffix = &name[idx + ROLLBACK_MARKER.len()..];
+        if !prefix.is_empty() && suffix.len() >= 4 && !suffix.contains('.') {
+            return true;
+        }
+    }
+
+    // replacement: <prefix>.ddnet-manager-replacement 或 <prefix>.ddnet-manager-replacement.app
+    //   marker 必须出现在末尾（可选 .app 扩展名）。
+    if let Some(idx) = name.find(REPLACEMENT_MARKER) {
+        let prefix = &name[..idx];
+        let suffix = &name[idx + REPLACEMENT_MARKER.len()..];
+        if !prefix.is_empty() && (suffix.is_empty() || suffix == ".app") {
+            return true;
+        }
+    }
+
+    // restore-failed: <prefix>.ddnet-manager-restore-failed
+    if let Some(idx) = name.find(RESTORE_FAILED_MARKER) {
+        let prefix = &name[..idx];
+        let suffix = &name[idx + RESTORE_FAILED_MARKER.len()..];
+        if !prefix.is_empty() && suffix.is_empty() {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// 清理指定目录下所有由管理器创建的回滚、替换和恢复失败残留目录。
+///
+/// 仅匹配三类精确后缀模式：
+/// - `<name>.ddnet-manager-rollback-<install_id>`
+/// - `<name>.ddnet-manager-replacement[.app]`
+/// - `<name>.ddnet-manager-restore-failed`
+///
+/// 返回已清理的目录数量。
+pub fn cleanup_stale_install_artifacts(scan_dir: &Path) -> Result<usize, String> {
+    if !scan_dir.exists() {
+        return Ok(0);
+    }
+    let entries = fs::read_dir(scan_dir)
+        .map_err(|error| format!("failed to read dir for cleanup: {error}"))?;
+    let mut removed = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("failed to read cleanup entry: {error}"))?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if is_install_artifact_name(&name_str) && entry.path().is_dir() {
+            fs::remove_dir_all(entry.path()).map_err(|error| {
+                format!("failed to remove stale artifact '{}': {error}", name_str)
+            })?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+fn replacement_dir_for(install_dir: &Path) -> PathBuf {
+    let name = install_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("ddnet-client");
+    if install_dir
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+    {
+        let stem = install_dir
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("ddnet-client");
+        install_dir.with_file_name(format!("{stem}.ddnet-manager-replacement.app"))
+    } else {
+        install_dir.with_file_name(format!("{name}.ddnet-manager-replacement"))
+    }
+}
+
+fn failed_restore_dir_for(install_dir: &Path) -> PathBuf {
+    let name = install_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("ddnet-client");
+    install_dir.with_file_name(format!("{name}.ddnet-manager-restore-failed"))
+}
+
+/// 递归复制目录树，保留常规文件、目录与 symlink；用于把 staging 客户端拷贝到
+/// replacement 目录或从 dmg 镜像拷出 app bundle。
+pub(crate) fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create install dir: {error}"))?;
+
+    for entry in
+        fs::read_dir(source).map_err(|error| format!("failed to read source dir: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("failed to read source entry: {error}"))?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to read source file type: {error}"))?;
+        if file_type.is_symlink() {
+            copy_symlink(&source_path, &destination_path)?;
+        } else if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else {
+            fs::copy(&source_path, &destination_path)
+                .map_err(|error| format!("failed to copy install file: {error}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn copy_symlink(source_path: &Path, destination_path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let target = fs::read_link(source_path)
+            .map_err(|error| format!("failed to read install symlink: {error}"))?;
+        std::os::unix::fs::symlink(&target, destination_path)
+            .map_err(|error| format!("failed to copy install symlink: {error}"))
+    }
+
+    #[cfg(windows)]
+    {
+        let target = fs::read_link(source_path)
+            .map_err(|error| format!("failed to read install symlink: {error}"))?;
+        if source_path.is_dir() {
+            std::os::windows::fs::symlink_dir(&target, destination_path)
+                .map_err(|error| format!("failed to copy install symlink: {error}"))
+        } else {
+            std::os::windows::fs::symlink_file(&target, destination_path)
+                .map_err(|error| format!("failed to copy install symlink: {error}"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn cleanup_stale_install_artifacts_removes_matching_dirs() {
+        let base = tempfile::tempdir().expect("temp dir");
+        // 使用贴近真实命名的 install_id（install-<uuid> 形式），让精确后缀匹配生效。
+        let rollback = base
+            .path()
+            .join("client.ddnet-manager-rollback-install-abc");
+        let replacement = base.path().join("client.ddnet-manager-replacement");
+        let restore_failed = base.path().join("client.ddnet-manager-restore-failed");
+        let legit = base.path().join("client-data");
+        fs::create_dir_all(&rollback).expect("rollback");
+        fs::create_dir_all(&replacement).expect("replacement");
+        fs::create_dir_all(&restore_failed).expect("restore-failed");
+        fs::create_dir_all(&legit).expect("legit");
+
+        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        assert_eq!(removed, 3);
+        assert!(!rollback.exists());
+        assert!(!replacement.exists());
+        assert!(!restore_failed.exists());
+        assert!(legit.exists());
+    }
+
+    #[test]
+    fn cleanup_stale_install_artifacts_recognizes_app_replacement_variant() {
+        // macOS .app 目录有自己的扩展名，replacement 命名为 .ddnet-manager-replacement.app
+        let base = tempfile::tempdir().expect("temp dir");
+        let replacement_app = base.path().join("DDNet.ddnet-manager-replacement.app");
+        fs::create_dir_all(&replacement_app).expect("replacement.app");
+
+        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        assert_eq!(removed, 1);
+        assert!(!replacement_app.exists());
+    }
+
+    #[test]
+    fn cleanup_stale_install_artifacts_skips_non_dir_entries() {
+        let base = tempfile::tempdir().expect("temp dir");
+        // 名称匹配 artifact 模式但本身是文件而非目录，cleanup 应跳过不删。
+        let file_path = base
+            .path()
+            .join("client.ddnet-manager-rollback-install-xyz");
+        fs::write(&file_path, "not a dir").expect("file");
+        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        assert_eq!(removed, 0);
+        assert!(file_path.exists());
+    }
+
+    #[test]
+    fn cleanup_stale_install_artifacts_returns_zero_for_missing_dir() {
+        let missing = PathBuf::from("C:\\nonexistent-ddnet-test-path-12345");
+        let removed = cleanup_stale_install_artifacts(&missing).expect("cleanup");
+        assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn cleanup_stale_install_artifacts_skips_lookalike_user_dirs() {
+        let base = tempfile::tempdir().expect("temp dir");
+        // 用户的合法目录名仅"包含"残留模式字符串，但不是后缀——不应被误删。
+        let lookalike_rollback_notes = base.path().join("my.ddnet-manager-rollback-notes.backup");
+        let lookalike_replaced_dir = base.path().join("ddnet-manager-replacement-tutorial");
+        let lookalike_prefix_only = base.path().join(".ddnet-manager-rollback-"); // 后缀为空，视为非法
+        fs::create_dir_all(&lookalike_rollback_notes).expect("lookalike notes");
+        fs::create_dir_all(&lookalike_replaced_dir).expect("lookalike tutorial");
+        fs::create_dir_all(&lookalike_prefix_only).expect("empty suffix");
+
+        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        assert_eq!(removed, 0, "no lookalike user dir should be removed");
+        assert!(lookalike_rollback_notes.exists());
+        assert!(lookalike_replaced_dir.exists());
+        assert!(lookalike_prefix_only.exists());
+    }
+}

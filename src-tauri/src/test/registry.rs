@@ -181,7 +181,8 @@ fn registry_normalizes_legacy_ddnet_vanilla_records() {
     .to_string();
 
     registry
-        .conn
+        .lock_conn()
+        .expect("注册表连接应可获取")
         .execute(
             "INSERT INTO client_installations (
                     id, client_id, display_name, install_dir, executable_path,
@@ -263,7 +264,8 @@ fn registry_does_not_persist_github_token_in_app_settings_json() {
         .expect("设置应持久化成功");
 
     let raw_json: String = registry
-        .conn
+        .lock_conn()
+        .expect("注册表连接应可获取")
         .query_row(
             "SELECT value FROM app_settings WHERE key = 'settings' LIMIT 1",
             [],
@@ -291,7 +293,8 @@ fn registry_scrubs_legacy_github_token_when_loading_app_settings() {
     .to_string();
 
     registry
-        .conn
+        .lock_conn()
+        .expect("注册表连接应可获取")
         .execute(
             "INSERT INTO app_settings (key, value) VALUES ('settings', ?1)",
             rusqlite::params![legacy],
@@ -301,7 +304,8 @@ fn registry_scrubs_legacy_github_token_when_loading_app_settings() {
     registry.load_app_settings().expect("旧设置应读取成功");
 
     let raw_json: String = registry
-        .conn
+        .lock_conn()
+        .expect("注册表连接应可获取")
         .query_row(
             "SELECT value FROM app_settings WHERE key = 'settings' LIMIT 1",
             [],

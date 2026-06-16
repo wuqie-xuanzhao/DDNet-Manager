@@ -129,13 +129,18 @@ fn raw_url_host(url: &str) -> Option<&str> {
 }
 
 fn is_local_smoke_ip(ip: IpAddr) -> bool {
+    is_non_public_ip(ip)
+}
+
+/// 判断 IP 地址是否属于非公网范围（回环、私网、链路本地、未指定、IPv6 unique local / link-local）。
+pub fn is_non_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
             ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local() || ipv4.is_unspecified()
         }
         IpAddr::V6(ipv6) => {
             if let Some(ipv4) = ipv6.to_ipv4_mapped() {
-                return is_local_smoke_ip(IpAddr::V4(ipv4));
+                return is_non_public_ip(IpAddr::V4(ipv4));
             }
 
             ipv6.is_loopback()
@@ -146,10 +151,20 @@ fn is_local_smoke_ip(ip: IpAddr) -> bool {
     }
 }
 
-fn is_ipv6_unique_local(ip: &std::net::Ipv6Addr) -> bool {
+/// 校验 IP 地址是否为公网地址，非公网地址返回错误。
+pub fn validate_public_ip(ip: IpAddr) -> Result<(), String> {
+    if is_non_public_ip(ip) {
+        return Err("host must be a public IP address".to_string());
+    }
+    Ok(())
+}
+
+/// 判断 IPv6 地址是否属于 unique local 范围 (fc00::/7)。
+pub fn is_ipv6_unique_local(ip: &std::net::Ipv6Addr) -> bool {
     (ip.segments()[0] & 0xfe00) == 0xfc00
 }
 
-fn is_ipv6_unicast_link_local(ip: &std::net::Ipv6Addr) -> bool {
+/// 判断 IPv6 地址是否属于 unicast link-local 范围 (fe80::/10)。
+pub fn is_ipv6_unicast_link_local(ip: &std::net::Ipv6Addr) -> bool {
     (ip.segments()[0] & 0xffc0) == 0xfe80
 }

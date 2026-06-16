@@ -30,6 +30,26 @@ pub fn is_client_running(path: &Path) -> Result<bool, String> {
     Ok(system_process_matches_path(&target))
 }
 
+/// 判断指定安装目录下是否有进程仍在运行（可执行文件位于该目录子树内）。
+///
+/// 用于安装事务在 rename 前做最后一次占用快照检测，避免 Windows 上 rename
+/// 被占用目录导致回滚链双失败。返回 `false` 时不保证 rename 一定成功，仅表示
+/// 调用瞬间未观察到占用。
+pub fn is_install_dir_busy(install_dir: &Path) -> bool {
+    let Ok(canonical_install_dir) = std::fs::canonicalize(install_dir) else {
+        return false;
+    };
+    let mut system = sysinfo::System::new_all();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+    system.processes().values().any(|process| {
+        let Some(exe) = process.exe() else {
+            return false;
+        };
+        std::fs::canonicalize(exe)
+            .is_ok_and(|exe_canonical| exe_canonical.starts_with(&canonical_install_dir))
+    })
+}
+
 /// 解析并校验客户端启动目标，确保只启动完整客户端目录内的 DDNet 可执行文件。
 pub fn resolve_launch_target(path: &Path) -> Result<LaunchTarget, String> {
     if !path.is_file() {

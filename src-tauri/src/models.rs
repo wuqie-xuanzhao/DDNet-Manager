@@ -17,6 +17,72 @@ pub const IPC_ERROR_MANIFEST_UNREACHABLE: &str = "manifest_unreachable";
 /// 更新资产缺少 sha256，自动安装被禁用。
 pub const IPC_ERROR_SHA256_MISSING: &str = "sha256_missing";
 
+/// 后端结构化错误类型，替代 String 错误提供稳定错误码映射。
+///
+/// 每个变体直接对应一个 `IPC_ERROR_*` 常量，消除字符串匹配分类的必要性。
+/// 底层模块应返回此枚举而非裸 String，使 `IpcError::from(ManagerError)` 的
+/// 错误码推导成为编译期确定的事实，而非运行时字符串猜测。
+#[derive(Debug, thiserror::Error)]
+pub enum ManagerError {
+    /// 下载或请求目标 host 未被启用或未被信任。
+    #[error("{0}")]
+    NetworkHostNotTrusted(String),
+    /// 更新源地址必须使用 HTTPS。
+    #[error("{0}")]
+    NetworkHttpsRequired(String),
+    /// 下载文件 size 或 sha256 校验失败。
+    #[error("{0}")]
+    ChecksumMismatch(String),
+    /// 客户端安装记录或下载任务未找到。
+    #[error("{0}")]
+    NotFound(String),
+    /// 目标客户端正在运行，无法写入或安装。
+    #[error("{0}")]
+    ClientRunning(String),
+    /// manifest 或更新源拉取失败。
+    #[error("{0}")]
+    ManifestUnreachable(String),
+    /// 更新资产缺少 sha256，自动安装被禁用。
+    #[error("{0}")]
+    Sha256Missing(String),
+    /// 未归入上述分类的内部错误。
+    #[error("{0}")]
+    Internal(String),
+}
+
+impl ManagerError {
+    /// 返回此错误变体对应的稳定 IPC 错误码。
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::NetworkHostNotTrusted(_) => IPC_ERROR_NETWORK_HOST_NOT_TRUSTED,
+            Self::NetworkHttpsRequired(_) => IPC_ERROR_NETWORK_HTTPS_REQUIRED,
+            Self::ChecksumMismatch(_) => IPC_ERROR_CHECKSUM_MISMATCH,
+            Self::NotFound(_) => IPC_ERROR_NOT_FOUND,
+            Self::ClientRunning(_) => IPC_ERROR_CLIENT_RUNNING,
+            Self::ManifestUnreachable(_) => IPC_ERROR_MANIFEST_UNREACHABLE,
+            Self::Sha256Missing(_) => IPC_ERROR_SHA256_MISSING,
+            Self::Internal(_) => IPC_ERROR_UNKNOWN,
+        }
+    }
+}
+
+/// 过渡桥接：允许 ManagerError 在返回类型为 String 的函数中直接使用。
+/// 待全量迁移至 ManagerError 后应移除此 impl，避免结构化错误静默退化为裸 String。
+impl From<ManagerError> for String {
+    fn from(error: ManagerError) -> Self {
+        error.to_string()
+    }
+}
+
+impl From<ManagerError> for IpcError {
+    fn from(error: ManagerError) -> Self {
+        Self {
+            code: error.error_code().to_string(),
+            message: error.to_string(),
+        }
+    }
+}
+
 /// IPC 错误契约，携带稳定错误码与可读文案，供前端按 code 映射文案与重试策略。
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct IpcError {

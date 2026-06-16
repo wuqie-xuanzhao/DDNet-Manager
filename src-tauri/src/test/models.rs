@@ -1,8 +1,8 @@
 use super::{
     classify_error_code, ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource,
     ClientInstallation, CompatibilityStatus, DownloadCacheState, DownloadJob, DownloadJobRecovery,
-    DownloadJobStatus, IpcError, IPC_ERROR_CHECKSUM_MISMATCH, IPC_ERROR_CLIENT_RUNNING,
-    IPC_ERROR_MANIFEST_UNREACHABLE, IPC_ERROR_NETWORK_HOST_NOT_TRUSTED,
+    DownloadJobStatus, IpcError, ManagerError, IPC_ERROR_CHECKSUM_MISMATCH,
+    IPC_ERROR_CLIENT_RUNNING, IPC_ERROR_MANIFEST_UNREACHABLE, IPC_ERROR_NETWORK_HOST_NOT_TRUSTED,
     IPC_ERROR_NETWORK_HTTPS_REQUIRED, IPC_ERROR_NOT_FOUND, IPC_ERROR_SHA256_MISSING,
     IPC_ERROR_UNKNOWN,
 };
@@ -150,4 +150,47 @@ fn ipc_error_from_string_classifies_and_keeps_message() {
     let error = IpcError::from("host is not trusted".to_string());
     assert_eq!(error.code, IPC_ERROR_NETWORK_HOST_NOT_TRUSTED);
     assert_eq!(error.message, "host is not trusted");
+}
+
+#[test]
+fn manager_error_maps_variants_to_stable_codes() {
+    assert_eq!(
+        ManagerError::NetworkHostNotTrusted("x".into()).error_code(),
+        IPC_ERROR_NETWORK_HOST_NOT_TRUSTED
+    );
+    assert_eq!(
+        ManagerError::NetworkHttpsRequired("x".into()).error_code(),
+        IPC_ERROR_NETWORK_HTTPS_REQUIRED
+    );
+    assert_eq!(
+        ManagerError::ChecksumMismatch("x".into()).error_code(),
+        IPC_ERROR_CHECKSUM_MISMATCH
+    );
+    assert_eq!(
+        ManagerError::NotFound("x".into()).error_code(),
+        IPC_ERROR_NOT_FOUND
+    );
+    assert_eq!(
+        ManagerError::ClientRunning("x".into()).error_code(),
+        IPC_ERROR_CLIENT_RUNNING
+    );
+    assert_eq!(
+        ManagerError::ManifestUnreachable("x".into()).error_code(),
+        IPC_ERROR_MANIFEST_UNREACHABLE
+    );
+    assert_eq!(
+        ManagerError::Sha256Missing("x".into()).error_code(),
+        IPC_ERROR_SHA256_MISSING
+    );
+    assert_eq!(
+        ManagerError::Internal("x".into()).error_code(),
+        IPC_ERROR_UNKNOWN
+    );
+}
+
+#[test]
+fn manager_error_converts_to_ipc_error_with_correct_code() {
+    let ipc: IpcError = ManagerError::ChecksumMismatch("sha256 mismatch".into()).into();
+    assert_eq!(ipc.code, IPC_ERROR_CHECKSUM_MISMATCH);
+    assert_eq!(ipc.message, "sha256 mismatch");
 }

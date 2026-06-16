@@ -5,7 +5,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 const GITHUB_API_BASE: &str = "https://api.github.com/repos";
-const USER_AGENT: &str = "DDNet-Manager/0.1.0";
+
+/// 返回带当前包版本号的 User-Agent 字符串。
+fn user_agent() -> String {
+    format!("DDNet-Manager/{}", env!("CARGO_PKG_VERSION"))
+}
 
 /// 表示 GitHub API 返回的 Release 数据结构。
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -68,7 +72,7 @@ pub async fn fetch_latest_github_release(
     let client = crate::network_route::build_routed_client(
         route,
         Some(Duration::from_secs(15)),
-        Some(USER_AGENT),
+        Some(&user_agent()),
         true,
     )?;
 
@@ -248,7 +252,7 @@ async fn fetch_expanded_assets_digests(
     let client = crate::network_route::build_routed_client(
         route,
         Some(Duration::from_secs(15)),
-        Some(USER_AGENT),
+        Some(&user_agent()),
         true,
     )?;
 

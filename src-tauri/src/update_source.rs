@@ -158,7 +158,7 @@ async fn check_manifest_update(
     input: ManifestUpdateInput<'_>,
 ) -> Result<Option<ClientUpdateCheck>, String> {
     let manifest = crate::manifest::fetch_manifest_with_route(
-        crate::commands::required_manifest_url(input.request.manifest_url.as_deref())?,
+        crate::commands::download::required_manifest_url(input.request.manifest_url.as_deref())?,
         input.request.network_route.as_ref(),
     )
     .await?;

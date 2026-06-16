@@ -1,50 +1,64 @@
-use crate::download::DownloadManager;
+/// 下载与安装子命令。
+pub mod download;
+
+/// 安装事务子命令。
+pub mod install;
+
 use crate::models::{
     AppSettings, CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
-    DownloadJob, DownloadJobRecovery, DownloadJobStatus, InstallHistoryRecord,
-    InstallHistoryStatus, IpcError, LocalSmokeResultReport, NetworkRouteConfig,
-    ScanClientInstallationsOptions, StartUpdateDownloadRequest, UpdateAction,
-    UpsertClientInstallationRequest,
+    DownloadJob, InstallHistoryRecord, InstallHistoryStatus, IpcError, LocalSmokeResultReport,
+    NetworkRouteConfig, ScanClientInstallationsOptions, UpsertClientInstallationRequest,
 };
-use std::fs;
+use crate::registry::ClientRegistry;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
-use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
+use tauri::{AppHandle, Manager, State};
 
-type DownloadManagerState<'a> = State<'a, DownloadManager>;
+/// 下载管理器的 Tauri managed 状态类型别名。
+pub(crate) type DownloadManagerState<'a> = State<'a, crate::download::DownloadManager>;
 
-struct InstallContext<'a> {
-    app: &'a AppHandle,
-    manager: &'a DownloadManager,
-    registry: &'a crate::registry::ClientRegistry,
-    job_id: &'a str,
-    job: &'a DownloadJob,
+/// 客户端注册表的 Tauri managed 状态类型别名。
+pub(crate) type RegistryState<'a> = State<'a, ClientRegistry>;
+
+/// 安装事务运行时的共享上下文。
+///
+/// 所有字段都 own，便于把整个 context move 进 `tokio::task::spawn_blocking`，
+/// 避免在 IPC 调用线程上执行重 IO（SHA-256 校验、解压、目录拷贝）。
+pub(crate) struct InstallContext {
+    pub(crate) app: AppHandle,
+    pub(crate) manager: crate::download::DownloadManager,
+    pub(crate) registry: ClientRegistry,
+    pub(crate) job_id: String,
+    pub(crate) job: DownloadJob,
 }
 
-struct DownloadTaskContext {
-    app: AppHandle,
-    manager: DownloadManager,
-    job: DownloadJob,
-    cache_path: PathBuf,
-    route: Option<NetworkRouteConfig>,
+/// 后台下载任务的全局上下文，进入 tokio::spawn 前组装。
+pub(crate) struct DownloadTaskContext {
+    pub(crate) app: AppHandle,
+    pub(crate) registry: ClientRegistry,
+    pub(crate) manager: crate::download::DownloadManager,
+    pub(crate) job: DownloadJob,
+    pub(crate) cache_path: PathBuf,
+    pub(crate) route: Option<NetworkRouteConfig>,
 }
 
-struct PreparedUpdateDownload {
-    job: DownloadJob,
-    route: Option<NetworkRouteConfig>,
+/// 下载任务准备阶段的输出结构。
+pub(crate) struct PreparedUpdateDownload {
+    pub(crate) job: DownloadJob,
+    pub(crate) route: Option<NetworkRouteConfig>,
 }
 
-struct InstallHistoryInput<'a> {
-    job: &'a DownloadJob,
-    client: &'a ClientInstallation,
-    rollback_dir: &'a Path,
-    status: InstallHistoryStatus,
-    error: Option<String>,
+/// 安装历史记录写入的输入参数聚合。
+pub(crate) struct InstallHistoryInput<'a> {
+    pub(crate) job: &'a DownloadJob,
+    pub(crate) client: &'a ClientInstallation,
+    pub(crate) rollback_dir: &'a Path,
+    pub(crate) status: InstallHistoryStatus,
+    pub(crate) error: Option<String>,
 }
 
-const LOCAL_SMOKE_RESULT_PATH_ENV: &str = "DDNET_MANAGER_LOCAL_SMOKE_RESULT_PATH";
+/// 本地 smoke 结果路径环境变量名。
+pub(crate) const LOCAL_SMOKE_RESULT_PATH_ENV: &str = "DDNET_MANAGER_LOCAL_SMOKE_RESULT_PATH";
 
 /// 验证用户选择的客户端目录，并返回识别出的安装信息。
 #[tauri::command]
@@ -55,7 +69,7 @@ pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstalla
 /// 扫描本机候选客户端安装目录。
 #[tauri::command]
 pub fn scan_client_installations(
-    app: AppHandle,
+    registry: RegistryState<'_>,
     options: Option<ScanClientInstallationsOptions>,
 ) -> Result<Vec<ClientInstallation>, String> {
     let options = options.unwrap_or_default();
@@ -68,13 +82,13 @@ pub fn scan_client_installations(
 
     if options.include_saved_paths {
         roots.extend(
-            registry_for_app(&app)?
+            registry
                 .list_client_installations()?
                 .into_iter()
                 .map(|client| PathBuf::from(client.install_dir)),
         );
     }
-    let settings = registry_for_app(&app)?.load_app_settings()?;
+    let settings = registry.load_app_settings()?;
 
     crate::client_scan::scan_client_installations(&crate::client_scan::ScanOptions {
         roots,
@@ -92,7 +106,7 @@ pub fn scan_client_installations(
 /// 保存或更新客户端安装记录。
 #[tauri::command]
 pub fn upsert_client_installation(
-    app: AppHandle,
+    registry: RegistryState<'_>,
     request: UpsertClientInstallationRequest,
 ) -> Result<ClientInstallation, String> {
     let mut client = crate::client_scan::validate_client_dir(Path::new(&request.install_dir))?;
@@ -102,121 +116,56 @@ pub fn upsert_client_installation(
         return Err("local smoke client cannot be saved as default".to_string());
     }
     client.is_default = request.is_default;
-    registry_for_app(&app)?.upsert_client_installation(&client)?;
+    registry.upsert_client_installation(&client)?;
     Ok(client)
 }
 
 /// 从注册表移除客户端记录，不删除本地文件。
 #[tauri::command]
-pub fn remove_client_installation(app: AppHandle, id: String) -> Result<(), String> {
-    registry_for_app(&app)?.remove_client_installation(&id)
+pub fn remove_client_installation(registry: RegistryState<'_>, id: String) -> Result<(), String> {
+    registry.remove_client_installation(&id)
 }
 
 /// 设置默认启动客户端。
 #[tauri::command]
-pub fn set_default_client(app: AppHandle, id: String) -> Result<(), String> {
-    registry_for_app(&app)?.set_default_client(&id)
+pub fn set_default_client(registry: RegistryState<'_>, id: String) -> Result<(), String> {
+    registry.set_default_client(&id)
 }
 
 /// 读取所有已保存客户端安装记录。
 #[tauri::command]
-pub fn list_client_installations(app: AppHandle) -> Result<Vec<ClientInstallation>, String> {
-    registry_for_app(&app)?.list_client_installations()
+pub fn list_client_installations(
+    registry: RegistryState<'_>,
+) -> Result<Vec<ClientInstallation>, String> {
+    registry.list_client_installations()
 }
 
 /// 读取默认启动客户端。
 #[tauri::command]
-pub fn get_default_client(app: AppHandle) -> Result<Option<ClientInstallation>, String> {
-    registry_for_app(&app)?.get_default_client()
-}
-
-fn monitor_client_exit(app: AppHandle, executable_path: String) {
-    tokio::spawn(async move {
-        // 先等 2 秒，确保进程已经初始化启动
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        let path = std::path::PathBuf::from(&executable_path);
-
-        let mut was_running = false;
-        for _ in 0..60 {
-            if let Ok(true) = crate::process::is_client_running(&path) {
-                was_running = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-
-        if !was_running {
-            return;
-        }
-
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            match crate::process::is_client_running(&path) {
-                Ok(false) => break,
-                Err(_) => break,
-                _ => {}
-            }
-        }
-
-        if let Ok(registry) = registry_for_app(&app) {
-            if let Ok(settings) = registry.load_app_settings() {
-                if settings.exit_game_show_launcher {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
-                    }
-                }
-            }
-        }
-    });
-}
-
-/// 启动指定路径的客户端可执行文件。
-#[tauri::command]
-pub fn launch_client(app: AppHandle, path: String) -> Result<(), String> {
-    crate::process::launch_executable(&path)?;
-    monitor_client_exit(app, path);
-    Ok(())
-}
-
-/// 重新验证并启动默认客户端。
-#[tauri::command]
-pub fn launch_default_client(app: AppHandle) -> Result<(), String> {
-    let registry = registry_for_app(&app)?;
-    let client = registry
-        .get_default_client()?
-        .ok_or_else(|| "default client is not configured".to_string())?;
-    let verified = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
-    if verified.health != ClientHealth::Ok {
-        return Err(format!(
-            "default client is not healthy before launch: {:?}",
-            verified.health
-        ));
-    }
-    if !verified.compatibility.can_launch {
-        return Err("default client is not compatible with this machine".to_string());
-    }
-
-    let probe = crate::process::launch_executable_with_probe(
-        &verified.executable_path,
-        Duration::from_secs(2),
-    )?;
-    registry.record_launch_probe_result(crate::registry::LaunchProbeRecord {
-        client_installation_id: &client.id,
-        status: probe.status,
-        message: &probe.message,
-    })?;
-
-    monitor_client_exit(app, verified.executable_path.clone());
-    Ok(())
+pub fn get_default_client(
+    registry: RegistryState<'_>,
+) -> Result<Option<ClientInstallation>, String> {
+    registry.get_default_client()
 }
 
 /// 读取 MVP 应用设置。
 #[tauri::command]
-pub fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
-    registry_for_app(&app)?.load_app_settings()
+pub fn load_app_settings(registry: RegistryState<'_>) -> Result<AppSettings, String> {
+    registry.load_app_settings()
+}
+
+/// 保存 MVP 应用设置，并立即成为后续后端命令使用的配置。
+#[tauri::command]
+pub fn save_app_settings(
+    registry: RegistryState<'_>,
+    settings: AppSettings,
+) -> Result<AppSettings, String> {
+    registry.save_app_settings(&settings)?;
+    #[cfg(target_os = "windows")]
+    {
+        set_autostart_registry(settings.autostart)?;
+    }
+    Ok(settings)
 }
 
 #[cfg(target_os = "windows")]
@@ -258,32 +207,19 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
     }
 }
 
-/// 保存 MVP 应用设置，并立即成为后续后端命令使用的配置。
-#[tauri::command]
-pub fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<AppSettings, String> {
-    registry_for_app(&app)?.save_app_settings(&settings)?;
-    #[cfg(target_os = "windows")]
-    {
-        if let Err(e) = set_autostart_registry(settings.autostart) {
-            println!("Failed to set autostart registry: {}", e);
-        }
-    }
-    Ok(settings)
-}
-
 /// 在 debug + 显式 env 开关下，把本地 smoke 自动验收结果写回脚本约定路径。
 #[tauri::command]
 pub fn report_local_smoke_result(result: LocalSmokeResultReport) -> Result<(), String> {
-    write_local_smoke_result_report(&result)
+    crate::commands::download::write_local_smoke_result_report(&result)
 }
 
 /// 读取指定客户端的安装历史。
 #[tauri::command]
 pub fn list_install_history(
-    app: AppHandle,
+    registry: RegistryState<'_>,
     client_installation_id: String,
 ) -> Result<Vec<InstallHistoryRecord>, String> {
-    registry_for_app(&app)?.list_install_history(&client_installation_id)
+    registry.list_install_history(&client_installation_id)
 }
 
 /// 判断指定客户端可执行文件是否正在运行。
@@ -306,13 +242,13 @@ pub async fn load_manifest(
 /// 检查指定客户端和渠道是否存在可用更新。
 #[tauri::command]
 pub async fn check_client_update(
-    app: AppHandle,
+    registry: RegistryState<'_>,
     request: CheckClientUpdateRequest,
 ) -> Result<Option<ClientUpdateCheck>, IpcError> {
-    if request_requires_manifest_url(&request) {
-        required_manifest_url(request.manifest_url.as_deref())?;
+    if crate::commands::download::request_requires_manifest_url(&request) {
+        crate::commands::download::required_manifest_url(request.manifest_url.as_deref())?;
     }
-    let current_version = registry_for_app(&app)?
+    let current_version = registry
         .list_client_installations()?
         .into_iter()
         .find(|client| {
@@ -327,565 +263,93 @@ pub async fn check_client_update(
         .map_err(IpcError::from)
 }
 
-/// 创建下载任务并开始真实下载更新包。
+/// 启动指定路径的客户端可执行文件。
 #[tauri::command]
-pub async fn start_update_download(
-    app: AppHandle,
-    manager: DownloadManagerState<'_>,
-    request: StartUpdateDownloadRequest,
-) -> Result<DownloadJob, IpcError> {
-    let prepared = prepare_update_download_job(&app, request).await?;
-    let job = prepared.job;
-    let cache_path = PathBuf::from(&job.cache_path);
-    let registry = registry_for_app(&app)?;
-    registry.upsert_download_job(&job)?;
-    manager.insert(job.clone())?;
-    spawn_download_task(DownloadTaskContext {
-        app,
-        manager: manager.inner().clone(),
-        job: job.clone(),
-        cache_path,
-        route: prepared.route,
-    });
-
-    Ok(job)
+pub fn launch_client(app: AppHandle, path: String) -> Result<(), String> {
+    crate::process::launch_executable(&path)?;
+    monitor_client_exit(app, path);
+    Ok(())
 }
 
-async fn prepare_update_download_job(
-    app: &AppHandle,
-    request: StartUpdateDownloadRequest,
-) -> Result<PreparedUpdateDownload, String> {
-    let client_installation_id = request.client_installation_id.clone();
-    let network_route = request.network_route.clone();
-    let registry = registry_for_app(app)?;
+/// 重新验证并启动默认客户端。
+#[tauri::command]
+pub fn launch_default_client(app: AppHandle, registry: RegistryState<'_>) -> Result<(), String> {
     let client = registry
-        .list_client_installations()?
-        .into_iter()
-        .find(|client| client.id == client_installation_id)
-        .ok_or_else(|| format!("client installation not found: {}", client_installation_id))?;
-    let update_request = CheckClientUpdateRequest {
-        client_id: client.client_id.clone(),
-        channel: request.channel,
-        manifest_url: request.manifest_url,
-        platform: request.platform,
-        network_route: network_route.clone(),
-        use_manifest_source: request.use_manifest_source,
-    };
-    let update = crate::update_source::check_client_update(&update_request, client.version)
-        .await?
-        .ok_or_else(|| "no downloadable update is available for this client".to_string())?;
-    if update.action != UpdateAction::Download {
-        return Err(update
-            .message
-            .clone()
-            .unwrap_or_else(|| "update source does not provide a downloadable asset".to_string()));
-    }
-    let downloads_dir = app_cache_dir(app)?.join("downloads");
-    let mut job =
-        crate::download::create_download_job(&client_installation_id, &update, &downloads_dir);
-    job.status = DownloadJobStatus::Downloading;
-    Ok(PreparedUpdateDownload {
-        job,
-        route: network_route,
-    })
-}
-
-/// 返回调用方显式配置的自维护 manifest 地址，未配置时拒绝继续请求。
-pub(crate) fn required_manifest_url(input: Option<&str>) -> Result<&str, String> {
-    input
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .ok_or_else(|| "manifest url is not configured".to_string())
-}
-
-/// 判断当前更新检查请求是否必须显式提供 manifest URL。
-pub(crate) fn request_requires_manifest_url(request: &CheckClientUpdateRequest) -> bool {
-    request.use_manifest_source
-}
-
-/// 返回本地 smoke 结果文件路径，要求显式通过环境变量配置。
-pub(crate) fn required_local_smoke_result_path() -> Result<PathBuf, String> {
-    std::env::var(LOCAL_SMOKE_RESULT_PATH_ENV)
-        .ok()
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| "local smoke result path is not configured".to_string())
-}
-
-/// 返回本地 smoke 结果写入使用的同目录临时文件路径。
-pub(crate) fn local_smoke_result_temp_path(output_path: &Path) -> Result<PathBuf, String> {
-    let file_name = output_path
-        .file_name()
-        .ok_or_else(|| "local smoke result path must include a file name".to_string())?;
-    let mut temp_file_name = file_name.to_os_string();
-    temp_file_name.push(".tmp");
-
-    Ok(output_path.with_file_name(temp_file_name))
-}
-
-/// 将本地 smoke 验收结果写入 JSON 文件，仅允许在已启用 local smoke 时调用。
-pub(crate) fn write_local_smoke_result_report(
-    result: &LocalSmokeResultReport,
-) -> Result<(), String> {
-    if !crate::local_smoke::is_local_smoke_enabled() {
-        return Err("local smoke reporting is not enabled".to_string());
-    }
-
-    let output_path = required_local_smoke_result_path()?;
-    if let Some(parent) = output_path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create local smoke result dir: {error}"))?;
-    }
-
-    let payload = serde_json::to_string_pretty(result)
-        .map_err(|error| format!("failed to serialize local smoke result: {error}"))?;
-    let temp_path = local_smoke_result_temp_path(&output_path)?;
-    fs::write(&temp_path, payload).map_err(|error| {
-        let _ = fs::remove_file(&temp_path);
-        format!("failed to write local smoke result: {error}")
-    })?;
-    fs::rename(&temp_path, &output_path).map_err(|error| {
-        let _ = fs::remove_file(&temp_path);
-        format!("failed to replace local smoke result: {error}")
-    })
-}
-
-fn spawn_download_task(context: DownloadTaskContext) {
-    let job_id = context.job.id.clone();
-    let job_for_task = context.job.clone();
-    let app = context.app;
-    let manager = context.manager;
-    let cache_path = context.cache_path;
-    let route = context.route;
-
-    tokio::spawn(async move {
-        let result = crate::download::download_asset_to_file(
-            crate::download::DownloadFileRequest {
-                asset_url: &job_for_task.asset_url,
-                cache_path: &cache_path,
-                expected_size: job_for_task.size,
-                route: route.as_ref(),
-            },
-            |downloaded_bytes| {
-                let Ok(job) = manager.update(&job_id, |job| {
-                    job.downloaded_bytes = downloaded_bytes;
-                }) else {
-                    return false;
-                };
-                persist_download_job_snapshot(&app, &job);
-                let keep_running = job.status != DownloadJobStatus::Canceled;
-                let _ = app.emit_to("main", "download-progress", job);
-                keep_running
-            },
-        )
-        .await
-        .and_then(|_| {
-            crate::download::verify_downloaded_file(
-                &cache_path,
-                &job_for_task.sha256,
-                job_for_task.size,
-            )
-        });
-
-        match result {
-            Ok(()) => {
-                if let Ok(job) = manager.update(&job_id, |job| {
-                    job.status = DownloadJobStatus::Verified;
-                    job.downloaded_bytes = job.size;
-                    job.error = None;
-                }) {
-                    match persist_download_job_snapshot_result(&app, &job) {
-                        Ok(()) => {
-                            let _ = app.emit_to("main", "download-completed", job);
-                        }
-                        Err(error) => {
-                            if let Ok(job) = manager.update(&job_id, |job| {
-                                job.status = DownloadJobStatus::Failed;
-                                job.error = Some(error);
-                            }) {
-                                persist_download_job_snapshot(&app, &job);
-                                let _ = app.emit_to("main", "download-failed", job);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(error) => {
-                if manager.get(&job_id).is_ok_and(|job| {
-                    job.is_some_and(|job| job.status == DownloadJobStatus::Canceled)
-                }) {
-                    return;
-                }
-                let _ = std::fs::remove_file(&cache_path);
-                if let Ok(job) = manager.update(&job_id, |job| {
-                    job.status = DownloadJobStatus::Failed;
-                    job.error = Some(error);
-                }) {
-                    persist_download_job_snapshot(&app, &job);
-                    let _ = app.emit_to("main", "download-failed", job);
-                }
-            }
-        }
-    });
-}
-
-/// 取消下载任务。
-#[tauri::command]
-pub fn cancel_download(
-    app: AppHandle,
-    manager: DownloadManagerState<'_>,
-    job_id: String,
-) -> Result<DownloadJob, IpcError> {
-    let job = manager.cancel(&job_id)?;
-    persist_download_job_snapshot(&app, &job);
-    Ok(job)
-}
-
-/// 查询下载任务状态。
-#[tauri::command]
-pub fn get_download_job(
-    app: AppHandle,
-    manager: DownloadManagerState<'_>,
-    job_id: String,
-) -> Result<Option<DownloadJob>, IpcError> {
-    let registry = registry_for_app(&app)?;
-    load_download_job_snapshot(manager.inner(), &registry, &job_id).map_err(IpcError::from)
-}
-
-/// 返回指定客户端当前可恢复的下载任务摘要。
-#[tauri::command]
-pub fn list_download_job_recoveries(
-    app: AppHandle,
-    client_installation_id: Option<String>,
-) -> Result<Vec<DownloadJobRecovery>, IpcError> {
-    let registry = registry_for_app(&app)?;
-    list_download_job_recoveries_from_registry(&registry, client_installation_id.as_deref())
-        .map_err(IpcError::from)
-}
-
-/// 校验并安装已下载的更新包。
-#[tauri::command]
-pub fn install_downloaded_update(
-    app: AppHandle,
-    manager: DownloadManagerState<'_>,
-    job_id: String,
-) -> Result<DownloadJob, IpcError> {
-    let registry = registry_for_app(&app)?;
-    let job = load_download_job_snapshot(manager.inner(), &registry, &job_id)?
-        .ok_or_else(|| format!("download job not found: {job_id}"))?;
-    if !matches!(
-        job.status,
-        DownloadJobStatus::Verified | DownloadJobStatus::Failed
-    ) {
+        .get_default_client()?
+        .ok_or_else(|| "default client is not configured".to_string())?;
+    let verified = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
+    if verified.health != ClientHealth::Ok {
         return Err(format!(
-            "download job must be verified before install: {:?}",
-            job.status
-        )
-        .into());
-    }
-    let recovery = crate::download::build_download_job_recovery(&job)?;
-    if !recovery.can_install {
-        return Err(format!(
-            "download job cache is not installable: {:?}",
-            recovery.cache_state
-        )
-        .into());
-    }
-
-    let mut client = match load_install_target(&registry, &job) {
-        Ok(client) => client,
-        Err(error) => {
-            record_install_prepare_failure(&registry, &job, &error);
-            return Err(error.into());
-        }
-    };
-    run_install_transaction(
-        InstallContext {
-            app: &app,
-            manager: manager.inner(),
-            registry: &registry,
-            job_id: &job_id,
-            job: &job,
-        },
-        &mut client,
-    )
-    .map_err(IpcError::from)
-}
-
-fn record_install_prepare_failure(
-    registry: &crate::registry::ClientRegistry,
-    job: &DownloadJob,
-    error: &str,
-) {
-    let Ok(Some(client)) = registry.client_installation_by_id(&job.client_installation_id) else {
-        return;
-    };
-    let rollback_dir = crate::download::rollback_dir_for(
-        Path::new(&client.install_dir),
-        &format!("install-{}", job.id),
-    );
-    let _ = registry.record_install_history(&install_history_record(InstallHistoryInput {
-        job,
-        client: &client,
-        rollback_dir: &rollback_dir,
-        status: InstallHistoryStatus::Failed,
-        error: Some(error.to_string()),
-    }));
-}
-
-fn load_install_target(
-    registry: &crate::registry::ClientRegistry,
-    job: &DownloadJob,
-) -> Result<ClientInstallation, String> {
-    let mut client = registry
-        .list_client_installations()?
-        .into_iter()
-        .find(|client| client.id == job.client_installation_id)
-        .ok_or_else(|| {
-            format!(
-                "client installation not found: {}",
-                job.client_installation_id
-            )
-        })?;
-    let target_client = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
-    if target_client.health != ClientHealth::Ok {
-        return Err(format!(
-            "target client is not healthy before install: {:?}",
-            target_client.health
+            "default client is not healthy before launch: {:?}",
+            verified.health
         ));
     }
-    if crate::process::is_client_running(Path::new(&target_client.executable_path))? {
-        return Err("target client is running; close it before install".to_string());
+    if !verified.compatibility.can_launch {
+        return Err("default client is not compatible with this machine".to_string());
     }
-    client.install_dir = target_client.install_dir;
-    client.executable_path = target_client.executable_path;
-    Ok(client)
+
+    let probe = crate::process::launch_executable_with_probe(
+        &verified.executable_path,
+        Duration::from_secs(2),
+    )?;
+    registry.record_launch_probe_result(crate::registry::LaunchProbeRecord {
+        client_installation_id: &client.id,
+        status: probe.status,
+        message: &probe.message,
+    })?;
+
+    monitor_client_exit(app, verified.executable_path.clone());
+    Ok(())
 }
 
-fn run_install_transaction(
-    context: InstallContext<'_>,
-    client: &mut ClientInstallation,
-) -> Result<DownloadJob, String> {
-    let cache_path = PathBuf::from(&context.job.cache_path);
-    let install_id = format!("install-{}", context.job.id);
-    let cache_root = app_cache_dir(context.app)?;
-    let staging_dir = cache_root.join("staging").join(&install_id);
-    let rollback_dir =
-        crate::download::rollback_dir_for(Path::new(&client.install_dir), &install_id);
+/// 客户端启动后等待首次出现的最大轮询次数。
+const MONITOR_STARTUP_MAX_POLLS: usize = 60;
+/// 客户端启动后等待首次出现的轮询间隔（毫秒）。
+const MONITOR_STARTUP_POLL_INTERVAL_MS: u64 = 500;
+/// 客户端启动后等待进程文件就绪的初始延迟（秒）。
+const MONITOR_STARTUP_INITIAL_DELAY_SECS: u64 = 2;
+/// 客户端运行中轮询间隔（秒）。
+const MONITOR_RUNNING_POLL_INTERVAL_SECS: u64 = 1;
 
-    enter_installing_snapshot(context.manager, context.registry, context.job_id)?;
-    context
-        .app
-        .emit_to("main", "install-progress", context.job_id)
-        .map_err(|error| format!("failed to emit install-progress: {error}"))?;
+fn monitor_client_exit(app: AppHandle, executable_path: String) {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(MONITOR_STARTUP_INITIAL_DELAY_SECS)).await;
 
-    let package_kind = crate::download::package_kind_for_asset_url(&context.job.asset_url);
-    let install_result = crate::download::auto_install_guard(package_kind)
-        .and_then(|_| {
-            crate::download::verify_downloaded_file(
-                &cache_path,
-                &context.job.sha256,
-                context.job.size,
-            )
-        })
-        .and_then(|_| {
-            crate::download::extract_package_to_staging(&cache_path, &staging_dir, package_kind)
-        })
-        .and_then(|_| crate::download::find_staged_client_dir(&staging_dir))
-        .and_then(|staged_client_dir| {
-            if crate::process::is_client_running(Path::new(&client.executable_path))? {
-                return Err("target client is running; close it before install".to_string());
+        let path = std::path::PathBuf::from(&executable_path);
+
+        let mut was_running = false;
+        for _ in 0..MONITOR_STARTUP_MAX_POLLS {
+            if let Ok(true) = crate::process::is_client_running(&path) {
+                was_running = true;
+                break;
             }
-            crate::download::install_staged_client(
-                &staged_client_dir,
-                Path::new(&client.install_dir),
-                &rollback_dir,
-            )
-        });
-
-    match install_result {
-        Ok(()) => {
-            let _ = std::fs::remove_dir_all(&staging_dir);
-            finish_install_success(context, client, &rollback_dir)
+            tokio::time::sleep(Duration::from_millis(MONITOR_STARTUP_POLL_INTERVAL_MS)).await;
         }
-        Err(error) => finish_install_failure(context, error),
-    }
-}
 
-fn finish_install_success(
-    context: InstallContext<'_>,
-    client: &mut ClientInstallation,
-    rollback_dir: &Path,
-) -> Result<DownloadJob, String> {
-    client.version = Some(context.job.version.clone());
-    client.health = ClientHealth::Ok;
-    if let Err(error) = context.registry.upsert_client_installation(client) {
-        let restore_message =
-            match crate::download::restore_rollback(Path::new(&client.install_dir), rollback_dir) {
-                Ok(()) => "rollback restored".to_string(),
-                Err(restore_error) => format!("rollback restore failed: {restore_error}"),
-            };
-        return finish_install_failure(
-            context,
-            format!(
-                "registry update failed after file replacement: {error}; {restore_message}; rollback_dir={}",
-                rollback_dir.display()
-            ),
-        );
-    }
-    let job = complete_download_job_snapshot(context.manager, context.registry, context.job_id)?;
-    let _ = context
-        .registry
-        .record_install_history(&install_history_record(InstallHistoryInput {
-            job: context.job,
-            client,
-            rollback_dir,
-            status: InstallHistoryStatus::Completed,
-            error: None,
-        }));
-    context
-        .app
-        .emit_to("main", "install-completed", &job)
-        .map_err(|error| format!("failed to emit install-completed: {error}"))?;
-    Ok(job)
-}
-
-fn finish_install_failure(
-    context: InstallContext<'_>,
-    error: String,
-) -> Result<DownloadJob, String> {
-    if let Ok(client) = load_install_target(context.registry, context.job) {
-        let rollback_dir = crate::download::rollback_dir_for(
-            Path::new(&client.install_dir),
-            &format!("install-{}", context.job.id),
-        );
-        let _ = context
-            .registry
-            .record_install_history(&install_history_record(InstallHistoryInput {
-                job: context.job,
-                client: &client,
-                rollback_dir: &rollback_dir,
-                status: InstallHistoryStatus::Failed,
-                error: Some(error.clone()),
-            }));
-    }
-    let job = context.manager.update(context.job_id, |job| {
-        job.status = DownloadJobStatus::Failed;
-        job.error = Some(error);
-    })?;
-    context.registry.upsert_download_job(&job)?;
-    context
-        .app
-        .emit_to("main", "install-failed", &job)
-        .map_err(|emit_error| format!("failed to emit install-failed: {emit_error}"))?;
-    Ok(job)
-}
-
-fn install_history_record(input: InstallHistoryInput<'_>) -> InstallHistoryRecord {
-    let completed_at = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .ok()
-        .or_else(|| Some("1970-01-01T00:00:00Z".to_string()));
-    InstallHistoryRecord {
-        id: format!("install-{}", input.job.id),
-        job_id: input.job.id.clone(),
-        client_installation_id: input.client.id.clone(),
-        client_id: input.job.client_id.clone(),
-        version: input.job.version.clone(),
-        asset_url: input.job.asset_url.clone(),
-        package_kind: crate::download::package_kind_for_asset_url(&input.job.asset_url)
-            .as_str()
-            .to_string(),
-        status: input.status,
-        rollback_path: Some(input.rollback_dir.to_string_lossy().replace('\\', "/")),
-        error: input.error,
-        completed_at,
-    }
-}
-
-fn registry_for_app(app: &AppHandle) -> Result<crate::registry::ClientRegistry, String> {
-    let db_path = app_data_dir(app)?.join("ddnet-manager.sqlite");
-    crate::registry::ClientRegistry::open(&db_path)
-}
-
-fn persist_download_job_snapshot(app: &AppHandle, job: &DownloadJob) {
-    if let Ok(registry) = registry_for_app(app) {
-        let _ = registry.upsert_download_job(job);
-    }
-}
-
-fn persist_download_job_snapshot_result(app: &AppHandle, job: &DownloadJob) -> Result<(), String> {
-    registry_for_app(app)?.upsert_download_job(job)
-}
-
-/// 将下载任务切换为安装中状态，并在文件替换前持久化该快照。
-pub(crate) fn enter_installing_snapshot(
-    manager: &DownloadManager,
-    registry: &crate::registry::ClientRegistry,
-    job_id: &str,
-) -> Result<DownloadJob, String> {
-    let previous = manager
-        .get(job_id)?
-        .ok_or_else(|| format!("download job not found: {job_id}"))?;
-    let job = manager.update(job_id, |job| {
-        job.status = DownloadJobStatus::Installing;
-    })?;
-    if let Err(error) = registry.upsert_download_job(&job) {
-        let rollback_result = manager.update(job_id, |job| {
-            *job = previous;
-        });
-        if let Err(rollback_error) = rollback_result {
-            return Err(format!(
-                "{error}; failed to restore in-memory download job: {rollback_error}"
-            ));
+        if !was_running {
+            return;
         }
-        return Err(error);
-    }
-    Ok(job)
-}
 
-/// 将下载任务切换为已完成状态，并在安装历史写入前持久化主状态。
-pub(crate) fn complete_download_job_snapshot(
-    manager: &DownloadManager,
-    registry: &crate::registry::ClientRegistry,
-    job_id: &str,
-) -> Result<DownloadJob, String> {
-    let job = manager.update(job_id, |job| {
-        job.status = DownloadJobStatus::Completed;
-        job.error = None;
-    })?;
-    registry.upsert_download_job(&job)?;
-    Ok(job)
-}
+        loop {
+            tokio::time::sleep(Duration::from_secs(MONITOR_RUNNING_POLL_INTERVAL_SECS)).await;
+            match crate::process::is_client_running(&path) {
+                Ok(false) => break,
+                Err(_) => break,
+                _ => {}
+            }
+        }
 
-fn load_download_job_snapshot(
-    manager: &DownloadManager,
-    registry: &crate::registry::ClientRegistry,
-    job_id: &str,
-) -> Result<Option<DownloadJob>, String> {
-    if let Some(job) = manager.get(job_id)? {
-        return Ok(Some(job));
-    }
-    let Some(job) = registry.download_job_by_id(job_id)? else {
-        return Ok(None);
-    };
-    manager.insert(job.clone())?;
-    Ok(Some(job))
-}
-
-fn list_download_job_recoveries_from_registry(
-    registry: &crate::registry::ClientRegistry,
-    client_installation_id: Option<&str>,
-) -> Result<Vec<DownloadJobRecovery>, String> {
-    registry
-        .list_download_jobs(client_installation_id)?
-        .into_iter()
-        .map(|job| crate::download::build_download_job_recovery(&job))
-        .collect()
+        let registry = app.state::<ClientRegistry>();
+        if let Ok(settings) = registry.load_app_settings() {
+            if settings.exit_game_show_launcher {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+        }
+    });
 }
 
 /// 表示软件自身更新检查的返回结构。
@@ -905,9 +369,11 @@ pub struct AppUpdateCheck {
 
 /// 检查 DDNet Manager 自身是否存在可用更新。
 #[tauri::command]
-pub async fn check_app_update(app: AppHandle) -> Result<AppUpdateCheck, String> {
+pub async fn check_app_update(
+    registry: RegistryState<'_>,
+    app: AppHandle,
+) -> Result<AppUpdateCheck, String> {
     let current_version = app.package_info().version.to_string();
-    let registry = registry_for_app(&app)?;
     let settings = registry.load_app_settings()?;
 
     let release = crate::github_release::fetch_latest_github_release(
@@ -935,18 +401,9 @@ pub fn get_app_version(app: AppHandle) -> Result<String, String> {
     Ok(app.package_info().version.to_string())
 }
 
-fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map_err(|error| format!("failed to resolve app data dir: {error}"))
-}
-
-fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// 返回 Tauri 应用缓存目录。
+pub(crate) fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_cache_dir()
         .map_err(|error| format!("failed to resolve app cache dir: {error}"))
 }
-
-#[cfg(test)]
-#[path = "test/commands.rs"]
-mod tests;

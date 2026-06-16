@@ -1,4 +1,4 @@
-use crate::commands::{
+use crate::commands::download::{
     complete_download_job_snapshot, enter_installing_snapshot,
     list_download_job_recoveries_from_registry, load_download_job_snapshot,
     local_smoke_result_temp_path, request_requires_manifest_url, required_local_smoke_result_path,

@@ -4,7 +4,7 @@ use crate::models::{
     UpdateSourceKind,
 };
 use reqwest::Url;
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::IpAddr;
 use std::time::Duration;
 
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
@@ -209,7 +209,10 @@ fn validate_asset_url(url: &Url) -> Result<(), String> {
 
 fn validate_public_https_url(url: &Url) -> Result<String, String> {
     if url.scheme() != "https" {
-        return Err("manifest url must use https".to_string());
+        return Err(crate::models::ManagerError::NetworkHttpsRequired(
+            "manifest url must use https".to_string(),
+        )
+        .into());
     }
 
     let host = url
@@ -225,7 +228,8 @@ fn validate_public_https_url(url: &Url) -> Result<String, String> {
 
     let ip_host = normalized_ip_host(host);
     if let Ok(ip) = ip_host.parse::<IpAddr>() {
-        validate_public_ip(ip)?;
+        local_smoke::validate_public_ip(ip)
+            .map_err(|_| "manifest url host must be public".to_string())?;
     }
 
     Ok(lower_host)
@@ -236,43 +240,11 @@ fn validate_trusted_host(host: &str, allowed_hosts: &[&str], error: &str) -> Res
         return Ok(());
     }
 
-    Err(error.to_string())
-}
-
-fn validate_public_ip(ip: IpAddr) -> Result<(), String> {
-    let is_blocked = match ip {
-        IpAddr::V4(ipv4) => {
-            ipv4.is_loopback() || ipv4.is_private() || ipv4.is_link_local() || ipv4.is_unspecified()
-        }
-        IpAddr::V6(ipv6) => {
-            if let Some(ipv4) = ipv6.to_ipv4_mapped() {
-                return validate_public_ip(IpAddr::V4(ipv4));
-            }
-
-            ipv6.is_loopback()
-                || ipv6.is_unspecified()
-                || is_ipv6_unique_local(&ipv6)
-                || is_ipv6_unicast_link_local(&ipv6)
-        }
-    };
-
-    if is_blocked {
-        return Err("manifest url host must be public".to_string());
-    }
-
-    Ok(())
+    Err(crate::models::ManagerError::NetworkHostNotTrusted(error.to_string()).into())
 }
 
 fn normalized_ip_host(host: &str) -> &str {
     host.trim_start_matches('[').trim_end_matches(']')
-}
-
-fn is_ipv6_unique_local(ip: &Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xfe00) == 0xfc00
-}
-
-fn is_ipv6_unicast_link_local(ip: &Ipv6Addr) -> bool {
-    (ip.segments()[0] & 0xffc0) == 0xfe80
 }
 
 async fn read_limited_manifest_response(mut response: reqwest::Response) -> Result<String, String> {

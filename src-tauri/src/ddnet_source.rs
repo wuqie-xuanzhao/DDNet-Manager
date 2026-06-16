@@ -4,7 +4,11 @@ use std::time::Duration;
 
 const DDNET_DOWNLOADS_URL: &str = "https://ddnet.org/downloads/";
 const DDNET_SHA256_URL: &str = "https://ddnet.org/downloads/sha256sums.txt";
-const USER_AGENT: &str = "DDNet-Manager/0.1.0";
+
+/// 返回带当前包版本号的 User-Agent 字符串。
+fn user_agent() -> String {
+    format!("DDNet-Manager/{}", env!("CARGO_PKG_VERSION"))
+}
 
 /// 表示 DDNet 官方下载页解析出的候选资产。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,7 +61,7 @@ pub async fn check_official_download(
     let client = crate::network_route::build_routed_client(
         route,
         Some(Duration::from_secs(15)),
-        Some(USER_AGENT),
+        Some(&user_agent()),
         true,
     )?;
     let downloads_html = fetch_text(&client, DDNET_DOWNLOADS_URL, "DDNet downloads page").await?;

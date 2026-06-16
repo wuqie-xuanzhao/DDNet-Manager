@@ -1,14 +1,15 @@
+use crate::download::install::{install_staged_client, restore_rollback, rollback_dir_for};
 use crate::download::{
     auto_install_guard, build_download_job_recovery, create_download_job, download_asset_to_file,
-    extract_package_to_staging, extract_zip_to_staging, install_staged_client,
-    package_kind_for_asset_url, restore_rollback, rollback_dir_for, sha256_hex,
+    extract_package_to_staging, extract_zip_to_staging, package_kind_for_asset_url, sha256_hex,
     validate_download_url, verify_downloaded_file, DownloadFileRequest,
-    DownloadJobRecoveryDecision, PackageKind,
+    DownloadJobRecoveryDecision, DownloadManager, PackageKind,
 };
 use crate::models::{
     ClientUpdateCheck, DownloadCacheState, DownloadJob, DownloadJobStatus, UpdateAction,
     UpdateAsset, UpdateSourceKind,
 };
+use crate::registry::ClientRegistry;
 use std::fs;
 use std::io::Write;
 
@@ -481,6 +482,7 @@ async fn download_asset_to_file_rejects_private_hosts_before_network() {
                 expected_size: 1,
                 route: None,
             },
+            None,
             |_| true,
         )
         .await
@@ -502,6 +504,7 @@ async fn download_asset_to_file_rejects_untrusted_public_host_before_network() {
             expected_size: 1,
             route: None,
         },
+        None,
         |_| true,
     )
     .await
@@ -745,4 +748,78 @@ fn sample_update(asset_url: &str) -> ClientUpdateCheck {
         action_url: None,
         message: None,
     }
+}
+
+fn test_download_job_for_recovery(id: &str, status: DownloadJobStatus) -> DownloadJob {
+    DownloadJob {
+        id: id.to_string(),
+        client_installation_id: "qmclient-main".to_string(),
+        client_id: "qmclient".to_string(),
+        channel: "stable".to_string(),
+        version: "2.62.4".to_string(),
+        asset_url:
+            "https://github.com/wxj881027/QmClient/releases/download/v2.62.4/QmClient-windows.zip"
+                .to_string(),
+        sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+        size: 2048,
+        status,
+        downloaded_bytes: 1024,
+        cache_path: format!("C:/Cache/{id}.zip"),
+        error: None,
+    }
+}
+
+#[test]
+fn recover_from_registry_transients_downloading_to_failed() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = ClientRegistry::open(&db_path).expect("注册表应打开成功");
+
+    let downloading =
+        test_download_job_for_recovery("job-downloading", DownloadJobStatus::Downloading);
+    registry
+        .upsert_download_job(&downloading)
+        .expect("下载中任务应写入注册表");
+
+    let manager = DownloadManager::default();
+    let recovered = manager
+        .recover_from_registry(&registry)
+        .expect("注册表恢复应成功");
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].status, DownloadJobStatus::Failed);
+    assert!(recovered[0].error.is_some());
+    let in_memory = manager.get("job-downloading").expect("内存任务查询应成功");
+    assert!(in_memory.is_some());
+    assert_eq!(in_memory.unwrap().status, DownloadJobStatus::Failed);
+}
+
+#[test]
+fn recover_from_registry_keeps_terminal_states_unchanged() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = ClientRegistry::open(&db_path).expect("注册表应打开成功");
+
+    let verified = test_download_job_for_recovery("job-verified", DownloadJobStatus::Verified);
+    let failed = test_download_job_for_recovery("job-failed", DownloadJobStatus::Failed);
+    let completed = test_download_job_for_recovery("job-completed", DownloadJobStatus::Completed);
+    registry
+        .upsert_download_job(&verified)
+        .expect("已校验任务应写入注册表");
+    registry
+        .upsert_download_job(&failed)
+        .expect("失败任务应写入注册表");
+    registry
+        .upsert_download_job(&completed)
+        .expect("已完成任务应写入注册表");
+
+    let manager = DownloadManager::default();
+    let recovered = manager
+        .recover_from_registry(&registry)
+        .expect("注册表恢复应成功");
+
+    assert_eq!(recovered.len(), 3);
+    assert_eq!(recovered[0].status, DownloadJobStatus::Verified);
+    assert_eq!(recovered[1].status, DownloadJobStatus::Failed);
+    assert_eq!(recovered[2].status, DownloadJobStatus::Completed);
 }

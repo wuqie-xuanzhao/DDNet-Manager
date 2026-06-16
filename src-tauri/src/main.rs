@@ -47,8 +47,21 @@ use tauri::{
 };
 
 fn main() {
+    let db_path = app_data_dir_for_main().join("ddnet-manager.sqlite");
+    let registry = registry::ClientRegistry::open(&db_path).unwrap_or_else(|error| {
+        eprintln!(
+            "failed to open client registry at {}: {error}",
+            db_path.display()
+        );
+        std::process::exit(1);
+    });
+    let manager = download::DownloadManager::default();
+    if let Err(error) = manager.recover_from_registry(&registry) {
+        eprintln!("failed to recover download jobs from registry: {error}");
+    }
     let run_result = tauri::Builder::default()
-        .manage(download::DownloadManager::default())
+        .manage(manager)
+        .manage(registry)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -142,11 +155,11 @@ fn main() {
             commands::is_client_running,
             commands::load_manifest,
             commands::check_client_update,
-            commands::start_update_download,
-            commands::cancel_download,
-            commands::get_download_job,
-            commands::list_download_job_recoveries,
-            commands::install_downloaded_update,
+            commands::download::start_update_download,
+            commands::download::cancel_download,
+            commands::download::get_download_job,
+            commands::download::list_download_job_recoveries,
+            commands::install::install_downloaded_update,
             commands::check_app_update,
             commands::get_app_version
         ])
@@ -155,5 +168,33 @@ fn main() {
     if let Err(error) = run_result {
         eprintln!("failed to run DDNet Manager Tauri application: {error}");
         std::process::exit(1);
+    }
+}
+
+fn app_data_dir_for_main() -> std::path::PathBuf {
+    let exe_dir = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("failed to get current exe path: {error}");
+            std::process::exit(1);
+        }
+    };
+    let exe_parent = match exe_dir.parent() {
+        Some(dir) => dir.to_path_buf(),
+        None => {
+            eprintln!("exe path must have a parent directory");
+            std::process::exit(1);
+        }
+    };
+    let portable_marker = exe_parent.join(".portable");
+    if portable_marker.exists() {
+        return exe_parent.join("data");
+    }
+    match dirs::data_dir() {
+        Some(dir) => dir,
+        None => {
+            eprintln!("failed to resolve system app data directory");
+            std::process::exit(1);
+        }
     }
 }
