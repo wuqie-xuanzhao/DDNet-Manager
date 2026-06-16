@@ -355,8 +355,8 @@ fn extract_zip_to_staging_rejects_symlink_entry() {
         .expect("symlink entry 应创建成功");
     zip.finish().expect("测试 zip 应写入完成");
 
-    let error = extract_zip_to_staging(&zip_path, &staging_dir)
-        .expect_err("symlink entry 应被拒绝");
+    let error =
+        extract_zip_to_staging(&zip_path, &staging_dir).expect_err("symlink entry 应被拒绝");
 
     assert!(error.contains("unsafe zip symlink entry"));
     assert!(!staging_dir.join("evil_link").exists());

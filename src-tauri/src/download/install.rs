@@ -195,6 +195,39 @@ pub fn cleanup_stale_install_artifacts(scan_dir: &Path) -> Result<usize, String>
     Ok(removed)
 }
 
+/// 启动时清理上次进程崩溃留下的 staging 残留。
+///
+/// staging_root 通常是 `<app_cache>/staging`，每次安装事务在它下面建
+/// `install-<job_id>/` 子目录（见 [`crate::commands::install`]）。崩溃前若已解压
+/// 但未完成 install，残留会逐步累积磁盘占用。启动时无活跃安装任务，所有
+/// `install-*` 子目录都可安全删除。
+///
+/// 仅清理 `install-` 前缀的子目录，保留 staging_root 本身与其他名字的目录。
+pub fn cleanup_stale_staging(staging_root: &Path) -> Result<usize, String> {
+    if !staging_root.exists() {
+        return Ok(0);
+    }
+    let entries = fs::read_dir(staging_root)
+        .map_err(|error| format!("failed to read staging root: {error}"))?;
+    let mut removed = 0usize;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("failed to read staging entry: {error}"))?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if path_starts_with_install(&entry.path(), &name_str) {
+            fs::remove_dir_all(entry.path()).map_err(|error| {
+                format!("failed to remove stale staging '{}': {error}", name_str)
+            })?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+fn path_starts_with_install(path: &Path, name: &str) -> bool {
+    path.is_dir() && name.starts_with("install-")
+}
+
 fn replacement_dir_for(install_dir: &Path) -> PathBuf {
     let name = install_dir
         .file_name()
@@ -350,5 +383,47 @@ mod tests {
         assert!(lookalike_rollback_notes.exists());
         assert!(lookalike_replaced_dir.exists());
         assert!(lookalike_prefix_only.exists());
+    }
+
+    #[test]
+    fn cleanup_stale_staging_removes_install_prefix_dirs() {
+        let base = tempfile::tempdir().expect("temp dir");
+        let staging_root = base.path().join("staging");
+        let install_a = staging_root.join("install-abc");
+        let install_b = staging_root.join("install-def");
+        let user_data = staging_root.join("user-data"); // 非 install- 前缀，保留
+        fs::create_dir_all(&install_a).expect("install-a");
+        fs::create_dir_all(&install_b).expect("install-b");
+        fs::create_dir_all(&user_data).expect("user-data");
+
+        let removed = cleanup_stale_staging(&staging_root).expect("cleanup");
+
+        assert_eq!(removed, 2);
+        assert!(!install_a.exists());
+        assert!(!install_b.exists());
+        assert!(user_data.exists(), "非 install- 前缀目录应保留");
+        assert!(staging_root.exists(), "staging 根目录本身应保留");
+    }
+
+    #[test]
+    fn cleanup_stale_staging_skips_lookalike_files() {
+        let base = tempfile::tempdir().expect("temp dir");
+        let staging_root = base.path().join("staging");
+        // 名字以 install- 开头但本身是文件，cleanup 应跳过。
+        let file_path = staging_root.join("install-not-a-dir");
+        fs::create_dir_all(&staging_root).expect("staging root");
+        fs::write(&file_path, "marker").expect("file");
+
+        let removed = cleanup_stale_staging(&staging_root).expect("cleanup");
+
+        assert_eq!(removed, 0);
+        assert!(file_path.exists());
+    }
+
+    #[test]
+    fn cleanup_stale_staging_returns_zero_for_missing_dir() {
+        let missing = PathBuf::from("C:\\nonexistent-ddnet-test-staging-12345");
+        let removed = cleanup_stale_staging(&missing).expect("cleanup");
+        assert_eq!(removed, 0);
     }
 }

@@ -65,6 +65,16 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // 启动时清理上次崩溃留下的 staging 残留（每次安装事务在
+            // <app_cache>/staging/install-<job_id>/ 下解压）。
+            if let Ok(cache_dir) = app.path().app_cache_dir() {
+                if let Err(error) =
+                    download::install::cleanup_stale_staging(&cache_dir.join("staging"))
+                {
+                    eprintln!("failed to cleanup stale staging: {error}");
+                }
+            }
+
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_shadow(true);
             }
