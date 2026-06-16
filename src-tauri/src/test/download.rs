@@ -163,8 +163,8 @@ fn verify_downloaded_file_rejects_wrong_size_and_sha256() {
     )
     .expect_err("错误 sha256 应被拒绝");
 
-    assert!(wrong_size.contains("download size mismatch"));
-    assert!(wrong_sha.contains("download sha256 mismatch"));
+    assert!(wrong_size.to_string().contains("download size mismatch"));
+    assert!(wrong_sha.to_string().contains("download sha256 mismatch"));
 }
 
 #[test]
@@ -535,7 +535,7 @@ fn validate_download_url_still_rejects_public_http_when_local_smoke_enabled() {
         let error = validate_download_url("http://example.com/file.zip")
             .expect_err("local smoke 开关不应放通公网 HTTP 下载地址");
 
-        assert_eq!(error, "download url must use https");
+        assert_eq!(error.to_string(), "download url must use https");
     });
 }
 
@@ -546,7 +546,11 @@ fn validate_download_url_rejects_ambiguous_numeric_hosts() {
 
         let error = validate_download_url(&url).expect_err("歧义数字 host 应被拒绝");
 
-        assert_eq!(error, "download url host must be public", "{host}");
+        assert_eq!(
+            error.to_string(),
+            "download url host must be public",
+            "{host}"
+        );
     }
 }
 

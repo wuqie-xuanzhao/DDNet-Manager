@@ -66,14 +66,6 @@ impl ManagerError {
     }
 }
 
-/// 过渡桥接：允许 ManagerError 在返回类型为 String 的函数中直接使用。
-/// 待全量迁移至 ManagerError 后应移除此 impl，避免结构化错误静默退化为裸 String。
-impl From<ManagerError> for String {
-    fn from(error: ManagerError) -> Self {
-        error.to_string()
-    }
-}
-
 impl From<ManagerError> for IpcError {
     fn from(error: ManagerError) -> Self {
         Self {

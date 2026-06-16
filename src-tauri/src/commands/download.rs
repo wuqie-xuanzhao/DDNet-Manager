@@ -5,7 +5,7 @@ use crate::commands::{
 use crate::download::DownloadManager;
 use crate::models::{
     CheckClientUpdateRequest, DownloadJob, DownloadJobRecovery, DownloadJobStatus, IpcError,
-    StartUpdateDownloadRequest, UpdateAction,
+    ManagerError, StartUpdateDownloadRequest, UpdateAction,
 };
 use crate::registry::ClientRegistry;
 use std::fs;
@@ -41,15 +41,16 @@ async fn prepare_update_download_job(
     registry: &ClientRegistry,
     app: &AppHandle,
     request: StartUpdateDownloadRequest,
-) -> Result<PreparedUpdateDownload, String> {
+) -> Result<PreparedUpdateDownload, ManagerError> {
     let client_installation_id = request.client_installation_id.clone();
     let network_route = request.network_route.clone();
     let client = registry
-        .list_client_installations()?
+        .list_client_installations()
+        .map_err(ManagerError::Internal)?
         .into_iter()
         .find(|client| client.id == client_installation_id)
         .ok_or_else(|| {
-            crate::models::ManagerError::NotFound(format!(
+            ManagerError::NotFound(format!(
                 "client installation not found: {}",
                 client_installation_id
             ))
@@ -63,15 +64,23 @@ async fn prepare_update_download_job(
         use_manifest_source: request.use_manifest_source,
     };
     let update = crate::update_source::check_client_update(&update_request, client.version)
-        .await?
-        .ok_or_else(|| "no downloadable update is available for this client".to_string())?;
+        .await
+        .map_err(ManagerError::Internal)?
+        .ok_or_else(|| {
+            ManagerError::Internal(
+                "no downloadable update is available for this client".to_string(),
+            )
+        })?;
     if update.action != UpdateAction::Download {
-        return Err(update
-            .message
-            .clone()
-            .unwrap_or_else(|| "update source does not provide a downloadable asset".to_string()));
+        return Err(ManagerError::Internal(
+            update.message.clone().unwrap_or_else(|| {
+                "update source does not provide a downloadable asset".to_string()
+            }),
+        ));
     }
-    let downloads_dir = app_cache_dir(app)?.join("downloads");
+    let downloads_dir = app_cache_dir(app)
+        .map_err(ManagerError::Internal)?
+        .join("downloads");
     let mut job =
         crate::download::create_download_job(&client_installation_id, &update, &downloads_dir);
     job.status = DownloadJobStatus::Downloading;
@@ -185,6 +194,7 @@ fn spawn_download_task(context: DownloadTaskContext) {
                 &job_for_task.sha256,
                 job_for_task.size,
             )
+            .map_err(|error| error.to_string())
         });
 
         match result {

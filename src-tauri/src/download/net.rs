@@ -1,6 +1,7 @@
 //! 下载 URL 校验、HTTP 请求重定向跟随、流式写入与缓存清理。
 
 use crate::local_smoke;
+use crate::models::ManagerError;
 use reqwest::Url;
 use std::fs;
 use std::io::Write;
@@ -25,42 +26,53 @@ const TRUSTED_DOWNLOAD_HOSTS: &[&str] = &[
 const DEFAULT_CACHE_TTL_DAYS: i64 = 30;
 
 /// 校验下载 URL，并允许用户显式启用的代理或镜像 host。
-pub(crate) fn validate_download_url(url: &str) -> Result<(), String> {
+///
+/// 返回 [`ManagerError`]，让 `network_https_required` / `network_host_not_trusted`
+/// 等稳定错误码在 IPC 边界保持编译期映射，而不是被 String 重新分类。
+pub(crate) fn validate_download_url(url: &str) -> Result<(), ManagerError> {
     if local_smoke::has_ambiguous_numeric_url_host(url) {
-        return Err("download url host must be public".to_string());
+        return Err(ManagerError::NetworkHostNotTrusted(
+            "download url host must be public".to_string(),
+        ));
     }
 
-    let parsed = Url::parse(url).map_err(|error| format!("invalid download url: {error}"))?;
+    let parsed = Url::parse(url)
+        .map_err(|error| ManagerError::Internal(format!("invalid download url: {error}")))?;
     let scheme = parsed.scheme();
     let host = parsed
         .host_str()
-        .ok_or_else(|| "download url must include host".to_string())?;
+        .ok_or_else(|| ManagerError::Internal("download url must include host".to_string()))?;
     if local_smoke::is_ambiguous_numeric_host(host) {
-        return Err("download url host must be public".to_string());
+        return Err(ManagerError::NetworkHostNotTrusted(
+            "download url host must be public".to_string(),
+        ));
     }
     if local_smoke::allows_local_smoke_url(scheme, host) {
         return Ok(());
     }
     if scheme != "https" {
-        return Err(crate::models::ManagerError::NetworkHttpsRequired(
+        return Err(ManagerError::NetworkHttpsRequired(
             "download url must use https".to_string(),
-        )
-        .into());
+        ));
     }
     let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
     if normalized_host == "localhost" || normalized_host.ends_with(".localhost") {
-        return Err("download url host must be public".to_string());
+        return Err(ManagerError::NetworkHostNotTrusted(
+            "download url host must be public".to_string(),
+        ));
     }
     let ip_host = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = ip_host.parse::<IpAddr>() {
-        local_smoke::validate_public_ip(ip)
-            .map_err(|_| "download url host must be public".to_string())?;
+        if local_smoke::validate_public_ip(ip).is_err() {
+            return Err(ManagerError::NetworkHostNotTrusted(
+                "download url host must be public".to_string(),
+            ));
+        }
     }
     if !TRUSTED_DOWNLOAD_HOSTS.contains(&normalized_host.as_str()) {
-        return Err(crate::models::ManagerError::NetworkHostNotTrusted(
+        return Err(ManagerError::NetworkHostNotTrusted(
             "download url host is not trusted".to_string(),
-        )
-        .into());
+        ));
     }
     Ok(())
 }
@@ -74,7 +86,7 @@ pub(crate) async fn send_download_request(
         Url::parse(asset_url).map_err(|error| format!("invalid download url: {error}"))?;
 
     for _ in 0..=MAX_DOWNLOAD_REDIRECTS {
-        validate_download_url(current_url.as_str())?;
+        validate_download_url(current_url.as_str()).map_err(|error| error.to_string())?;
         let response = client
             .get(current_url.clone())
             .send()
@@ -120,7 +132,7 @@ pub async fn download_asset_to_file<F>(
 where
     F: FnMut(u64) -> bool + Send,
 {
-    validate_download_url(request.asset_url)?;
+    validate_download_url(request.asset_url).map_err(|error| error.to_string())?;
     let part_path = part_file_path(request.cache_path);
     if let Some(parent) = request.cache_path.parent() {
         fs::create_dir_all(parent)

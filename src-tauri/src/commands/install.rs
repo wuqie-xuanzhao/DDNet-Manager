@@ -131,7 +131,6 @@ fn run_install_blocking(
                     &context.job.sha256,
                     context.job.size,
                 )
-                .map_err(ManagerError::Internal)
             })
             .and_then(|_| {
                 crate::download::extract_package_to_staging(&cache_path, &staging_dir, package_kind)

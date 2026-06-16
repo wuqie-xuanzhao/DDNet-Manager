@@ -1,7 +1,7 @@
 use crate::local_smoke;
 use crate::models::{
-    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, UpdateAction, UpdateManifest,
-    UpdateSourceKind,
+    ClientUpdateCheck, ClientUpdateSelector, ManagerError, NetworkRouteConfig, UpdateAction,
+    UpdateManifest, UpdateSourceKind,
 };
 use reqwest::Url;
 use std::net::IpAddr;
@@ -183,12 +183,13 @@ fn validate_manifest_url(url: &Url) -> Result<(), String> {
         return Ok(());
     }
 
-    let host = validate_public_https_url(url)?;
+    let host = validate_public_https_url(url).map_err(|error| error.to_string())?;
     validate_trusted_host(
         &host,
         TRUSTED_MANIFEST_HOSTS,
         "manifest url host is not trusted",
     )
+    .map_err(|error| error.to_string())
 }
 
 fn validate_asset_url(url: &Url) -> Result<(), String> {
@@ -199,48 +200,66 @@ fn validate_asset_url(url: &Url) -> Result<(), String> {
         return Ok(());
     }
 
-    let host = validate_public_https_url(url)?;
+    let host = validate_public_https_url(url).map_err(|error| error.to_string())?;
     validate_trusted_host(
         &host,
         TRUSTED_ASSET_HOSTS,
         "manifest asset_url host is not trusted",
     )
+    .map_err(|error| error.to_string())
 }
 
-fn validate_public_https_url(url: &Url) -> Result<String, String> {
+/// 校验 manifest URL 使用公开 HTTPS、非 loopback / 私网 host。
+///
+/// 返回 [`ManagerError`]，让稳定错误码（`network_https_required` /
+/// `network_host_not_trusted`）能直接传播到 IPC 边界，避免在 String 上下文中
+/// 被运行时字符串匹配重新分类。
+fn validate_public_https_url(url: &Url) -> Result<String, ManagerError> {
     if url.scheme() != "https" {
-        return Err(crate::models::ManagerError::NetworkHttpsRequired(
+        return Err(ManagerError::NetworkHttpsRequired(
             "manifest url must use https".to_string(),
-        )
-        .into());
+        ));
     }
 
     let host = url
         .host_str()
-        .ok_or_else(|| "manifest url must include host".to_string())?;
+        .ok_or_else(|| ManagerError::Internal("manifest url must include host".to_string()))?;
     let lower_host = host.trim_end_matches('.').to_ascii_lowercase();
     if lower_host == "localhost"
         || lower_host.ends_with(".localhost")
         || local_smoke::is_ambiguous_numeric_host(host)
     {
-        return Err("manifest url host must be public".to_string());
+        return Err(ManagerError::NetworkHostNotTrusted(
+            "manifest url host must be public".to_string(),
+        ));
     }
 
     let ip_host = normalized_ip_host(host);
     if let Ok(ip) = ip_host.parse::<IpAddr>() {
-        local_smoke::validate_public_ip(ip)
-            .map_err(|_| "manifest url host must be public".to_string())?;
+        if local_smoke::validate_public_ip(ip).is_err() {
+            return Err(ManagerError::NetworkHostNotTrusted(
+                "manifest url host must be public".to_string(),
+            ));
+        }
     }
 
     Ok(lower_host)
 }
 
-fn validate_trusted_host(host: &str, allowed_hosts: &[&str], error: &str) -> Result<(), String> {
+/// 校验 host 是否在受信任白名单中。
+///
+/// 返回 [`ManagerError::NetworkHostNotTrusted`] 让稳定错误码在 IPC 边界保持
+/// 编译期映射。
+fn validate_trusted_host(
+    host: &str,
+    allowed_hosts: &[&str],
+    error: &str,
+) -> Result<(), ManagerError> {
     if allowed_hosts.contains(&host) {
         return Ok(());
     }
 
-    Err(crate::models::ManagerError::NetworkHostNotTrusted(error.to_string()).into())
+    Err(ManagerError::NetworkHostNotTrusted(error.to_string()))
 }
 
 fn normalized_ip_host(host: &str) -> &str {

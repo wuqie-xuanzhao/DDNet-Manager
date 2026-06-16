@@ -1,6 +1,8 @@
 //! 下载缓存校验与下载任务恢复摘要构建。
 
-use crate::models::{DownloadCacheState, DownloadJob, DownloadJobRecovery, DownloadJobStatus};
+use crate::models::{
+    DownloadCacheState, DownloadJob, DownloadJobRecovery, DownloadJobStatus, ManagerError,
+};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
@@ -57,7 +59,10 @@ fn detect_download_cache_state(job: &DownloadJob) -> Result<DownloadCacheState, 
     if !cache_path.exists() {
         return Ok(DownloadCacheState::Missing);
     }
-    if verify_downloaded_file(cache_path, &job.sha256, job.size).is_ok() {
+    if verify_downloaded_file(cache_path, &job.sha256, job.size)
+        .map_err(|error| error.to_string())
+        .is_ok()
+    {
         return Ok(DownloadCacheState::Verified);
     }
     if matches!(
@@ -96,31 +101,36 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// 校验已下载文件的字节数和 SHA-256 摘要，使用流式读取避免全量加载到内存。
+///
+/// 返回 [`ManagerError`]，让 `checksum_mismatch` 稳定错误码在 IPC 边界保持
+/// 编译期映射，而不是被 String 重新分类。
 pub fn verify_downloaded_file(
     path: &Path,
     expected_sha256: &str,
     expected_size: u64,
-) -> Result<(), String> {
-    let file =
-        fs::File::open(path).map_err(|error| format!("failed to open download file: {error}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| format!("failed to read download file metadata: {error}"))?;
+) -> Result<(), ManagerError> {
+    let file = fs::File::open(path).map_err(|error| {
+        ManagerError::Internal(format!("failed to open download file: {error}"))
+    })?;
+    let metadata = file.metadata().map_err(|error| {
+        ManagerError::Internal(format!("failed to read download file metadata: {error}"))
+    })?;
     let actual_size = metadata.len();
     if actual_size != expected_size {
-        return Err(crate::models::ManagerError::ChecksumMismatch(format!(
+        return Err(ManagerError::ChecksumMismatch(format!(
             "download size mismatch: expected {expected_size}, got {actual_size}"
-        ))
-        .into());
+        )));
     }
 
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha256::new();
     let mut buffer = [0u8; 8192];
     loop {
-        let bytes_read = reader
-            .read(&mut buffer)
-            .map_err(|error| format!("failed to read download file for verification: {error}"))?;
+        let bytes_read = reader.read(&mut buffer).map_err(|error| {
+            ManagerError::Internal(format!(
+                "failed to read download file for verification: {error}"
+            ))
+        })?;
         if bytes_read == 0 {
             break;
         }
@@ -129,10 +139,9 @@ pub fn verify_downloaded_file(
     let digest = hasher.finalize();
     let actual_sha256 = format!("{digest:x}");
     if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
-        return Err(crate::models::ManagerError::ChecksumMismatch(format!(
+        return Err(ManagerError::ChecksumMismatch(format!(
             "download sha256 mismatch: expected {expected_sha256}, got {actual_sha256}"
-        ))
-        .into());
+        )));
     }
 
     Ok(())
