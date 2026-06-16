@@ -36,6 +36,15 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
         let mut entry = archive
             .by_index(index)
             .map_err(|error| format!("failed to read zip entry: {error}"))?;
+        // 显式拒绝 symlink entry。zip-rs 不会拒带 S_IFLNK 模式的条目，
+        // 若不主动检查，会把指向 staging 外的链接原样落地（如 evil_link → /etc/passwd）。
+        // S_IFLNK = 0o120000，文件类型掩码 S_IFMT = 0o170000。
+        let is_symlink = entry
+            .unix_mode()
+            .is_some_and(|mode| (mode & 0o170000) == 0o120000);
+        if is_symlink {
+            return Err(format!("unsafe zip symlink entry: {}", entry.name()));
+        }
         let enclosed_name = entry
             .enclosed_name()
             .ok_or_else(|| format!("unsafe zip entry path: {}", entry.name()))?;

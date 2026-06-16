@@ -341,6 +341,28 @@ fn extract_zip_to_staging_rejects_path_traversal() {
 }
 
 #[test]
+fn extract_zip_to_staging_rejects_symlink_entry() {
+    // symlink entry：mode 标记为 S_IFLNK（0o120000），内容是 target 路径字节。
+    // zip-rs 不会主动拒绝这种条目，extract_zip_to_staging 必须自己拒。
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let zip_path = temp_dir.path().join("symlink.zip");
+    let staging_dir = temp_dir.path().join("staging");
+
+    let file = fs::File::create(&zip_path).expect("测试 zip 文件应创建成功");
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    zip.add_symlink("evil_link", "/etc/passwd", options)
+        .expect("symlink entry 应创建成功");
+    zip.finish().expect("测试 zip 应写入完成");
+
+    let error = extract_zip_to_staging(&zip_path, &staging_dir)
+        .expect_err("symlink entry 应被拒绝");
+
+    assert!(error.contains("unsafe zip symlink entry"));
+    assert!(!staging_dir.join("evil_link").exists());
+}
+
+#[test]
 fn extract_tar_xz_to_staging_extracts_safe_archive() {
     let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
     let archive_path = temp_dir.path().join("client.tar.xz");
