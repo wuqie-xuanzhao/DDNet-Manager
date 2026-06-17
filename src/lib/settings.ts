@@ -3,7 +3,6 @@ import type { AppSettings, NetworkRouteMode } from "../types";
 export const defaultAppSettings: AppSettings = {
   network_route: null,
   scan_excluded_paths: [],
-  use_everything: false,
   close_panel_after_launch: true,
   auto_check_updates: false,
   autostart: false,

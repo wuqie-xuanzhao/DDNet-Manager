@@ -215,9 +215,6 @@ pub struct AppSettings {
     /// 扫描时排除的路径列表。
     #[serde(default)]
     pub scan_excluded_paths: Vec<String>,
-    /// 是否启用 Everything provider 作为扫描加速。
-    #[serde(default)]
-    pub use_everything: bool,
     /// 启动客户端后是否最小化 Manager 面板。
     #[serde(default = "default_close_panel_after_launch")]
     pub close_panel_after_launch: bool,
@@ -265,7 +262,6 @@ impl Default for AppSettings {
         Self {
             network_route: None,
             scan_excluded_paths: Vec::new(),
-            use_everything: false,
             close_panel_after_launch: default_close_panel_after_launch(),
             auto_check_updates: false,
             autostart: default_autostart(),

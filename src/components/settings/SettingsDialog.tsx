@@ -458,12 +458,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
             <div className="space-y-3">
               <SectionHeader>扫描</SectionHeader>
               <div className="bg-[#1f2229] border border-white/5 rounded-xl p-4 space-y-3.5">
-                <Toggle
-                  checked={props.settings.use_everything}
-                  label="使用 Everything 加速扫描"
-                  onChange={() => update({ ...props.settings, use_everything: !props.settings.use_everything })}
-                />
-                <div className="border-t border-white/5" />
                 <div className="space-y-1.5">
                   <span className="text-xs font-bold text-[var(--app-text-dim)] uppercase tracking-wider block">排除路径</span>
                   <textarea

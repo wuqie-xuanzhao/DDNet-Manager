@@ -53,8 +53,7 @@ describe("useAppSettings", () => {
     await act(async () => {
       result.current.changeSettings({
         ...defaultAppSettings,
-        auto_check_updates: false,
-        use_everything: true
+        auto_check_updates: false
       });
     });
 

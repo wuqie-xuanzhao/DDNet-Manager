@@ -223,7 +223,6 @@ fn registry_persists_app_settings() {
             local_proxy_url: Some("http://127.0.0.1:7890".to_string()),
         }),
         scan_excluded_paths: vec!["D:/Archive".to_string()],
-        use_everything: true,
         close_panel_after_launch: true,
         auto_check_updates: true,
         autostart: false,
@@ -251,7 +250,6 @@ fn registry_does_not_persist_github_token_in_app_settings_json() {
     let settings = AppSettings {
         network_route: None,
         scan_excluded_paths: Vec::new(),
-        use_everything: false,
         close_panel_after_launch: true,
         auto_check_updates: false,
         autostart: false,
@@ -285,7 +283,6 @@ fn registry_scrubs_legacy_github_token_when_loading_app_settings() {
     let legacy = serde_json::json!({
         "network_route": null,
         "scan_excluded_paths": [],
-        "use_everything": false,
         "close_panel_after_launch": true,
         "auto_check_updates": false,
         "github_token": "ghp_legacy_secret",
@@ -323,7 +320,6 @@ fn registry_uses_launch_setting_defaults_for_legacy_app_settings_json() {
     let legacy = serde_json::json!({
         "network_route": null,
         "scan_excluded_paths": [],
-        "use_everything": false,
         "github_token": null,
         "advanced_manifest_url": null
     })
