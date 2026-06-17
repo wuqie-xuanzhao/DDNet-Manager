@@ -6,6 +6,7 @@
 //!
 //! 所有 Windows API 调用都在这里；模块外只暴露 safe Rust 接口。
 
+pub(crate) mod mft_record;
 pub(crate) mod usn;
 pub(crate) mod volume;
 
