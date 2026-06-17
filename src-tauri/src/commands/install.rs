@@ -139,9 +139,7 @@ fn run_install_blocking(
                     .map_err(ManagerError::Internal)
             })
             .and_then(|staged_client_dir| {
-                if crate::process::is_client_running(Path::new(&client.executable_path))
-                    .map_err(ManagerError::Internal)?
-                {
+                if crate::process::is_client_running(Path::new(&client.executable_path))? {
                     return Err(ManagerError::ClientRunning(
                         "target client is running; close it before install".to_string(),
                     ));
@@ -194,17 +192,14 @@ fn load_install_target(
                 job.client_installation_id
             ))
         })?;
-    let target_client = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))
-        .map_err(ManagerError::Internal)?;
+    let target_client = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
     if target_client.health != ClientHealth::Ok {
         return Err(ManagerError::Internal(format!(
             "target client is not healthy before install: {:?}",
             target_client.health
         )));
     }
-    if crate::process::is_client_running(Path::new(&target_client.executable_path))
-        .map_err(ManagerError::Internal)?
-    {
+    if crate::process::is_client_running(Path::new(&target_client.executable_path))? {
         return Err(ManagerError::ClientRunning(
             "target client is running; close it before install".to_string(),
         ));

@@ -22,7 +22,8 @@ pub fn install_staged_client(
     }
 
     copy_dir_recursive(staged_client_dir, &replacement_dir)?;
-    let replacement_client = crate::client_scan::validate_client_dir(&replacement_dir)?;
+    let replacement_client = crate::client_scan::validate_client_dir(&replacement_dir)
+        .map_err(|error| error.to_string())?;
     if replacement_client.health != crate::models::ClientHealth::Ok {
         let _ = fs::remove_dir_all(&replacement_dir);
         return Err(format!(

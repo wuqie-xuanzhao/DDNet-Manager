@@ -1,3 +1,4 @@
+use crate::error::ManagerError;
 use crate::models::{
     ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
 };
@@ -5,19 +6,12 @@ use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use thiserror::Error;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV1A_64_PRIME: u64 = 0x100000001b3;
 const DDNET_EXECUTABLE_NAMES: &[&str] = &["DDNet.exe", "ddnet.exe", "DDNet", "ddnet"];
-
-#[derive(Debug, Error)]
-enum ClientScanError {
-    #[error("客户端路径不是目录: {0}")]
-    NotDirectory(String),
-}
 
 /// 表示客户端扫描使用的后端内部选项。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,9 +38,12 @@ struct CommonScanRootEnv<'a> {
 }
 
 /// 验证 DDNet 兼容客户端目录，并返回可供前端展示的安装记录。
-pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, String> {
+pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerError> {
     if !path.is_dir() {
-        return Err(ClientScanError::NotDirectory(normalize_path(path)).to_string());
+        return Err(ManagerError::NotFound(format!(
+            "client path is not a directory: {}",
+            normalize_path(path)
+        )));
     }
 
     let executable_path =
@@ -88,7 +85,9 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, String> {
 }
 
 /// 在指定根目录下扫描 DDNet 兼容客户端候选安装目录。
-pub fn scan_client_installations(options: &ScanOptions) -> Result<Vec<ClientInstallation>, String> {
+pub fn scan_client_installations(
+    options: &ScanOptions,
+) -> Result<Vec<ClientInstallation>, ManagerError> {
     let mut installations = Vec::new();
     let mut seen_ids = HashSet::new();
     let max_depth = if options.deep { 5 } else { 3 };
@@ -276,7 +275,7 @@ fn scan_roots(options: &ScanOptions) -> Vec<PathBuf> {
     }
 }
 
-fn find_candidate_dirs(root: &Path, max_depth: usize) -> Result<Vec<PathBuf>, String> {
+fn find_candidate_dirs(root: &Path, max_depth: usize) -> Result<Vec<PathBuf>, ManagerError> {
     let mut candidates = Vec::new();
     let mut queue = VecDeque::from([(root.to_path_buf(), 0_usize)]);
 
@@ -294,14 +293,19 @@ fn find_candidate_dirs(root: &Path, max_depth: usize) -> Result<Vec<PathBuf>, St
             Ok(entries) => entries,
             Err(error) => {
                 if depth == 0 {
-                    return Err(format!("failed to scan {}: {error}", dir.display()));
+                    return Err(ManagerError::Internal(format!(
+                        "failed to scan {}: {error}",
+                        dir.display()
+                    )));
                 }
                 continue;
             }
         };
 
         for entry in entries {
-            let entry = entry.map_err(|error| format!("failed to read scan entry: {error}"))?;
+            let entry = entry.map_err(|error| {
+                ManagerError::Internal(format!("failed to read scan entry: {error}"))
+            })?;
             let path = entry.path();
             if path.is_dir() {
                 queue.push_back((path, depth + 1));

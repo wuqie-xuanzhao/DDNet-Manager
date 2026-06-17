@@ -1,3 +1,4 @@
+use crate::error::ManagerError;
 use crate::models::ClientHealth;
 use crate::registry::LaunchProbeStatus;
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ pub fn is_ddnet_process_name(name: &str) -> bool {
 }
 
 /// 判断系统中是否存在正在运行的指定客户端可执行文件。
-pub fn is_client_running(path: &Path) -> Result<bool, String> {
+pub fn is_client_running(path: &Path) -> Result<bool, ManagerError> {
     let target = normalize_executable_path(path)?;
     Ok(system_process_matches_path(&target))
 }
@@ -51,39 +52,50 @@ pub fn is_install_dir_busy(install_dir: &Path) -> bool {
 }
 
 /// 解析并校验客户端启动目标，确保只启动完整客户端目录内的 DDNet 可执行文件。
-pub fn resolve_launch_target(path: &Path) -> Result<LaunchTarget, String> {
+pub fn resolve_launch_target(path: &Path) -> Result<LaunchTarget, ManagerError> {
     if !path.is_file() {
-        return Err(format!("launch target is not a file: {}", path.display()));
+        return Err(ManagerError::Internal(format!(
+            "launch target is not a file: {}",
+            path.display()
+        )));
     }
 
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("launch target has invalid file name: {}", path.display()))?;
+        .ok_or_else(|| {
+            ManagerError::Internal(format!(
+                "launch target has invalid file name: {}",
+                path.display()
+            ))
+        })?;
 
     if !is_ddnet_process_name(file_name) {
-        return Err(format!(
+        return Err(ManagerError::Internal(format!(
             "launch target is not a DDNet executable: {file_name}"
-        ));
+        )));
     }
 
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("launch target has no parent directory: {}", path.display()))?;
+    let parent = path.parent().ok_or_else(|| {
+        ManagerError::Internal(format!(
+            "launch target has no parent directory: {}",
+            path.display()
+        ))
+    })?;
 
     if !parent.is_dir() {
-        return Err(format!(
+        return Err(ManagerError::Internal(format!(
             "launch target parent is not a directory: {}",
             parent.display()
-        ));
+        )));
     }
 
     let installation = crate::client_scan::validate_client_dir(parent)?;
     if installation.health != ClientHealth::Ok {
-        return Err(format!(
+        return Err(ManagerError::Internal(format!(
             "launch target client directory is not healthy: {:?}",
             installation.health
-        ));
+        )));
     }
 
     Ok(LaunchTarget {
@@ -93,27 +105,27 @@ pub fn resolve_launch_target(path: &Path) -> Result<LaunchTarget, String> {
 }
 
 /// 启动指定路径的客户端可执行文件。
-pub fn launch_executable(path: &str) -> Result<(), String> {
+pub fn launch_executable(path: &str) -> Result<(), ManagerError> {
     let target = resolve_launch_target(Path::new(path))?;
 
     std::process::Command::new(&target.executable_path)
         .current_dir(&target.working_dir)
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("failed to launch {path}: {error}"))
+        .map_err(|error| ManagerError::Internal(format!("failed to launch {path}: {error}")))
 }
 
 /// 启动客户端并在限定时间内观察进程是否出现。
 pub fn launch_executable_with_probe(
     path: &str,
     timeout: Duration,
-) -> Result<LaunchProbeResult, String> {
+) -> Result<LaunchProbeResult, ManagerError> {
     let target = resolve_launch_target(Path::new(path))?;
     let observed_target = normalize_executable_path(&target.executable_path)?;
     let mut child = std::process::Command::new(&target.executable_path)
         .current_dir(&target.working_dir)
         .spawn()
-        .map_err(|error| format!("failed to launch {path}: {error}"))?;
+        .map_err(|error| ManagerError::Internal(format!("failed to launch {path}: {error}")))?;
     let started_at = Instant::now();
 
     loop {
@@ -124,10 +136,9 @@ pub fn launch_executable_with_probe(
             });
         }
 
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("failed to observe launched process: {error}"))?
-        {
+        if let Some(status) = child.try_wait().map_err(|error| {
+            ManagerError::Internal(format!("failed to observe launched process: {error}"))
+        })? {
             return Ok(LaunchProbeResult {
                 status: LaunchProbeStatus::Exited,
                 message: format!("客户端启动后提前退出: {status}"),
@@ -145,16 +156,17 @@ pub fn launch_executable_with_probe(
     }
 }
 
-fn normalize_executable_path(path: &Path) -> Result<PathBuf, String> {
+fn normalize_executable_path(path: &Path) -> Result<PathBuf, ManagerError> {
     if !path.is_file() {
-        return Err(format!(
+        return Err(ManagerError::Internal(format!(
             "client executable is not a file: {}",
             path.display()
-        ));
+        )));
     }
 
-    std::fs::canonicalize(path)
-        .map_err(|error| format!("failed to canonicalize client executable: {error}"))
+    std::fs::canonicalize(path).map_err(|error| {
+        ManagerError::Internal(format!("failed to canonicalize client executable: {error}"))
+    })
 }
 
 fn system_process_matches_path(target: &Path) -> bool {
