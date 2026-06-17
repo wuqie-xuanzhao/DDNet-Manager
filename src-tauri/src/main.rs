@@ -42,12 +42,12 @@ pub mod registry;
 /// 版本号比较与更新判断。
 pub mod version;
 
+/// 系统托盘图标与托盘菜单事件处理。
+pub mod tray;
+
 mod commands;
 
-use tauri::{
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Listener, Manager,
-};
+use tauri::Manager;
 
 fn main() {
     let db_path = app_data_dir_for_main().join("ddnet-manager.sqlite");
@@ -82,71 +82,7 @@ fn main() {
                 let _ = window.set_shadow(true);
             }
 
-            let mut tray_builder = TrayIconBuilder::new().tooltip("DDNet Manager");
-            if let Some(icon) = app.default_window_icon() {
-                tray_builder = tray_builder.icon(icon.clone());
-            }
-            let _tray = tray_builder
-                .on_tray_icon_event(|tray, event| {
-                    match event {
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        } => {
-                            if let Some(window) = tray.app_handle().get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
-                        TrayIconEvent::Click {
-                            button: MouseButton::Right,
-                            button_state: MouseButtonState::Up,
-                            position,
-                            ..
-                        } => {
-                            let app = tray.app_handle();
-                            if let (Some(tray_menu), Some(main)) = (
-                                app.get_webview_window("tray-menu"),
-                                app.get_webview_window("main"),
-                            ) {
-                                // 根据主窗口缩放因子，将托盘图标物理坐标转为逻辑坐标来定位菜单
-                                if let Ok(scale) = main.scale_factor() {
-                                    let logical: tauri::LogicalPosition<f64> =
-                                        position.to_logical(scale);
-                                    let _ = tray_menu.set_position(tauri::Position::Logical(
-                                        tauri::LogicalPosition::new(
-                                            logical.x - 60.0,
-                                            logical.y - 130.0,
-                                        ),
-                                    ));
-                                }
-                                let _ = tray_menu.show();
-                                let _ = tray_menu.set_focus();
-                            }
-                        }
-                        _ => {}
-                    }
-                })
-                .build(app)?;
-
-            // Listen for tray menu actions
-            let app_handle = app.handle().clone();
-            app.listen("tray-menu-action", move |event| {
-                // payload 可能为 JSON 序列化的 "show" (含引号) 或裸字符串 show
-                match event.payload().trim_matches('"') {
-                    "show" => {
-                        if let Some(window) = app_handle.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "quit" => {
-                        app_handle.exit(0);
-                    }
-                    _ => {}
-                }
-            });
+            tray::setup_tray(app)?;
 
             println!("DDNet Manager shell initialized.");
             Ok(())
