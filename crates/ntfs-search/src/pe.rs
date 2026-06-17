@@ -112,4 +112,23 @@ mod tests {
             vi.company_name
         );
     }
+
+    proptest::proptest! {
+        /// Fuzz：任意字节流不应让 parse_version_info_from_bytes panic。
+        #[test]
+        fn parse_version_info_never_panics(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096),
+        ) {
+            let _ = parse_version_info_from_bytes(&bytes);
+        }
+
+        /// Fuzz：以 PE 签名 MZ 起头也不应 panic（pelite 会尝试完整解析）。
+        #[test]
+        fn parse_version_info_with_mz_signature_never_panics(
+            mut bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 64..4096),
+        ) {
+            bytes[0..2].copy_from_slice(b"MZ");
+            let _ = parse_version_info_from_bytes(&bytes);
+        }
+    }
 }
