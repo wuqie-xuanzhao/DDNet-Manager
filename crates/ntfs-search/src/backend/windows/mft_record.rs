@@ -58,6 +58,11 @@ const ATTR_TYPE_END_MARKER: u32 = 0xFFFF_FFFF;
 const ATTR_STANDARD_INFORMATION: u32 = 48;
 const ATTR_FILE_NAME: u32 = 60;
 const ATTR_DATA: u32 = 128;
+/// $ATTRIBUTE_LIST (32)：当文件属性多到放不下单 record 时使用（罕见）。
+/// M3 **不支持**解析此类 record（可能漏掉 $FILE_NAME 或 $DATA 字段）。
+/// M4 inspect 阶段会补取：parse_mft_record 拿到 base_record_ref 后用
+/// FSCTL_GET_NTFS_FILE_RECORD 二次 fetch 完整 record。
+const ATTR_ATTRIBUTE_LIST: u32 = 32;
 
 /// 解析后单条 MFT record 的关键字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +141,11 @@ pub(crate) fn parse_mft_record(bytes: &[u8]) -> Option<ParsedMftRecord> {
             }
             ATTR_DATA => {
                 extract_data_size(&attr, &mut result);
+            }
+            ATTR_ATTRIBUTE_LIST => {
+                // M3 不支持：含有 $ATTRIBUTE_LIST 的 record 可能漏字段
+                // M4 inspect 阶段补取（详见 const ATTR_ATTRIBUTE_LIST 注释）
+                tracing::debug!("record contains $ATTRIBUTE_LIST; M3 will produce partial result");
             }
             _ => {}
         }
@@ -263,6 +273,10 @@ impl<'a> RawAttribute<'a> {
 }
 
 /// 从 $STANDARD_INFORMATION 提取 timestamps + attributes。
+///
+/// 字段偏移随版本变化：
+/// - v1.x（content length 48）：attributes 在 offset 32
+/// - v3.0+（content length 72）：attributes 在 offset 56
 fn extract_standard_information(attr: &RawAttribute<'_>, result: &mut ParsedMftRecord) {
     let Some(content) = attr.resident_content() else {
         return;
@@ -276,9 +290,14 @@ fn extract_standard_information(attr: &RawAttribute<'_>, result: &mut ParsedMftR
     if content.len() >= 32 {
         result.accessed = u64::from_le_bytes(content[24..32].try_into().unwrap_or([0u8; 8]));
     }
-    // FileAttributes 在 v3+ STANDARD_INFORMATION 中位于 offset 56
-    if content.len() >= 60 {
-        result.attributes = u32::from_le_bytes(content[56..60].try_into().unwrap_or([0u8; 4]));
+    // Attributes 字段位置依赖 $STANDARD_INFORMATION 版本
+    let attr_offset = if content.len() >= 72 { 56 } else { 32 };
+    if content.len() >= attr_offset + 4 {
+        result.attributes = u32::from_le_bytes(
+            content[attr_offset..attr_offset + 4]
+                .try_into()
+                .unwrap_or([0u8; 4]),
+        );
     }
 }
 
@@ -652,5 +671,25 @@ mod tests {
         }
 
         offset + attr_len
+    }
+
+    proptest::proptest! {
+        /// Fuzz：任意字节流不应让 parse_mft_record panic。
+        /// 覆盖设计稿 §9.4 "对随机字节流不 panic" 要求。
+        #[test]
+        fn parse_mft_record_never_panics(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096),
+        ) {
+            let _ = parse_mft_record(&bytes);
+        }
+
+        /// Fuzz：即使前 4 字节是 "FILE" 签名，后续任意字节也不应 panic。
+        #[test]
+        fn parse_mft_record_with_file_signature_never_panics(
+            mut bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 4..4096),
+        ) {
+            bytes[0..4].copy_from_slice(b"FILE");
+            let _ = parse_mft_record(&bytes);
+        }
     }
 }

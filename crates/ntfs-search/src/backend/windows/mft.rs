@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
@@ -34,6 +34,8 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::Ioctl::{FSCTL_GET_NTFS_VOLUME_DATA, NTFS_VOLUME_DATA_BUFFER};
 use windows::Win32::System::IO::DeviceIoControl;
+
+use super::filetime_to_system_time;
 
 const MFT_READ_BUFFER_SIZE: usize = 64 * 1024;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
@@ -194,9 +196,10 @@ unsafe impl Send for MftFileHandle {}
 impl MftFileHandle {
     /// 流式读 $MFT，从 offset 开始填 buffer。
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize, ScanError> {
-        // 先 SeekToEnd via SetFilePointerEx
         use windows::Win32::Storage::FileSystem::SetFilePointerEx;
-        let distance: i64 = offset as i64;
+        // 安全 cast：MFT offset 不可能 > i64::MAX（>9 EB），但显式 try_from 防 UB
+        let distance = i64::try_from(offset)
+            .map_err(|_| ScanError::Internal(format!("MFT offset {offset} overflow i64")))?;
 
         // SAFETY: handle 由 CreateFileW 返回；distance 是值类型。
         let seek_result = unsafe {
@@ -324,11 +327,21 @@ async fn scan_via_mft(
 
             let offset = record_index * bytes_per_record;
             let n = mft.read_at(offset, &mut buf)?;
-            if n < bytes_per_record as usize {
-                break; // EOF 或短读
+
+            // 短读判定：n=0 是 EOF；0 < n < bytes_per_record 是短读，最后一条 record 可能残缺
+            let records_in_buf = (n as u64) / bytes_per_record;
+            if records_in_buf == 0 {
+                if n > 0 {
+                    progress.emit(ProgressEvent::EntryError {
+                        path: None,
+                        error: format!(
+                            "short read at offset {offset}: got {n} bytes, need {bytes_per_record} per record"
+                        ),
+                    });
+                }
+                break;
             }
 
-            let records_in_buf = (n as u64) / bytes_per_record;
             for i in 0..records_in_buf {
                 if cancel.is_cancelled() {
                     break;
@@ -398,37 +411,46 @@ async fn scan_via_mft(
             });
         }
 
-        // 路径重建 + FileEntry 构造
-        let mut entries: Vec<FileEntry> = Vec::with_capacity(matched.len());
-        for m in matched {
-            match rebuild_path(&map, m.file_ref) {
-                Ok(rel) => {
-                    let full = with_drive_prefix(&rel, drive);
-                    entries.push(FileEntry {
-                        path: full,
-                        size: m.size,
-                        created: filetime_to_system_time(m.created),
-                        modified: filetime_to_system_time(m.modified),
-                        accessed: filetime_to_system_time(m.accessed),
-                        attributes: FileAttributes::from_bits_truncate(m.attributes),
-                        is_directory: (m.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0,
-                        backend: BackendKind::Mft,
-                        file_reference: Some(m.file_ref),
-                    });
-                }
-                Err(e) => {
-                    progress.emit(ProgressEvent::EntryError {
-                        path: None,
-                        error: format!("rebuild_path for ref {} failed: {:?}", m.file_ref, e),
-                    });
-                }
-            }
-        }
-
-        Ok(entries)
+        finish_mft_scan(map, matched, drive, progress.as_ref())
     })
     .await
     .map_err(|e| ScanError::Internal(format!("MFT spawn_blocking join: {e}")))?
+}
+
+/// 路径重建 + FileEntry 构造。从 scan_via_mft 抽出，让 spawn_blocking closure
+/// 单函数 < 80 行（CLAUDE.md 限制），且便于 M4 inspect 阶段复用。
+fn finish_mft_scan(
+    map: HashMap<u64, RecordInfo>,
+    matched: Vec<MatchedMft>,
+    drive: char,
+    progress: &dyn ProgressSink,
+) -> Result<Vec<FileEntry>, ScanError> {
+    let mut entries: Vec<FileEntry> = Vec::with_capacity(matched.len());
+    for m in matched {
+        match rebuild_path(&map, m.file_ref) {
+            Ok(rel) => {
+                let full = with_drive_prefix(&rel, drive);
+                entries.push(FileEntry {
+                    path: full,
+                    size: m.size,
+                    created: filetime_to_system_time(m.created),
+                    modified: filetime_to_system_time(m.modified),
+                    accessed: filetime_to_system_time(m.accessed),
+                    attributes: FileAttributes::from_bits_truncate(m.attributes),
+                    is_directory: (m.attributes & FILE_ATTRIBUTE_DIRECTORY) != 0,
+                    backend: BackendKind::Mft,
+                    file_reference: Some(m.file_ref),
+                });
+            }
+            Err(e) => {
+                progress.emit(ProgressEvent::EntryError {
+                    path: None,
+                    error: format!("rebuild_path for ref {} failed: {:?}", m.file_ref, e),
+                });
+            }
+        }
+    }
+    Ok(entries)
 }
 
 /// MFT scan 期间的临时匹配 record 缓存（路径重建前）。
@@ -462,20 +484,10 @@ async fn fallback_to_usn_or_walkdir(
     usn.scan_root(root, opts, progress, cancel).await
 }
 
-fn filetime_to_system_time(filetime: u64) -> SystemTime {
-    if filetime == 0 {
-        return SystemTime::UNIX_EPOCH;
-    }
-    const FILETIME_UNIX_OFFSET: u64 = 116_444_736_000_000_000;
-    let unix_100ns = filetime.saturating_sub(FILETIME_UNIX_OFFSET);
-    let secs = unix_100ns / 10_000_000;
-    let nanos = ((unix_100ns % 10_000_000) * 100) as u32;
-    SystemTime::UNIX_EPOCH + Duration::new(secs, nanos)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
 
     #[test]
     fn filetime_zero_is_epoch() {

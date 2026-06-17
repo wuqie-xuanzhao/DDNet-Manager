@@ -8,3 +8,5 @@ src-tauri/target/
 .codegraph/
 .DS_Store
 *.log
+src-tauri target
+crates target

@@ -3,6 +3,8 @@
 //! 包含：
 //! - `volume`：CreateFileW + DeviceIoControl 封装（只读访问）
 //! - `usn`：FSCTL_ENUM_USN_DATA + USN_RECORD V2 解析
+//! - `mft_record`：$MFT FILE record 字节解析（纯逻辑，跨平台测试）
+//! - `mft`：$MFT raw record backend（admin 极速路径）
 //!
 //! 所有 Windows API 调用都在这里；模块外只暴露 safe Rust 接口。
 
@@ -19,7 +21,22 @@ use crate::ProgressSink;
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio_util::sync::CancellationToken;
+
+/// Windows FILETIME（自 1601-01-01 的 100ns 单位）转 SystemTime。
+///
+/// 由 mft.rs / usn.rs 共用，避免重复实现。
+pub(crate) fn filetime_to_system_time(filetime: u64) -> SystemTime {
+    if filetime == 0 {
+        return SystemTime::UNIX_EPOCH;
+    }
+    const FILETIME_UNIX_OFFSET: u64 = 116_444_736_000_000_000; // 100ns 单位
+    let unix_100ns = filetime.saturating_sub(FILETIME_UNIX_OFFSET);
+    let secs = unix_100ns / 10_000_000;
+    let nanos = ((unix_100ns % 10_000_000) * 100) as u32;
+    SystemTime::UNIX_EPOCH + Duration::new(secs, nanos)
+}
 
 /// USN backend：尝试用 FSCTL_ENUM_USN_DATA 扫盘；如果 USN 不可用或扫描失败，
 /// 自动降级到 WalkdirBackend（emit `BackendDowngraded`）。

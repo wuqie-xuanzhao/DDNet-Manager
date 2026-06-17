@@ -25,6 +25,8 @@ use tokio_util::sync::CancellationToken;
 use windows::Win32::System::Ioctl::FSCTL_ENUM_USN_DATA;
 use windows::Win32::System::IO::DeviceIoControl;
 
+use super::filetime_to_system_time;
+
 const USN_ENUM_BUFFER_SIZE: usize = 64 * 1024;
 pub(crate) const USN_RECORD_V2_FIXED_HEADER: usize = 60;
 const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
@@ -306,20 +308,6 @@ fn finish_scan(
     }
 
     Ok(entries)
-}
-
-/// Windows FILETIME（自 1601-01-01 的 100ns 单位）转 SystemTime。
-pub(crate) fn filetime_to_system_time(filetime: u64) -> SystemTime {
-    if filetime == 0 {
-        return SystemTime::UNIX_EPOCH;
-    }
-    // FILETIME: 100ns 间隔 since 1601-01-01
-    // UNIX epoch: 1970-01-01 = 11644473600 秒 since 1601
-    const FILETIME_UNIX_OFFSET: u64 = 116_444_736_000_000_000; // 100ns 单位
-    let unix_100ns = filetime.saturating_sub(FILETIME_UNIX_OFFSET);
-    let secs = unix_100ns / 10_000_000;
-    let nanos = ((unix_100ns % 10_000_000) * 100) as u32;
-    SystemTime::UNIX_EPOCH + Duration::new(secs, nanos)
 }
 
 #[cfg(test)]
