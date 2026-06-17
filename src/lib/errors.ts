@@ -26,6 +26,12 @@ function isIpcError(value: unknown): value is IpcError {
 }
 
 export function getErrorMessage(error: unknown): string {
+  // IpcError 是后端 Tauri command 的标准错误返回形态，优先取 message 让用户看到
+  // 原始诊断信息（code 走 getUpdateErrorMessage 映射文案）。
+  if (isIpcError(error)) {
+    return error.message;
+  }
+
   if (error instanceof Error) {
     return error.message;
   }

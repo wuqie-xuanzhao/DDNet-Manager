@@ -10,6 +10,24 @@ describe("getErrorMessage", () => {
   it("keeps string errors unchanged", () => {
     expect(getErrorMessage("plain failure")).toBe("plain failure");
   });
+
+  it("returns IpcError.message so callers can show backend diagnostics", () => {
+    const error: IpcError = {
+      code: "unknown",
+      message: "client executable is not a file: D:/Games/QmClient/DDNet.exe",
+    };
+    expect(getErrorMessage(error)).toBe(
+      "client executable is not a file: D:/Games/QmClient/DDNet.exe"
+    );
+  });
+
+  it("returns IpcError.message regardless of code, even for known codes", () => {
+    const error: IpcError = {
+      code: "not_found",
+      message: "client installation not found: qmclient-main",
+    };
+    expect(getErrorMessage(error)).toBe("client installation not found: qmclient-main");
+  });
 });
 
 describe("getUpdateErrorMessage", () => {
