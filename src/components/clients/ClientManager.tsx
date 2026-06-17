@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import {
   listClientInstallations,
   removeClientInstallation,
-  scanClientInstallations,
   setDefaultClient,
   upsertClientInstallation,
   validateClientDir
 } from "../../lib/tauri";
 import type { ClientInstallation } from "../../types";
+import { useClientScanner } from "../../hooks/useClientScanner";
+import { describeScanEvent } from "../../lib/scanProgress";
 
 function healthLabel(client: ClientInstallation) {
   switch (client.health) {
@@ -29,6 +30,8 @@ export function ClientManager() {
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const latestRequestIdRef = useRef(0);
+  const scanner = useClientScanner();
+  const combinedError = error ?? scanner.error;
 
   const reload = async () => {
     setClients(await listClientInstallations());
@@ -73,14 +76,11 @@ export function ClientManager() {
 
   const scan = async () => {
     setError(null);
-    setIsBusy(true);
     try {
-      const results = await scanClientInstallations({ include_saved_paths: true });
+      const results = await scanner.start({ options: { include_saved_paths: true } });
       setCandidates(results);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsBusy(false);
     }
   };
 
@@ -176,13 +176,36 @@ export function ClientManager() {
           <button
             type="button"
             onClick={() => void scan()}
-            disabled={isBusy}
+            disabled={isBusy || scanner.scanning}
             className="px-4 py-2 rounded-lg bg-[var(--app-border-subtle)] hover:bg-[var(--app-border)] border border-[var(--app-border-subtle)] text-sm font-semibold text-[var(--app-text-secondary)] cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           >
-            扫描常见路径
+            {scanner.scanning ? `扫描中… 已找到 ${scanner.foundCount}` : "扫描常见路径"}
           </button>
         </div>
       </div>
+
+      {scanner.events.length > 0 ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
+            <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">
+              扫描进度
+            </span>
+            <span className="text-xs text-[var(--app-text-dim)]">
+              已找到 <span className="font-mono font-bold text-[var(--app-text)]">{scanner.foundCount}</span> 个候选
+            </span>
+          </div>
+          <ul className="space-y-1 max-h-64 overflow-y-auto">
+            {scanner.events.map((event, idx) => (
+              <li
+                key={idx}
+                className="text-xs text-[var(--app-text-secondary)] font-mono leading-relaxed"
+              >
+                {describeScanEvent(event)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="space-y-3">
         <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
@@ -257,7 +280,7 @@ export function ClientManager() {
         )}
       </div>
 
-      {error ? <div className="text-sm text-[var(--app-danger)] bg-[var(--app-danger-subtle)] border border-[var(--app-danger-border)] rounded-lg px-3 py-2">{error}</div> : null}
+      {combinedError ? <div className="text-sm text-[var(--app-danger)] bg-[var(--app-danger-subtle)] border border-[var(--app-danger-border)] rounded-lg px-3 py-2">{combinedError}</div> : null}
     </div>
   );
 }
