@@ -9,7 +9,6 @@
 //! 兼容性：跨平台（pelite 是纯 Rust PE 解析库）。
 
 use crate::options::VersionInfo;
-use pelite::resources::version_info::Language;
 use std::path::Path;
 
 /// 从 PE 文件读取 VS_VERSION_INFO。
@@ -37,16 +36,10 @@ pub(crate) fn parse_version_info_from_bytes(bytes: &[u8]) -> Result<VersionInfo,
 
     let mut vi = VersionInfo::default();
 
-    // 用第一个 translation 的 Language 拿字符串对。多 lang 时优先 en-US 风格
-    let langs = version.translation();
-    let preferred_lang = langs
-        .first()
-        .copied()
-        .or_else(|| Language::parse(&[0x30, 0x34, 0x30, 0x39, 0x30, 0x34, 0x42, 0x30]).ok())
-        // 默认 "040904B0"（en-US + Unicode）
-        ;
-
-    if let Some(lang) = preferred_lang {
+    // 用第一个 translation 的 Language 拿字符串对。
+    // 多 translation PE（中英双版）目前取第一个，调用方按业务需求自行 fallback。
+    // v0.2 可加优先级匹配（en-US > zh-CN > first）。
+    if let Some(&lang) = version.translation().first() {
         version.strings(lang, |key, value| match key {
             "CompanyName" => vi.company_name = Some(value.to_string()),
             "ProductName" => vi.product_name = Some(value.to_string()),

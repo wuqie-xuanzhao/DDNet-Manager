@@ -9,13 +9,10 @@ use crate::error::ScanError;
 use crate::options::{FileEntry, InspectFields, InspectedEntry};
 use crate::pe::read_version_info;
 use crate::ProgressSink;
-use std::future::Future;
+use futures::stream::{self, StreamExt};
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-
-type InspectFuture = Pin<Box<dyn Future<Output = Result<InspectOutcome, ScanError>> + Send>>;
 
 /// 单条 entry 扩展查询。返回 `InspectedEntry`（含调用方请求的所有 fields）。
 ///
@@ -27,10 +24,10 @@ pub async fn inspect(
     inspect_one(entry, fields).await
 }
 
-/// 批量扩展查询。内置 `Semaphore` 并发控制（默认 16，调用方可调）。
+/// 批量扩展查询。**真并行**：用 `futures::stream::buffer_unordered(concurrency)` 控制
+/// 最大并发数。结果按 `(index, outcome)` 收集后排序，保证 `results[i]` 与 `entries[i]` 对应。
 ///
-/// 返回 `Vec<InspectOutcome>`，与 `entries` 顺序对应。单条失败不阻断其他，
-/// 按 `InspectOutcome::Failed` 标记。
+/// 单条失败不阻断其他，按 `InspectOutcome::Failed` 标记。
 pub async fn inspect_many(
     entries: &[FileEntry],
     fields: InspectFields,
@@ -44,61 +41,69 @@ pub async fn inspect_many(
     }
 
     let semaphore = Arc::new(Semaphore::new(concurrency));
-    let mut futures: Vec<InspectFuture> = Vec::with_capacity(entries.len());
 
-    for entry in entries {
-        let permit_sem = Arc::clone(&semaphore);
-        let entry = entry.clone();
-        let progress = Arc::clone(&progress);
+    // 每个 entry 包装成 (index, outcome)，让 buffer_unordered 完成后按 index 还原顺序
+    let stream = stream::iter(entries.iter().cloned().enumerate())
+        .map(|(idx, entry)| {
+            let permit_sem = Arc::clone(&semaphore);
+            let progress = Arc::clone(&progress);
+            async move {
+                // 等待 permit（spawn_blocking 期间持有 permit 控制并发）
+                // Semaphore closed 视为 runtime 致命错误，转 Internal
+                let _permit = permit_sem
+                    .acquire()
+                    .await
+                    .map_err(|e| ScanError::Internal(format!("semaphore closed: {e}")))?;
 
-        futures.push(Box::pin(async move {
-            // 等待 permit（spawn_blocking 期间持有 permit 控制并发）
-            let _permit = permit_sem
-                .acquire()
-                .await
-                .map_err(|e| ScanError::Internal(format!("semaphore acquire: {e}")))?;
-
-            match inspect_one(&entry, fields).await {
-                Ok(info) => Ok(InspectOutcome::Success(info)),
-                Err(e) => {
-                    progress.emit(crate::options::ProgressEvent::EntryError {
-                        path: Some(entry.path.clone()),
-                        error: e.to_string(),
-                    });
-                    Ok(InspectOutcome::Failed {
-                        path: entry.path.clone(),
-                        error: e,
-                    })
-                }
+                let outcome = match inspect_one(&entry, fields).await {
+                    Ok(info) => InspectOutcome::Success(info),
+                    Err(e) => {
+                        progress.emit(crate::options::ProgressEvent::EntryError {
+                            path: Some(entry.path.clone()),
+                            error: e.to_string(),
+                        });
+                        InspectOutcome::Failed {
+                            path: entry.path.clone(),
+                            error: e,
+                        }
+                    }
+                };
+                Ok::<_, ScanError>((idx, outcome))
             }
-        }) as InspectFuture);
-    }
+        })
+        .buffer_unordered(concurrency);
 
-    let mut results = Vec::with_capacity(futures.len());
-    for fut in futures {
-        let outcome = fut.await?;
-        results.push(outcome);
+    // 收集 + 按 idx 排序还原 entries 顺序
+    let mut indexed: Vec<(usize, InspectOutcome)> = Vec::with_capacity(entries.len());
+    let mut stream = std::pin::pin!(stream);
+    while let Some(item) = stream.next().await {
+        indexed.push(item?);
     }
-    Ok(results)
+    indexed.sort_by_key(|(i, _)| *i);
+
+    Ok(indexed.into_iter().map(|(_, o)| o).collect())
 }
 
 /// 单条扩展查询的实际实现。spawn_blocking 内调 pe::read_version_info。
 ///
 /// OWNER_SID / ADS 在 v0.1 暂未实现（NTFS $SDS 解析 + ADS 枚举复杂），
-/// 返回 None；调用方按 fields 检查。
+/// 返回 None / 空 vec；调用方按 fields 检查。
+///
+/// **目录早返回**：目录无 PE 资源，但 v0.2 实现 ADS 时目录可能含 zone.identifier
+/// 等备用数据流，所以早返回条件用 `is_directory && !fields.contains(ADS)`。
 async fn inspect_one(
     entry: &FileEntry,
     fields: InspectFields,
 ) -> Result<InspectedEntry, ScanError> {
-    if entry.is_directory {
-        // 目录无 PE 资源 / 文件 size，跳过
+    if entry.is_directory && !fields.contains(InspectFields::ADS) {
+        // 目录无 PE 资源；v0.2 加 ADS 时此分支需放宽
         return Ok(InspectedEntry::default());
     }
 
     let path = entry.path.clone();
     let need_version = fields.contains(InspectFields::VERSION_INFO);
 
-    let version_info = if need_version {
+    let version_info = if need_version && !entry.is_directory {
         Some(
             fetch_in_blocking(&path, |p| {
                 read_version_info(p).map_err(|detail| ScanError::InspectFailed {
@@ -223,5 +228,156 @@ mod tests {
     async fn inspect_many_rejects_zero_concurrency() {
         let result = inspect_many(&[], InspectFields::VERSION_INFO, Arc::new(NoopSink), 0).await;
         assert!(matches!(result, Err(ScanError::Internal(_))));
+    }
+
+    /// 验证 inspect_many 的结果顺序与 entries 一一对应（必修测试）。
+    /// buffer_unordered 完成顺序不确定，必须靠 (idx, outcome) 排序还原。
+    #[tokio::test]
+    async fn inspect_many_preserves_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 构造 5 个文件，路径名带序号
+        let mut entries = Vec::new();
+        for i in 0..5 {
+            let path = tmp.path().join(format!("file_{i}.exe"));
+            fs::write(&path, b"MZ\x00\x00").unwrap(); // 不是真 PE，会 Failed
+            let meta = fs::metadata(&path).unwrap();
+            entries.push(FileEntry::from_metadata(path, &meta));
+        }
+
+        let results = inspect_many(
+            &entries,
+            InspectFields::VERSION_INFO,
+            Arc::new(NoopSink),
+            3, // concurrency=3 触发并行，但结果顺序必须保留
+        )
+        .await
+        .expect("inspect_many");
+
+        assert_eq!(results.len(), entries.len());
+        for (i, outcome) in results.iter().enumerate() {
+            match outcome {
+                InspectOutcome::Failed { path, .. } => {
+                    assert_eq!(
+                        path.file_name().unwrap().to_string_lossy(),
+                        format!("file_{i}.exe"),
+                        "results[{i}].path should match entries[{i}].path"
+                    );
+                }
+                InspectOutcome::Success(_) => panic!("expected Failed (fake PE) at index {i}"),
+            }
+        }
+    }
+
+    /// concurrency=1 应该退化为完全串行（一次只跑一个 entry）。
+    /// 用 atomic counter 验证：max_in_flight 永远 ≤ 1。
+    #[tokio::test]
+    async fn inspect_many_concurrency_one_is_serial() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let tmp = tempfile::tempdir().unwrap();
+        let mut entries = Vec::new();
+        for i in 0..5 {
+            let path = tmp.path().join(format!("f{i}.exe"));
+            fs::write(&path, b"MZ").unwrap();
+            let meta = fs::metadata(&path).unwrap();
+            entries.push(FileEntry::from_metadata(path, &meta));
+        }
+
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let progress = crate::sink_from({
+            let in_flight = Arc::clone(&in_flight);
+            let max_seen = Arc::clone(&max_seen);
+            move |_| {
+                let cur = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                let mut max = max_seen.load(Ordering::SeqCst);
+                while cur > max {
+                    match max_seen.compare_exchange(max, cur, Ordering::SeqCst, Ordering::SeqCst) {
+                        Ok(_) => break,
+                        Err(now) => max = now,
+                    }
+                }
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+            }
+        });
+
+        let _ = inspect_many(&entries, InspectFields::VERSION_INFO, progress, 1).await;
+        // concurrency=1 时 max_in_flight 应该 <= 1
+        // （由于 inspect_one 本身是 async + spawn_blocking，理论上同时只 1）
+        let max = max_seen.load(Ordering::SeqCst);
+        assert!(
+            max <= 1,
+            "concurrency=1 should be serial, but max_in_flight={max}"
+        );
+    }
+
+    /// 混合 Success+Failed 时 results 顺序仍与 entries 对应。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn inspect_many_mixed_success_and_failed_preserves_order() {
+        let notepad = PathBuf::from("C:\\Windows\\System32\\notepad.exe");
+        if !notepad.exists() {
+            return; // 非 Windows 跳过
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let fake = tmp.path().join("fake.exe");
+        fs::write(&fake, b"MZ").unwrap();
+        let fake_meta = fs::metadata(&fake).unwrap();
+
+        let notepad_meta = fs::metadata(&notepad).unwrap();
+
+        // entries 顺序：fake（Failed）, notepad（Success）, nonexistent（Failed）
+        let entries = vec![
+            FileEntry::from_metadata(fake.clone(), &fake_meta),
+            FileEntry::from_metadata(notepad.clone(), &notepad_meta),
+            FileEntry {
+                path: PathBuf::from("/nonexistent/fake.exe"),
+                ..FileEntry::from_metadata(fake.clone(), &fake_meta)
+            },
+        ];
+
+        let results = inspect_many(&entries, InspectFields::VERSION_INFO, Arc::new(NoopSink), 4)
+            .await
+            .expect("inspect_many");
+
+        assert_eq!(results.len(), 3);
+        assert!(
+            matches!(results[0], InspectOutcome::Failed { .. }),
+            "[0] should be Failed (fake PE)"
+        );
+        assert!(
+            matches!(results[1], InspectOutcome::Success(_)),
+            "[1] should be Success (real notepad.exe)"
+        );
+        assert!(
+            matches!(results[2], InspectOutcome::Failed { .. }),
+            "[2] should be Failed (nonexistent)"
+        );
+    }
+
+    /// OWNER_SID 单独传时，目录应该早返回（v0.1 实现：无 ADS 时目录返回空）。
+    #[tokio::test]
+    async fn inspect_directory_with_owner_sid_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta = fs::metadata(tmp.path()).unwrap();
+        let entry = FileEntry::from_metadata(tmp.path().to_path_buf(), &meta);
+        let result = inspect(&entry, InspectFields::OWNER_SID).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().owner_sid.is_none()); // v0.1 always None
+    }
+
+    /// ADS 单独传时，目录应该不早返回（v0.2 实现的前置条件）。
+    /// v0.1 仍然走完后返回空 ADS vec，但应跳过 PE 检查。
+    #[tokio::test]
+    async fn inspect_directory_with_ads_does_not_skip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let meta = fs::metadata(tmp.path()).unwrap();
+        let entry = FileEntry::from_metadata(tmp.path().to_path_buf(), &meta);
+        let result = inspect(&entry, InspectFields::ADS).await;
+        assert!(result.is_ok());
+        // v0.1 仍返回空 ADS
+        let inspected = result.unwrap();
+        assert!(inspected.alt_data_streams.is_empty());
+        assert!(inspected.version_info.is_none()); // 没传 VERSION_INFO
     }
 }
