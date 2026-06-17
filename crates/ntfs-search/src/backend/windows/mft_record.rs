@@ -63,6 +63,7 @@ const ATTR_DATA: u32 = 128;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedMftRecord {
     pub file_name: String,
+    pub file_name_namespace: u8,
     pub parent_reference: u64,
     pub created: u64,
     pub modified: u64,
@@ -76,6 +77,7 @@ impl Default for ParsedMftRecord {
     fn default() -> Self {
         Self {
             file_name: String::new(),
+            file_name_namespace: 0xFF, // 哨兵值，任何实际 namespace 都会覆盖
             parent_reference: NTFS_ROOT_FILE_REFERENCE,
             created: 0,
             modified: 0,
@@ -84,6 +86,18 @@ impl Default for ParsedMftRecord {
             size: 0,
             is_directory: false,
         }
+    }
+}
+
+/// $FILE_NAME namespace 优先级（数值越大越优先）。
+/// Win32 (1) > Win32&DOS (3) > POSIX (0) > DOS (2) > 其他
+fn namespace_priority(namespace: u8) -> u8 {
+    match namespace {
+        1 => 4, // Win32
+        3 => 3, // Win32&DOS
+        0 => 2, // POSIX
+        2 => 1, // DOS
+        _ => 0,
     }
 }
 
@@ -269,7 +283,7 @@ fn extract_standard_information(attr: &RawAttribute<'_>, result: &mut ParsedMftR
 }
 
 /// 从 $FILE_NAME 提取 parent_reference + name。
-/// 多个 $FILE_NAME 时优先取 Win32 namespace (1) 或 Win32&DOS (3)。
+/// 多个 $FILE_NAME 时按 namespace 优先级（Win32 > Win32&DOS > POSIX > DOS）选最优。
 fn extract_file_name(attr: &RawAttribute<'_>, result: &mut ParsedMftRecord) {
     let Some(content) = attr.resident_content() else {
         return;
@@ -292,23 +306,15 @@ fn extract_file_name(attr: &RawAttribute<'_>, result: &mut ParsedMftRecord) {
         .collect();
     let name = String::from_utf16_lossy(&name_utf16);
 
-    // Parent reference 总是取（即使本属性后续不取 name）
     result.parent_reference = parent_ref;
 
-    // Namespace 优先级：Win32 (1) / Win32&DOS (3) > POSIX (0) > DOS (2)
-    let take_name = result.file_name.is_empty()
-        || (matches!(namespace, 1 | 3) && !matches!(preferred_namespace(&result.file_name), 1 | 3));
-    if take_name {
+    // 按 namespace 优先级覆盖：新 namespace 优先级更高，或尚无 name
+    if result.file_name.is_empty()
+        || namespace_priority(namespace) > namespace_priority(result.file_name_namespace)
+    {
         result.file_name = name;
+        result.file_name_namespace = namespace;
     }
-}
-
-/// 检查已有 name 的 namespace——我们不在 ParsedMftRecord 里存 namespace，
-/// 简单策略：如果已存 name 含 DOS 风格（如全大写 + 8.3），返回 2；否则 1。
-fn preferred_namespace(_name: &str) -> u8 {
-    // 简化：实际 NTFS 中 $FILE_NAME 多 namespace 时几乎总有 Win32 name，
-    // 此处假设已有 name 是优先（除非新 name 是 Win32）。
-    1
 }
 
 /// 从 $DATA 提取文件 size（resident = Content Length，non-resident = Real Size）。
@@ -577,5 +583,74 @@ mod tests {
         let mut bytes = build_file_record(5, "test", (0, 0, 0), 0, 0, false);
         bytes[20..22].copy_from_slice(&1023u16.to_le_bytes()); // 几乎到边界
         let _ = parse_mft_record(&bytes); // 不应 panic
+    }
+
+    #[test]
+    fn record_with_multiple_file_names_picks_win32_namespace() {
+        // 构造一个 record 同时含 DOS (namespace=2) 和 Win32 (namespace=1) 两个 $FILE_NAME
+        // 验证 extract_file_name 优先取 Win32
+        let record_size = 1024;
+        let mut buf = vec![0u8; record_size];
+        buf[0..4].copy_from_slice(b"FILE");
+        buf[4..6].copy_from_slice(&42u16.to_le_bytes());
+        buf[6..8].copy_from_slice(&3u16.to_le_bytes()); // usa_count=3 (含 USN + 2 sector)
+        buf[42..44].copy_from_slice(&0u16.to_le_bytes()); // USN = 0
+        buf[44..46].copy_from_slice(&0u16.to_le_bytes()); // sector 0 orig
+        buf[46..48].copy_from_slice(&0u16.to_le_bytes()); // sector 1 orig
+
+        let first_attr_offset = 56u16;
+        buf[20..22].copy_from_slice(&first_attr_offset.to_le_bytes());
+        buf[22..26].copy_from_slice(&1u32.to_le_bytes()); // in use
+
+        let mut offset = first_attr_offset as usize;
+        // 第一个 $FILE_NAME：DOS namespace (2)，名字 "TESTFI~1.EXE"
+        offset =
+            write_file_name_attr_with_namespace(&mut buf, offset, 5, "TESTFI~1.EXE", (0, 0, 0), 2);
+        // 第二个 $FILE_NAME：Win32 namespace (1)，名字 "TestFile.exe"
+        offset =
+            write_file_name_attr_with_namespace(&mut buf, offset, 5, "TestFile.exe", (0, 0, 0), 1);
+        if offset + 4 <= buf.len() {
+            buf[offset..offset + 4].copy_from_slice(&ATTR_TYPE_END_MARKER.to_le_bytes());
+        }
+
+        let parsed = parse_mft_record(&buf).expect("should parse");
+        // 应该取 Win32 namespace 的 "TestFile.exe"，而不是 DOS 的 "TESTFI~1.EXE"
+        assert_eq!(parsed.file_name, "TestFile.exe");
+    }
+
+    fn write_file_name_attr_with_namespace(
+        buf: &mut [u8],
+        offset: usize,
+        parent_ref: u64,
+        name: &str,
+        ts: (u64, u64, u64),
+        namespace: u8,
+    ) -> usize {
+        let name_utf16: Vec<u16> = name.encode_utf16().collect();
+        let name_byte_len = name_utf16.len() * 2;
+        let content_len = 66 + name_byte_len;
+        let content_offset = 24usize;
+        let attr_len = content_offset + content_len;
+
+        buf[offset..offset + 4].copy_from_slice(&ATTR_FILE_NAME.to_le_bytes());
+        buf[offset + 4..offset + 8].copy_from_slice(&(attr_len as u32).to_le_bytes());
+        buf[offset + 8] = 0; // resident
+        buf[offset + 16..offset + 20].copy_from_slice(&(content_len as u32).to_le_bytes());
+        buf[offset + 20..offset + 22].copy_from_slice(&(content_offset as u16).to_le_bytes());
+
+        let c = offset + content_offset;
+        buf[c..c + 8].copy_from_slice(&parent_ref.to_le_bytes());
+        buf[c + 8..c + 16].copy_from_slice(&ts.0.to_le_bytes());
+        buf[c + 16..c + 24].copy_from_slice(&ts.1.to_le_bytes());
+        buf[c + 24..c + 32].copy_from_slice(&ts.1.to_le_bytes());
+        buf[c + 32..c + 40].copy_from_slice(&ts.2.to_le_bytes());
+        buf[c + 64] = name_utf16.len() as u8;
+        buf[c + 65] = namespace;
+        for (i, &w) in name_utf16.iter().enumerate() {
+            let p = c + 66 + i * 2;
+            buf[p..p + 2].copy_from_slice(&w.to_le_bytes());
+        }
+
+        offset + attr_len
     }
 }

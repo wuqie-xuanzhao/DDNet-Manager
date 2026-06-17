@@ -64,11 +64,13 @@ impl Backend for MftBackend {
     ) -> Result<Vec<FileEntry>, ScanError> {
         // 子树路径直接走 Walkdir（同 UsnBackend 语义）
         if !super::is_whole_drive_root(root, self.drive_letter) {
-            tracing::debug!(
-                root = %root.display(),
-                drive = %self.drive_letter,
-                "MFT backend got subtree path; using walkdir directly"
-            );
+            progress.emit(ProgressEvent::BackendDowngraded {
+                root: root.to_path_buf(),
+                from: BackendKind::Mft,
+                to: BackendKind::Walkdir,
+                reason: "subtree path; $MFT scans whole volume, using walkdir for subtree"
+                    .to_string(),
+            });
             return WalkdirBackend.scan_root(root, opts, progress, cancel).await;
         }
 
