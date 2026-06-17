@@ -150,7 +150,8 @@ fn registry_rejects_setting_local_smoke_record_as_default() {
     assert_eq!(
         registry
             .set_default_client("qmclient-smoke")
-            .expect_err("smoke 临时记录不能被设为默认客户端"),
+            .expect_err("smoke 临时记录不能被设为默认客户端")
+            .to_string(),
         "local smoke client cannot be set as default"
     );
     assert!(registry

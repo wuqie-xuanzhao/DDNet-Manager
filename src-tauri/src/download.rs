@@ -187,7 +187,7 @@ impl DownloadManager {
     pub fn recover_from_registry(
         &self,
         registry: &crate::registry::ClientRegistry,
-    ) -> Result<Vec<DownloadJob>, String> {
+    ) -> Result<Vec<DownloadJob>, crate::error::ManagerError> {
         let persisted = registry.list_download_jobs(None)?;
         let mut recovered = Vec::new();
         for mut job in persisted {
@@ -203,7 +203,8 @@ impl DownloadManager {
                     Some("application exited before download or install completed".to_string());
                 registry.upsert_download_job(&job)?;
             }
-            self.insert_bypass_limit(job.clone())?;
+            self.insert_bypass_limit(job.clone())
+                .map_err(crate::error::ManagerError::Internal)?;
             recovered.push(job);
         }
         Ok(recovered)

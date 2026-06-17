@@ -63,8 +63,8 @@ pub(crate) const LOCAL_SMOKE_RESULT_PATH_ENV: &str = "DDNET_MANAGER_LOCAL_SMOKE_
 
 /// 验证用户选择的客户端目录，并返回识别出的安装信息。
 #[tauri::command]
-pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstallation, String> {
-    crate::client_scan::validate_client_dir(Path::new(&path))
+pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstallation, IpcError> {
+    crate::client_scan::validate_client_dir(Path::new(&path)).map_err(IpcError::from)
 }
 
 /// 扫描本机候选客户端安装目录。
@@ -72,7 +72,7 @@ pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstalla
 pub fn scan_client_installations(
     registry: RegistryState<'_>,
     options: Option<ScanClientInstallationsOptions>,
-) -> Result<Vec<ClientInstallation>, String> {
+) -> Result<Vec<ClientInstallation>, IpcError> {
     let options = options.unwrap_or_default();
     let use_everything = options.roots.is_empty();
     let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
@@ -102,6 +102,7 @@ pub fn scan_client_installations(
             .map(PathBuf::from)
             .collect(),
     })
+    .map_err(IpcError::from)
 }
 
 /// 保存或更新客户端安装记录。
@@ -109,12 +110,15 @@ pub fn scan_client_installations(
 pub fn upsert_client_installation(
     registry: RegistryState<'_>,
     request: UpsertClientInstallationRequest,
-) -> Result<ClientInstallation, String> {
-    let mut client = crate::client_scan::validate_client_dir(Path::new(&request.install_dir))?;
+) -> Result<ClientInstallation, IpcError> {
+    let mut client = crate::client_scan::validate_client_dir(Path::new(&request.install_dir))
+        .map_err(IpcError::from)?;
     if request.is_default
         && crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir))
     {
-        return Err("local smoke client cannot be saved as default".to_string());
+        return Err(IpcError::from(
+            "local smoke client cannot be saved as default".to_string(),
+        ));
     }
     client.is_default = request.is_default;
     registry.upsert_client_installation(&client)?;
@@ -123,36 +127,38 @@ pub fn upsert_client_installation(
 
 /// 从注册表移除客户端记录，不删除本地文件。
 #[tauri::command]
-pub fn remove_client_installation(registry: RegistryState<'_>, id: String) -> Result<(), String> {
-    registry.remove_client_installation(&id)
+pub fn remove_client_installation(registry: RegistryState<'_>, id: String) -> Result<(), IpcError> {
+    registry.remove_client_installation(&id)?;
+    Ok(())
 }
 
 /// 设置默认启动客户端。
 #[tauri::command]
-pub fn set_default_client(registry: RegistryState<'_>, id: String) -> Result<(), String> {
-    registry.set_default_client(&id)
+pub fn set_default_client(registry: RegistryState<'_>, id: String) -> Result<(), IpcError> {
+    registry.set_default_client(&id)?;
+    Ok(())
 }
 
 /// 读取所有已保存客户端安装记录。
 #[tauri::command]
 pub fn list_client_installations(
     registry: RegistryState<'_>,
-) -> Result<Vec<ClientInstallation>, String> {
-    registry.list_client_installations()
+) -> Result<Vec<ClientInstallation>, IpcError> {
+    registry.list_client_installations().map_err(IpcError::from)
 }
 
 /// 读取默认启动客户端。
 #[tauri::command]
 pub fn get_default_client(
     registry: RegistryState<'_>,
-) -> Result<Option<ClientInstallation>, String> {
-    registry.get_default_client()
+) -> Result<Option<ClientInstallation>, IpcError> {
+    registry.get_default_client().map_err(IpcError::from)
 }
 
 /// 读取 MVP 应用设置。
 #[tauri::command]
-pub fn load_app_settings(registry: RegistryState<'_>) -> Result<AppSettings, String> {
-    registry.load_app_settings()
+pub fn load_app_settings(registry: RegistryState<'_>) -> Result<AppSettings, IpcError> {
+    registry.load_app_settings().map_err(IpcError::from)
 }
 
 /// 保存 MVP 应用设置，并立即成为后续后端命令使用的配置。
@@ -160,11 +166,11 @@ pub fn load_app_settings(registry: RegistryState<'_>) -> Result<AppSettings, Str
 pub fn save_app_settings(
     registry: RegistryState<'_>,
     settings: AppSettings,
-) -> Result<AppSettings, String> {
+) -> Result<AppSettings, IpcError> {
     registry.save_app_settings(&settings)?;
     #[cfg(target_os = "windows")]
     {
-        set_autostart_registry(settings.autostart)?;
+        set_autostart_registry(settings.autostart).map_err(IpcError::from)?;
     }
     Ok(settings)
 }
@@ -210,8 +216,8 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
 
 /// 在 debug + 显式 env 开关下，把本地 smoke 自动验收结果写回脚本约定路径。
 #[tauri::command]
-pub fn report_local_smoke_result(result: LocalSmokeResultReport) -> Result<(), String> {
-    crate::commands::download::write_local_smoke_result_report(&result)
+pub fn report_local_smoke_result(result: LocalSmokeResultReport) -> Result<(), IpcError> {
+    crate::commands::download::write_local_smoke_result_report(&result).map_err(IpcError::from)
 }
 
 /// 读取指定客户端的安装历史。
@@ -219,14 +225,16 @@ pub fn report_local_smoke_result(result: LocalSmokeResultReport) -> Result<(), S
 pub fn list_install_history(
     registry: RegistryState<'_>,
     client_installation_id: String,
-) -> Result<Vec<InstallHistoryRecord>, String> {
-    registry.list_install_history(&client_installation_id)
+) -> Result<Vec<InstallHistoryRecord>, IpcError> {
+    registry
+        .list_install_history(&client_installation_id)
+        .map_err(IpcError::from)
 }
 
 /// 判断指定客户端可执行文件是否正在运行。
 #[tauri::command]
-pub fn is_client_running(path: String) -> Result<bool, String> {
-    crate::process::is_client_running(Path::new(&path))
+pub fn is_client_running(path: String) -> Result<bool, IpcError> {
+    crate::process::is_client_running(Path::new(&path)).map_err(IpcError::from)
 }
 
 /// 从指定 URL 加载更新 manifest，并返回已校验的 manifest 内容。
@@ -266,33 +274,37 @@ pub async fn check_client_update(
 
 /// 启动指定路径的客户端可执行文件。
 #[tauri::command]
-pub fn launch_client(app: AppHandle, path: String) -> Result<(), String> {
-    crate::process::launch_executable(&path)?;
+pub fn launch_client(app: AppHandle, path: String) -> Result<(), IpcError> {
+    crate::process::launch_executable(&path).map_err(IpcError::from)?;
     monitor_client_exit(app, path);
     Ok(())
 }
 
 /// 重新验证并启动默认客户端。
 #[tauri::command]
-pub fn launch_default_client(app: AppHandle, registry: RegistryState<'_>) -> Result<(), String> {
+pub fn launch_default_client(app: AppHandle, registry: RegistryState<'_>) -> Result<(), IpcError> {
     let client = registry
         .get_default_client()?
-        .ok_or_else(|| "default client is not configured".to_string())?;
-    let verified = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))?;
+        .ok_or_else(|| IpcError::from("default client is not configured".to_string()))?;
+    let verified = crate::client_scan::validate_client_dir(Path::new(&client.install_dir))
+        .map_err(IpcError::from)?;
     if verified.health != ClientHealth::Ok {
-        return Err(format!(
+        return Err(IpcError::from(format!(
             "default client is not healthy before launch: {:?}",
             verified.health
-        ));
+        )));
     }
     if !verified.compatibility.can_launch {
-        return Err("default client is not compatible with this machine".to_string());
+        return Err(IpcError::from(
+            "default client is not compatible with this machine".to_string(),
+        ));
     }
 
     let probe = crate::process::launch_executable_with_probe(
         &verified.executable_path,
         Duration::from_secs(2),
-    )?;
+    )
+    .map_err(IpcError::from)?;
     registry.record_launch_probe_result(crate::registry::LaunchProbeRecord {
         client_installation_id: &client.id,
         status: probe.status,
@@ -373,7 +385,7 @@ pub struct AppUpdateCheck {
 pub async fn check_app_update(
     registry: RegistryState<'_>,
     app: AppHandle,
-) -> Result<AppUpdateCheck, String> {
+) -> Result<AppUpdateCheck, IpcError> {
     let current_version = app.package_info().version.to_string();
     let settings = registry.load_app_settings()?;
 
@@ -382,7 +394,8 @@ pub async fn check_app_update(
         "DDNet-Manager",
         settings.network_route.as_ref(),
     )
-    .await?;
+    .await
+    .map_err(IpcError::from)?;
 
     let latest_version = release.tag_name.trim_start_matches(['v', 'V']).to_string();
     let has_update = crate::version::is_update_needed(Some(&current_version), &latest_version);
@@ -398,7 +411,7 @@ pub async fn check_app_update(
 
 /// 获取当前应用的版本号。
 #[tauri::command]
-pub fn get_app_version(app: AppHandle) -> Result<String, String> {
+pub fn get_app_version(app: AppHandle) -> Result<String, IpcError> {
     Ok(app.package_info().version.to_string())
 }
 

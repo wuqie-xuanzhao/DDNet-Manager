@@ -320,7 +320,7 @@ fn enter_installing_snapshot_rolls_back_memory_when_registry_write_fails() {
     let error = enter_installing_snapshot(&manager, &registry, &job.id)
         .expect_err("注册表写入失败时应返回错误");
 
-    assert!(error.contains("failed to upsert download job"));
+    assert!(error.to_string().contains("failed to upsert download job"));
     let restored = manager
         .get(&job.id)
         .expect("内存任务查询应成功")

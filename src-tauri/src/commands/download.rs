@@ -47,8 +47,7 @@ async fn prepare_update_download_job(
     let client_installation_id = request.client_installation_id.clone();
     let network_route = request.network_route.clone();
     let client = registry
-        .list_client_installations()
-        .map_err(ManagerError::Internal)?
+        .list_client_installations()?
         .into_iter()
         .find(|client| client.id == client_installation_id)
         .ok_or_else(|| {
@@ -244,7 +243,7 @@ async fn handle_download_success(runtime: &DownloadTaskRuntime) {
         Err(error) => {
             if let Ok(job) = runtime.manager.update(&job_id, |job| {
                 job.status = DownloadJobStatus::Failed;
-                job.error = Some(error);
+                job.error = Some(error.to_string());
             }) {
                 persist_download_job_snapshot(&runtime.registry, &job);
                 let _ = runtime.app.emit_to("main", "download-failed", job);
@@ -313,7 +312,7 @@ fn persist_download_job_snapshot(registry: &ClientRegistry, job: &DownloadJob) {
 fn persist_download_job_snapshot_result(
     registry: &ClientRegistry,
     job: &DownloadJob,
-) -> Result<(), String> {
+) -> Result<(), ManagerError> {
     registry.upsert_download_job(job)
 }
 
@@ -322,21 +321,24 @@ pub(crate) fn enter_installing_snapshot(
     manager: &DownloadManager,
     registry: &ClientRegistry,
     job_id: &str,
-) -> Result<DownloadJob, String> {
+) -> Result<DownloadJob, ManagerError> {
     let previous = manager
-        .get(job_id)?
-        .ok_or_else(|| format!("download job not found: {job_id}"))?;
-    let job = manager.update(job_id, |job| {
-        job.status = DownloadJobStatus::Installing;
-    })?;
+        .get(job_id)
+        .map_err(ManagerError::Internal)?
+        .ok_or_else(|| ManagerError::NotFound(format!("download job not found: {job_id}")))?;
+    let job = manager
+        .update(job_id, |job| {
+            job.status = DownloadJobStatus::Installing;
+        })
+        .map_err(ManagerError::Internal)?;
     if let Err(error) = registry.upsert_download_job(&job) {
         let rollback_result = manager.update(job_id, |job| {
             *job = previous;
         });
         if let Err(rollback_error) = rollback_result {
-            return Err(format!(
+            return Err(ManagerError::Internal(format!(
                 "{error}; failed to restore in-memory download job: {rollback_error}"
-            ));
+            )));
         }
         return Err(error);
     }
@@ -348,11 +350,13 @@ pub(crate) fn complete_download_job_snapshot(
     manager: &DownloadManager,
     registry: &ClientRegistry,
     job_id: &str,
-) -> Result<DownloadJob, String> {
-    let job = manager.update(job_id, |job| {
-        job.status = DownloadJobStatus::Completed;
-        job.error = None;
-    })?;
+) -> Result<DownloadJob, ManagerError> {
+    let job = manager
+        .update(job_id, |job| {
+            job.status = DownloadJobStatus::Completed;
+            job.error = None;
+        })
+        .map_err(ManagerError::Internal)?;
     registry.upsert_download_job(&job)?;
     Ok(job)
 }
@@ -362,25 +366,29 @@ pub(crate) fn load_download_job_snapshot(
     manager: &DownloadManager,
     registry: &ClientRegistry,
     job_id: &str,
-) -> Result<Option<DownloadJob>, String> {
-    if let Some(job) = manager.get(job_id)? {
+) -> Result<Option<DownloadJob>, ManagerError> {
+    if let Some(job) = manager.get(job_id).map_err(ManagerError::Internal)? {
         return Ok(Some(job));
     }
     let Some(job) = registry.download_job_by_id(job_id)? else {
         return Ok(None);
     };
-    manager.insert(job.clone())?;
+    manager
+        .insert(job.clone())
+        .map_err(ManagerError::Internal)?;
     Ok(Some(job))
 }
 
 fn list_download_job_recoveries_from_registry(
     registry: &ClientRegistry,
     client_installation_id: Option<&str>,
-) -> Result<Vec<DownloadJobRecovery>, String> {
+) -> Result<Vec<DownloadJobRecovery>, ManagerError> {
     registry
         .list_download_jobs(client_installation_id)?
         .into_iter()
-        .map(|job| crate::download::build_download_job_recovery(&job))
+        .map(|job| {
+            crate::download::build_download_job_recovery(&job).map_err(ManagerError::Internal)
+        })
         .collect()
 }
 

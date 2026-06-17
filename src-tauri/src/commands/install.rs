@@ -28,9 +28,7 @@ pub async fn install_downloaded_update(
         manager.inner(),
         registry.inner(),
         &job_id,
-    )
-    .map_err(ManagerError::Internal)?
-    {
+    )? {
         Some(job) => job,
         None => {
             return Err(IpcError::from(ManagerError::NotFound(format!(
@@ -99,8 +97,7 @@ fn enter_installing_state(context: &InstallContext) -> Result<(), ManagerError> 
         &context.manager,
         &context.registry,
         &context.job_id,
-    )
-    .map_err(ManagerError::Internal)?;
+    )?;
     context
         .app
         .emit_to("main", "install-progress", &context.job_id)
@@ -188,8 +185,7 @@ fn load_install_target(
     job: &DownloadJob,
 ) -> Result<ClientInstallation, ManagerError> {
     let mut client = registry
-        .list_client_installations()
-        .map_err(ManagerError::Internal)?
+        .list_client_installations()?
         .into_iter()
         .find(|client| client.id == job.client_installation_id)
         .ok_or_else(|| {
@@ -257,8 +253,7 @@ fn finish_install_success(
         &context.manager,
         &context.registry,
         &context.job_id,
-    )
-    .map_err(ManagerError::Internal)?;
+    )?;
     let _ = context
         .registry
         .record_install_history(&install_history_record(InstallHistoryInput {
@@ -304,10 +299,7 @@ fn finish_install_failure(
             job.error = Some(error_message);
         })
         .map_err(ManagerError::Internal)?;
-    context
-        .registry
-        .upsert_download_job(&job)
-        .map_err(ManagerError::Internal)?;
+    context.registry.upsert_download_job(&job)?;
     context
         .app
         .emit_to("main", "install-failed", &job)

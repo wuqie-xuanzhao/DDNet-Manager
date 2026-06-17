@@ -1,3 +1,4 @@
+use crate::error::ManagerError;
 use crate::models::{
     AppSettings, ClientInstallation, CompatibilityStatus, DownloadJob, InstallHistoryRecord,
 };
@@ -44,14 +45,15 @@ impl Clone for ClientRegistry {
 
 impl ClientRegistry {
     /// 打开或创建客户端注册表，并初始化最小 schema。
-    pub fn open(path: &Path) -> Result<Self, String> {
+    pub fn open(path: &Path) -> Result<Self, ManagerError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("failed to create registry dir: {error}"))?;
+            std::fs::create_dir_all(parent).map_err(|error| {
+                ManagerError::Internal(format!("failed to create registry dir: {error}"))
+            })?;
         }
 
-        let conn =
-            Connection::open(path).map_err(|error| format!("failed to open registry: {error}"))?;
+        let conn = Connection::open(path)
+            .map_err(|error| ManagerError::Internal(format!("failed to open registry: {error}")))?;
         let registry = Self {
             conn: Arc::new(Mutex::new(conn)),
         };
@@ -60,26 +62,32 @@ impl ClientRegistry {
     }
 
     /// 获取互斥锁保护的 SQLite 连接，供内部方法使用。
-    pub(crate) fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+    pub(crate) fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, ManagerError> {
         self.conn
             .lock()
-            .map_err(|_| "registry connection is poisoned".to_string())
+            .map_err(|_| ManagerError::Internal("registry connection is poisoned".to_string()))
     }
 
     /// 保存或更新客户端安装记录。若记录为默认客户端，会清除其他默认标记。
-    pub fn upsert_client_installation(&self, client: &ClientInstallation) -> Result<(), String> {
+    pub fn upsert_client_installation(
+        &self,
+        client: &ClientInstallation,
+    ) -> Result<(), ManagerError> {
         let conn = self.lock_conn()?;
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|error| format!("failed to start registry transaction: {error}"))?;
+        let tx = conn.unchecked_transaction().map_err(|error| {
+            ManagerError::Internal(format!("failed to start registry transaction: {error}"))
+        })?;
 
         if client.is_default {
             tx.execute("UPDATE client_installations SET is_default = 0", [])
-                .map_err(|error| format!("failed to clear default client: {error}"))?;
+                .map_err(|error| {
+                    ManagerError::Internal(format!("failed to clear default client: {error}"))
+                })?;
         }
 
-        let client_json = serde_json::to_string(client)
-            .map_err(|error| format!("failed to serialize client installation: {error}"))?;
+        let client_json = serde_json::to_string(client).map_err(|error| {
+            ManagerError::Internal(format!("failed to serialize client installation: {error}"))
+        })?;
         tx.execute(
             "INSERT INTO client_installations (
                 id, client_id, display_name, install_dir, executable_path,
@@ -109,21 +117,25 @@ impl ClientRegistry {
                 client.data_dir,
                 client.user_data_dir,
                 client.version,
-                serde_json::to_string(&client.health)
-                    .map_err(|error| format!("failed to serialize client health: {error}"))?,
+                serde_json::to_string(&client.health).map_err(|error| {
+                    ManagerError::Internal(format!("failed to serialize client health: {error}"))
+                })?,
                 client.last_scanned_at,
                 client.is_default,
                 client_json
             ],
         )
-        .map_err(|error| format!("failed to upsert client installation: {error}"))?;
+        .map_err(|error| {
+            ManagerError::Internal(format!("failed to upsert client installation: {error}"))
+        })?;
 
-        tx.commit()
-            .map_err(|error| format!("failed to commit registry transaction: {error}"))
+        tx.commit().map_err(|error| {
+            ManagerError::Internal(format!("failed to commit registry transaction: {error}"))
+        })
     }
 
     /// 返回已保存的所有客户端安装记录。
-    pub fn list_client_installations(&self) -> Result<Vec<ClientInstallation>, String> {
+    pub fn list_client_installations(&self) -> Result<Vec<ClientInstallation>, ManagerError> {
         let conn = self.lock_conn()?;
         let mut statement = conn
             .prepare(
@@ -131,7 +143,9 @@ impl ClientRegistry {
                  FROM client_installations
                  ORDER BY is_default DESC, display_name ASC, install_dir ASC",
             )
-            .map_err(|error| format!("failed to query client installations: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to query client installations: {error}"))
+            })?;
 
         let rows = statement
             .query_map([], |row| {
@@ -139,14 +153,19 @@ impl ClientRegistry {
                 let is_default: bool = row.get(1)?;
                 Ok((client_json, is_default))
             })
-            .map_err(|error| format!("failed to read client installations: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to read client installations: {error}"))
+            })?;
 
         let mut clients = Vec::new();
         for row in rows {
-            let (client_json, is_default) =
-                row.map_err(|error| format!("failed to read client installation row: {error}"))?;
-            let mut client: ClientInstallation = serde_json::from_str(&client_json)
-                .map_err(|error| format!("failed to parse client installation: {error}"))?;
+            let (client_json, is_default) = row.map_err(|error| {
+                ManagerError::Internal(format!("failed to read client installation row: {error}"))
+            })?;
+            let mut client: ClientInstallation =
+                serde_json::from_str(&client_json).map_err(|error| {
+                    ManagerError::Internal(format!("failed to parse client installation: {error}"))
+                })?;
             client.is_default = is_default;
             normalize_client_installation(&mut client);
             clients.push(client);
@@ -156,38 +175,47 @@ impl ClientRegistry {
     }
 
     /// 设置默认启动客户端。
-    pub fn set_default_client(&self, id: &str) -> Result<(), String> {
-        let client = self
-            .client_installation_by_id(id)?
-            .ok_or_else(|| format!("client installation not found: {id}"))?;
+    pub fn set_default_client(&self, id: &str) -> Result<(), ManagerError> {
+        let client = self.client_installation_by_id(id)?.ok_or_else(|| {
+            ManagerError::NotFound(format!("client installation not found: {id}"))
+        })?;
         if crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir)) {
-            return Err("local smoke client cannot be set as default".to_string());
+            return Err(ManagerError::Internal(
+                "local smoke client cannot be set as default".to_string(),
+            ));
         }
 
         let conn = self.lock_conn()?;
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|error| format!("failed to start registry transaction: {error}"))?;
+        let tx = conn.unchecked_transaction().map_err(|error| {
+            ManagerError::Internal(format!("failed to start registry transaction: {error}"))
+        })?;
         let changed = tx
             .execute(
                 "UPDATE client_installations SET is_default = 1 WHERE id = ?1",
                 params![id],
             )
-            .map_err(|error| format!("failed to set default client: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to set default client: {error}"))
+            })?;
         if changed == 0 {
-            return Err(format!("client installation not found: {id}"));
+            return Err(ManagerError::NotFound(format!(
+                "client installation not found: {id}"
+            )));
         }
         tx.execute(
             "UPDATE client_installations SET is_default = 0 WHERE id <> ?1",
             params![id],
         )
-        .map_err(|error| format!("failed to clear other default clients: {error}"))?;
-        tx.commit()
-            .map_err(|error| format!("failed to commit registry transaction: {error}"))
+        .map_err(|error| {
+            ManagerError::Internal(format!("failed to clear other default clients: {error}"))
+        })?;
+        tx.commit().map_err(|error| {
+            ManagerError::Internal(format!("failed to commit registry transaction: {error}"))
+        })
     }
 
     /// 返回当前默认客户端。没有默认客户端时返回空。
-    pub fn get_default_client(&self) -> Result<Option<ClientInstallation>, String> {
+    pub fn get_default_client(&self) -> Result<Option<ClientInstallation>, ManagerError> {
         let clients = self.list_client_installations()?;
         if clients.iter().any(|client| {
             crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir))
@@ -203,11 +231,15 @@ impl ClientRegistry {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|error| format!("failed to query default client: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to query default client: {error}"))
+            })?;
 
         row.map(|client_json| {
-            let mut client: ClientInstallation = serde_json::from_str(&client_json)
-                .map_err(|error| format!("failed to parse default client: {error}"))?;
+            let mut client: ClientInstallation =
+                serde_json::from_str(&client_json).map_err(|error| {
+                    ManagerError::Internal(format!("failed to parse default client: {error}"))
+                })?;
             client.is_default = true;
             normalize_client_installation(&mut client);
             Ok(client)
@@ -216,7 +248,7 @@ impl ClientRegistry {
     }
 
     /// 清理本地 smoke 自动验收残留的临时客户端记录。
-    pub fn remove_local_smoke_client_installations(&self) -> Result<(), String> {
+    pub fn remove_local_smoke_client_installations(&self) -> Result<(), ManagerError> {
         for client in self.list_client_installations()? {
             if crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir)) {
                 self.remove_client_installation(&client.id)?;
@@ -227,18 +259,20 @@ impl ClientRegistry {
     }
 
     /// 从注册表移除客户端安装记录，不删除本地文件。
-    pub fn remove_client_installation(&self, id: &str) -> Result<(), String> {
+    pub fn remove_client_installation(&self, id: &str) -> Result<(), ManagerError> {
         let conn = self.lock_conn()?;
         conn.execute(
             "DELETE FROM client_installations WHERE id = ?1",
             params![id],
         )
         .map(|_| ())
-        .map_err(|error| format!("failed to remove client installation: {error}"))
+        .map_err(|error| {
+            ManagerError::Internal(format!("failed to remove client installation: {error}"))
+        })
     }
 
     /// 读取应用设置。未保存过设置时返回默认值。
-    pub fn load_app_settings(&self) -> Result<AppSettings, String> {
+    pub fn load_app_settings(&self) -> Result<AppSettings, ManagerError> {
         let conn = self.lock_conn()?;
         let value = conn
             .query_row(
@@ -247,14 +281,17 @@ impl ClientRegistry {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|error| format!("failed to query app settings: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to query app settings: {error}"))
+            })?;
 
         let Some(json) = value else {
             return Ok(AppSettings::default());
         };
 
-        let settings = serde_json::from_str(&json)
-            .map_err(|error| format!("failed to parse app settings: {error}"))?;
+        let settings = serde_json::from_str(&json).map_err(|error| {
+            ManagerError::Internal(format!("failed to parse app settings: {error}"))
+        })?;
         if json.contains("\"github_token\"") {
             // 释放锁后再调用 save_app_settings 以避免死锁（save 内部也会获取同一把锁）。
             // 当前单进程场景下不存在竞态；若未来引入多线程并发写入设置，需改用重入锁或合并读写路径。
@@ -266,9 +303,10 @@ impl ClientRegistry {
     }
 
     /// 保存应用设置，并覆盖当前运行时使用的配置快照。
-    pub fn save_app_settings(&self, settings: &AppSettings) -> Result<(), String> {
-        let value = serde_json::to_string(settings)
-            .map_err(|error| format!("failed to serialize app settings: {error}"))?;
+    pub fn save_app_settings(&self, settings: &AppSettings) -> Result<(), ManagerError> {
+        let value = serde_json::to_string(settings).map_err(|error| {
+            ManagerError::Internal(format!("failed to serialize app settings: {error}"))
+        })?;
         let conn = self.lock_conn()?;
         conn.execute(
             "INSERT INTO app_settings (key, value) VALUES ('settings', ?1)
@@ -276,11 +314,11 @@ impl ClientRegistry {
             params![value],
         )
         .map(|_| ())
-        .map_err(|error| format!("failed to save app settings: {error}"))
+        .map_err(|error| ManagerError::Internal(format!("failed to save app settings: {error}")))
     }
 
     /// 保存或更新下载任务快照。
-    pub fn upsert_download_job(&self, job: &DownloadJob) -> Result<(), String> {
+    pub fn upsert_download_job(&self, job: &DownloadJob) -> Result<(), ManagerError> {
         let conn = self.lock_conn()?;
         conn.execute(
             "INSERT INTO download_jobs (
@@ -309,24 +347,28 @@ impl ClientRegistry {
                 job.asset_url,
                 job.sha256,
                 job.size,
-                serde_json::to_string(&job.status)
-                    .map_err(|error| format!("failed to serialize download job status: {error}"))?,
+                serde_json::to_string(&job.status).map_err(|error| {
+                    ManagerError::Internal(format!(
+                        "failed to serialize download job status: {error}"
+                    ))
+                })?,
                 job.downloaded_bytes,
                 job.cache_path,
                 job.error,
-                serde_json::to_string(job)
-                    .map_err(|error| format!("failed to serialize download job: {error}"))?
+                serde_json::to_string(job).map_err(|error| {
+                    ManagerError::Internal(format!("failed to serialize download job: {error}"))
+                })?
             ],
         )
         .map(|_| ())
-        .map_err(|error| format!("failed to upsert download job: {error}"))
+        .map_err(|error| ManagerError::Internal(format!("failed to upsert download job: {error}")))
     }
 
     /// 返回指定客户端的下载任务列表；为空时返回全部任务。
     pub fn list_download_jobs(
         &self,
         client_installation_id: Option<&str>,
-    ) -> Result<Vec<DownloadJob>, String> {
+    ) -> Result<Vec<DownloadJob>, ManagerError> {
         let conn = self.lock_conn()?;
         let sql = if client_installation_id.is_some() {
             "SELECT job_json
@@ -338,42 +380,46 @@ impl ClientRegistry {
              FROM download_jobs
              ORDER BY id DESC"
         };
-        let mut statement = conn
-            .prepare(sql)
-            .map_err(|error| format!("failed to query download jobs: {error}"))?;
+        let mut statement = conn.prepare(sql).map_err(|error| {
+            ManagerError::Internal(format!("failed to query download jobs: {error}"))
+        })?;
         let mut jobs = Vec::new();
         if let Some(client_installation_id) = client_installation_id {
             let rows = statement
                 .query_map(params![client_installation_id], |row| {
                     row.get::<_, String>(0)
                 })
-                .map_err(|error| format!("failed to read download jobs: {error}"))?;
+                .map_err(|error| {
+                    ManagerError::Internal(format!("failed to read download jobs: {error}"))
+                })?;
             for row in rows {
-                let job_json =
-                    row.map_err(|error| format!("failed to read download job row: {error}"))?;
-                jobs.push(
-                    serde_json::from_str(&job_json)
-                        .map_err(|error| format!("failed to parse download job: {error}"))?,
-                );
+                let job_json = row.map_err(|error| {
+                    ManagerError::Internal(format!("failed to read download job row: {error}"))
+                })?;
+                jobs.push(serde_json::from_str(&job_json).map_err(|error| {
+                    ManagerError::Internal(format!("failed to parse download job: {error}"))
+                })?);
             }
         } else {
             let rows = statement
                 .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|error| format!("failed to read download jobs: {error}"))?;
+                .map_err(|error| {
+                    ManagerError::Internal(format!("failed to read download jobs: {error}"))
+                })?;
             for row in rows {
-                let job_json =
-                    row.map_err(|error| format!("failed to read download job row: {error}"))?;
-                jobs.push(
-                    serde_json::from_str(&job_json)
-                        .map_err(|error| format!("failed to parse download job: {error}"))?,
-                );
+                let job_json = row.map_err(|error| {
+                    ManagerError::Internal(format!("failed to read download job row: {error}"))
+                })?;
+                jobs.push(serde_json::from_str(&job_json).map_err(|error| {
+                    ManagerError::Internal(format!("failed to parse download job: {error}"))
+                })?);
             }
         }
         Ok(jobs)
     }
 
     /// 按下载任务 ID 读取任务快照。
-    pub fn download_job_by_id(&self, id: &str) -> Result<Option<DownloadJob>, String> {
+    pub fn download_job_by_id(&self, id: &str) -> Result<Option<DownloadJob>, ManagerError> {
         let conn = self.lock_conn()?;
         let row = conn
             .query_row(
@@ -382,27 +428,36 @@ impl ClientRegistry {
                 |row| row.get::<_, String>(0),
             )
             .optional()
-            .map_err(|error| format!("failed to query download job: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to query download job: {error}"))
+            })?;
 
         row.map(|job_json| {
-            serde_json::from_str(&job_json)
-                .map_err(|error| format!("failed to parse download job: {error}"))
+            serde_json::from_str(&job_json).map_err(|error| {
+                ManagerError::Internal(format!("failed to parse download job: {error}"))
+            })
         })
         .transpose()
     }
 
     /// 删除已不再需要的下载任务快照。
-    pub fn remove_download_job(&self, id: &str) -> Result<(), String> {
+    pub fn remove_download_job(&self, id: &str) -> Result<(), ManagerError> {
         let conn = self.lock_conn()?;
         conn.execute("DELETE FROM download_jobs WHERE id = ?1", params![id])
             .map(|_| ())
-            .map_err(|error| format!("failed to remove download job: {error}"))
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to remove download job: {error}"))
+            })
     }
 
     /// 记录一次已完成或失败的 Manager-owned 安装事务。
-    pub fn record_install_history(&self, record: &InstallHistoryRecord) -> Result<(), String> {
-        let status = serde_json::to_string(&record.status)
-            .map_err(|error| format!("failed to serialize install status: {error}"))?;
+    pub fn record_install_history(
+        &self,
+        record: &InstallHistoryRecord,
+    ) -> Result<(), ManagerError> {
+        let status = serde_json::to_string(&record.status).map_err(|error| {
+            ManagerError::Internal(format!("failed to serialize install status: {error}"))
+        })?;
         let conn = self.lock_conn()?;
         conn.execute(
             "INSERT INTO install_history (
@@ -433,19 +488,22 @@ impl ClientRegistry {
                 record.rollback_path,
                 record.error,
                 record.completed_at,
-                serde_json::to_string(record)
-                    .map_err(|error| { format!("failed to serialize install history: {error}") })?
+                serde_json::to_string(record).map_err(|error| {
+                    ManagerError::Internal(format!("failed to serialize install history: {error}"))
+                })?
             ],
         )
         .map(|_| ())
-        .map_err(|error| format!("failed to record install history: {error}"))
+        .map_err(|error| {
+            ManagerError::Internal(format!("failed to record install history: {error}"))
+        })
     }
 
     /// 返回指定客户端的安装历史，最新记录排在前面。
     pub fn list_install_history(
         &self,
         client_installation_id: &str,
-    ) -> Result<Vec<InstallHistoryRecord>, String> {
+    ) -> Result<Vec<InstallHistoryRecord>, ManagerError> {
         let conn = self.lock_conn()?;
         let mut statement = conn
             .prepare(
@@ -454,33 +512,40 @@ impl ClientRegistry {
                  WHERE client_installation_id = ?1
                  ORDER BY completed_at DESC, id DESC",
             )
-            .map_err(|error| format!("failed to query install history: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to query install history: {error}"))
+            })?;
         let rows = statement
             .query_map(params![client_installation_id], |row| {
                 row.get::<_, String>(0)
             })
-            .map_err(|error| format!("failed to read install history: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to read install history: {error}"))
+            })?;
         let mut history = Vec::new();
         for row in rows {
-            let record_json =
-                row.map_err(|error| format!("failed to read install history row: {error}"))?;
-            history.push(
-                serde_json::from_str(&record_json)
-                    .map_err(|error| format!("failed to parse install history: {error}"))?,
-            );
+            let record_json = row.map_err(|error| {
+                ManagerError::Internal(format!("failed to read install history row: {error}"))
+            })?;
+            history.push(serde_json::from_str(&record_json).map_err(|error| {
+                ManagerError::Internal(format!("failed to parse install history: {error}"))
+            })?);
         }
         Ok(history)
     }
 
     /// 写回一次受控启动探测结果。
-    pub fn record_launch_probe_result(&self, record: LaunchProbeRecord<'_>) -> Result<(), String> {
+    pub fn record_launch_probe_result(
+        &self,
+        record: LaunchProbeRecord<'_>,
+    ) -> Result<(), ManagerError> {
         let mut client = self
             .client_installation_by_id(record.client_installation_id)?
             .ok_or_else(|| {
-                format!(
+                ManagerError::NotFound(format!(
                     "client installation not found: {}",
                     record.client_installation_id
-                )
+                ))
             })?;
         client.compatibility.launch_verified = record.status == LaunchProbeStatus::Verified;
         client.compatibility.last_launch_result = Some(record.message.to_string());
@@ -501,7 +566,7 @@ impl ClientRegistry {
     pub fn client_installation_by_id(
         &self,
         id: &str,
-    ) -> Result<Option<ClientInstallation>, String> {
+    ) -> Result<Option<ClientInstallation>, ManagerError> {
         let conn = self.lock_conn()?;
         let row = conn
             .query_row(
@@ -510,11 +575,15 @@ impl ClientRegistry {
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
             )
             .optional()
-            .map_err(|error| format!("failed to query client installation: {error}"))?;
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to query client installation: {error}"))
+            })?;
 
         row.map(|(client_json, is_default)| {
-            let mut client: ClientInstallation = serde_json::from_str(&client_json)
-                .map_err(|error| format!("failed to parse client installation: {error}"))?;
+            let mut client: ClientInstallation =
+                serde_json::from_str(&client_json).map_err(|error| {
+                    ManagerError::Internal(format!("failed to parse client installation: {error}"))
+                })?;
             client.is_default = is_default;
             normalize_client_installation(&mut client);
             Ok(client)
@@ -522,7 +591,7 @@ impl ClientRegistry {
         .transpose()
     }
 
-    fn init_schema(&self) -> Result<(), String> {
+    fn init_schema(&self) -> Result<(), ManagerError> {
         let conn = self.lock_conn()?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS client_installations (
@@ -574,7 +643,9 @@ impl ClientRegistry {
                 record_json TEXT NOT NULL
             );",
         )
-        .map_err(|error| format!("failed to initialize registry schema: {error}"))
+        .map_err(|error| {
+            ManagerError::Internal(format!("failed to initialize registry schema: {error}"))
+        })
     }
 }
 
