@@ -67,8 +67,7 @@ describe("useAppSettings", () => {
     expect(result.current.savedAppSettings.auto_check_updates).toBe(true);
     expect(result.current.appSettings).toEqual({
       ...defaultAppSettings,
-      auto_check_updates: false,
-      use_everything: true
+      auto_check_updates: false
     });
   });
 });
