@@ -39,6 +39,14 @@ export function scanClientInstallations(options?: ScanClientInstallationsOptions
   return invoke<ClientInstallation[]>("scan_client_installations", { options });
 }
 
+/**
+ * 通过 ntfs-search crate 全量扫盘（Mft/Usn/Walkdir 自动选择）。
+ * 扫描期间 emit `scan-progress` 事件，前端可用 `listen<ScanProgressEvent>` 监听。
+ */
+export function scanClientsViaMft(options?: ScanClientInstallationsOptions): Promise<ClientInstallation[]> {
+  return invoke<ClientInstallation[]>("scan_clients_via_mft", { options });
+}
+
 export function upsertClientInstallation(request: UpsertClientInstallationRequest): Promise<ClientInstallation> {
   return invoke<ClientInstallation>("upsert_client_installation", { request });
 }

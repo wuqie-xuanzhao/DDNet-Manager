@@ -406,7 +406,7 @@ async fn scan_via_mft(
 
         if let Some(kind) = limit_kind {
             progress.emit(ProgressEvent::ScanLimitHit {
-                kind,
+                limit_kind: kind,
                 limit: limit_value,
             });
         }

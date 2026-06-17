@@ -180,7 +180,8 @@ impl FileAttributes {
 }
 
 /// 扫描使用的底层后端类型。每条 `FileEntry` 都会标注来源。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BackendKind {
     /// Windows 管理员：直接读 NTFS $MFT raw record。
     Mft,
@@ -191,7 +192,10 @@ pub enum BackendKind {
 }
 
 /// 进度事件聚合。调用方按 `kind` 字段做 discriminated union 处理。
-#[derive(Debug, Clone)]
+///
+/// 派生 `Serialize` 让业务层（如 Tauri command）能直接转 JSON 推到前端。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProgressEvent {
     /// 某个 root 开始扫描，附 backend 类型。
     DriveStarted { root: PathBuf, backend: BackendKind },
@@ -215,7 +219,10 @@ pub enum ProgressEvent {
     },
 
     /// 触发上限保护。
-    ScanLimitHit { kind: ScanLimitKind, limit: usize },
+    ScanLimitHit {
+        limit_kind: ScanLimitKind,
+        limit: usize,
+    },
 
     /// 该 root 跳过（所有 backend 都失败）。继续其他 root。
     DriveSkipped { root: PathBuf, reasons: Vec<String> },
@@ -229,7 +236,8 @@ pub enum ProgressEvent {
 }
 
 /// 软上限类型。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ScanLimitKind {
     /// 累计匹配数达到 `max_results`。
     Results,

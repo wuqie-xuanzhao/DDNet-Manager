@@ -102,6 +102,24 @@ impl From<String> for IpcError {
     }
 }
 
+/// ntfs-search 错误到 ManagerError 的桥接。
+///
+/// ntfs-search 是独立 crate，不感知 ManagerError 存在；这里集中映射，避免业务
+/// 层每个调用点都重复 match。取消、根无效等语义错误映射到对应变体，其余转 Internal。
+impl From<ntfs_search::ScanError> for ManagerError {
+    fn from(e: ntfs_search::ScanError) -> Self {
+        use ntfs_search::ScanError;
+        match e {
+            ScanError::Cancelled => Self::Internal("scan cancelled by user".to_string()),
+            ScanError::InvalidRoot(msg) => Self::NotFound(format!("invalid scan root: {msg}")),
+            ScanError::NoBackendAvailable { root } => {
+                Self::NotFound(format!("no scan backend available for {root}"))
+            }
+            other => Self::Internal(other.to_string()),
+        }
+    }
+}
+
 impl std::fmt::Display for IpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)

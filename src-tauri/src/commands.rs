@@ -105,6 +105,124 @@ pub fn scan_client_installations(
     .map_err(IpcError::from)
 }
 
+/// 使用 ntfs-search crate 全量扫盘找 DDNet.exe 兼容客户端。
+///
+/// 后端自动按平台/权限选 Mft / Usn / Walkdir（admin > 普通 > fallback），失败自动降级。
+/// 扫描期间实时 emit `scan-progress` 事件（[`ntfs_search::ProgressEvent`]），
+/// 前端按 `kind` discriminated union 渲染进度。
+///
+/// 与 [`scan_client_installations`]（旧 BFS）并存，等业务验证稳定后切换默认入口。
+#[tauri::command]
+pub async fn scan_clients_via_mft(
+    registry: RegistryState<'_>,
+    options: Option<ScanClientInstallationsOptions>,
+    app: AppHandle,
+) -> Result<Vec<ClientInstallation>, IpcError> {
+    let options = options.unwrap_or_default();
+    let settings = registry.load_app_settings()?;
+
+    // 收集 roots：固定盘符 + 用户保存路径
+    let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
+        collect_default_drive_roots()
+    } else {
+        options.roots.iter().map(PathBuf::from).collect()
+    };
+
+    if options.include_saved_paths {
+        roots.extend(
+            registry
+                .list_client_installations()?
+                .into_iter()
+                .filter_map(|c| PathBuf::from(c.install_dir).parent().map(Path::to_path_buf)),
+        );
+    }
+
+    let excluded: Vec<PathBuf> = settings
+        .scan_excluded_paths
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+
+    let opts = ntfs_search::NtfsScanOptions::new(|name| {
+        ["DDNet.exe", "ddnet.exe"]
+            .iter()
+            .any(|expected| name.eq_ignore_ascii_case(expected))
+    })
+    .with_roots(roots)
+    .with_max_results(50);
+
+    let progress = std::sync::Arc::new(TauriScanSink::new(app));
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    let entries = ntfs_search::find_files(opts, progress, cancel)
+        .await
+        .map_err(crate::error::ManagerError::from)?;
+
+    // 转 ClientInstallation：FileEntry.path.parent() → validate_client_dir
+    let mut installations: Vec<ClientInstallation> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for entry in entries {
+        let Some(parent) = entry.path.parent() else {
+            continue;
+        };
+        if crate::client_scan::is_local_smoke_tmp_path(parent) {
+            continue;
+        }
+        if excluded
+            .iter()
+            .any(|ex| normalize_for_compare(ex) == normalize_for_compare(parent))
+        {
+            continue;
+        }
+        let installation = crate::client_scan::validate_client_dir(parent)?;
+        if seen_ids.insert(installation.id.clone()) {
+            installations.push(installation);
+        }
+    }
+
+    installations.sort_by(|a, b| a.install_dir.cmp(&b.install_dir));
+    Ok(installations)
+}
+
+/// 简化路径用于排除路径比较（去末尾分隔符，统一分隔符为 /，大小写不敏感 on Windows）。
+fn normalize_for_compare(path: &Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    s.trim_end_matches('/').to_ascii_lowercase()
+}
+
+/// 把 ntfs-search 的 ProgressEvent 转 Tauri event 推到前端。
+struct TauriScanSink {
+    app: AppHandle,
+}
+
+impl TauriScanSink {
+    fn new(app: AppHandle) -> Self {
+        Self { app }
+    }
+}
+
+impl ntfs_search::ProgressSink for TauriScanSink {
+    fn emit(&self, event: ntfs_search::ProgressEvent) {
+        use tauri::Emitter;
+        let _ = self.app.emit("scan-progress", &event);
+    }
+}
+
+/// Windows 默认固定盘符 roots（C: 永远在，D-Z 按存在性添加）。
+fn collect_default_drive_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("C:\\")];
+    #[cfg(windows)]
+    {
+        for letter in b'D'..=b'Z' {
+            let path = PathBuf::from(format!("{}:\\", letter as char));
+            if path.exists() {
+                roots.push(path);
+            }
+        }
+    }
+    roots
+}
+
 /// 保存或更新客户端安装记录。
 #[tauri::command]
 pub fn upsert_client_installation(

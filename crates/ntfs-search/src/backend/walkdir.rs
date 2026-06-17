@@ -80,7 +80,7 @@ impl Backend for WalkdirBackend {
                 if let Some(max) = max_results {
                     if found.len() >= max {
                         progress.emit(ProgressEvent::ScanLimitHit {
-                            kind: ScanLimitKind::Results,
+                            limit_kind: ScanLimitKind::Results,
                             limit: max,
                         });
                         return Ok(found);
@@ -95,7 +95,7 @@ impl Backend for WalkdirBackend {
 
                 if scanned >= max_records {
                     progress.emit(ProgressEvent::ScanLimitHit {
-                        kind: ScanLimitKind::RecordsScanned,
+                        limit_kind: ScanLimitKind::RecordsScanned,
                         limit: max_records,
                     });
                     return Ok(found);
