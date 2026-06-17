@@ -5,12 +5,13 @@ use crate::commands::{
 use crate::download::DownloadManager;
 use crate::models::{
     CheckClientUpdateRequest, DownloadJob, DownloadJobRecovery, DownloadJobStatus, IpcError,
-    ManagerError, StartUpdateDownloadRequest, UpdateAction,
+    ManagerError, NetworkRouteConfig, StartUpdateDownloadRequest, UpdateAction,
 };
 use crate::registry::ClientRegistry;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 /// 创建下载任务并开始真实下载更新包。
 #[tauri::command]
@@ -156,87 +157,119 @@ pub(crate) fn write_local_smoke_result_report(
 
 fn spawn_download_task(context: DownloadTaskContext) {
     let job_id = context.job.id.clone();
-    let job_for_task = context.job.clone();
-    let app = context.app;
-    let manager = context.manager;
-    let registry = context.registry;
-    let cache_path = context.cache_path;
-    let route = context.route;
     // 提前取出 cancel token，让下载循环在 select! 中即时感知取消信号，
     // 而非等到下一个 chunk 边界。
-    let cancel_token = manager.cancel_token_clone(&job_id);
-
+    let cancel_token = context.manager.cancel_token_clone(&job_id);
+    let runtime = DownloadTaskRuntime {
+        app: context.app,
+        manager: context.manager,
+        registry: context.registry,
+        job: context.job,
+        cache_path: context.cache_path,
+        route: context.route,
+        cancel_token,
+    };
     tokio::spawn(async move {
-        let result = crate::download::download_asset_to_file(
-            crate::download::DownloadFileRequest {
-                asset_url: &job_for_task.asset_url,
-                cache_path: &cache_path,
-                expected_size: job_for_task.size,
-                route: route.as_ref(),
-            },
-            cancel_token.clone(),
-            |downloaded_bytes| {
-                let Ok(job) = manager.update(&job_id, |job| {
-                    job.downloaded_bytes = downloaded_bytes;
-                }) else {
-                    return false;
-                };
-                persist_download_job_snapshot(&registry, &job);
-                let keep_running = job.status != DownloadJobStatus::Canceled;
-                let _ = app.emit_to("main", "download-progress", job);
-                keep_running
-            },
-        )
-        .await
-        .and_then(|_| {
-            crate::download::verify_downloaded_file(
-                &cache_path,
-                &job_for_task.sha256,
-                job_for_task.size,
-            )
-            .map_err(|error| error.to_string())
-        });
+        let result = run_download_loop(&runtime).await;
+        handle_download_result(&runtime, result).await;
+    });
+}
 
-        match result {
-            Ok(()) => {
-                if let Ok(job) = manager.update(&job_id, |job| {
-                    job.status = DownloadJobStatus::Verified;
-                    job.downloaded_bytes = job.size;
-                    job.error = None;
-                }) {
-                    match persist_download_job_snapshot_result(&registry, &job) {
-                        Ok(()) => {
-                            let _ = app.emit_to("main", "download-completed", job);
-                        }
-                        Err(error) => {
-                            if let Ok(job) = manager.update(&job_id, |job| {
-                                job.status = DownloadJobStatus::Failed;
-                                job.error = Some(error);
-                            }) {
-                                persist_download_job_snapshot(&registry, &job);
-                                let _ = app.emit_to("main", "download-failed", job);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(error) => {
-                if manager.get(&job_id).is_ok_and(|job| {
-                    job.is_some_and(|job| job.status == DownloadJobStatus::Canceled)
-                }) {
-                    return;
-                }
-                let _ = std::fs::remove_file(&cache_path);
-                if let Ok(job) = manager.update(&job_id, |job| {
-                    job.status = DownloadJobStatus::Failed;
-                    job.error = Some(error);
-                }) {
-                    persist_download_job_snapshot(&registry, &job);
-                    let _ = app.emit_to("main", "download-failed", job);
-                }
+/// 下载后台任务运行时，所有字段 own 后整块 move 进 `tokio::spawn`。
+struct DownloadTaskRuntime {
+    app: AppHandle,
+    manager: DownloadManager,
+    registry: ClientRegistry,
+    job: DownloadJob,
+    cache_path: PathBuf,
+    route: Option<NetworkRouteConfig>,
+    cancel_token: Option<CancellationToken>,
+}
+
+/// 执行下载 + 校验，进度回调把 downloaded_bytes 实时同步到 manager 与 registry。
+async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> {
+    crate::download::download_asset_to_file(
+        crate::download::DownloadFileRequest {
+            asset_url: &runtime.job.asset_url,
+            cache_path: &runtime.cache_path,
+            expected_size: runtime.job.size,
+            route: runtime.route.as_ref(),
+        },
+        runtime.cancel_token.clone(),
+        |downloaded_bytes| {
+            let Ok(job) = runtime.manager.update(&runtime.job.id, |job| {
+                job.downloaded_bytes = downloaded_bytes;
+            }) else {
+                return false;
+            };
+            persist_download_job_snapshot(&runtime.registry, &job);
+            let keep_running = job.status != DownloadJobStatus::Canceled;
+            let _ = runtime.app.emit_to("main", "download-progress", job);
+            keep_running
+        },
+    )
+    .await
+    .and_then(|_| {
+        crate::download::verify_downloaded_file(
+            &runtime.cache_path,
+            &runtime.job.sha256,
+            runtime.job.size,
+        )
+        .map_err(|error| error.to_string())
+    })
+}
+
+/// 处理下载/校验结果：成功切 Verified + emit completed；失败切 Failed + emit failed。
+async fn handle_download_result(runtime: &DownloadTaskRuntime, result: Result<(), String>) {
+    match result {
+        Ok(()) => handle_download_success(runtime).await,
+        Err(error) => handle_download_failure(runtime, error).await,
+    }
+}
+
+async fn handle_download_success(runtime: &DownloadTaskRuntime) {
+    let job_id = runtime.job.id.clone();
+    let Ok(job) = runtime.manager.update(&job_id, |job| {
+        job.status = DownloadJobStatus::Verified;
+        job.downloaded_bytes = job.size;
+        job.error = None;
+    }) else {
+        return;
+    };
+    match persist_download_job_snapshot_result(&runtime.registry, &job) {
+        Ok(()) => {
+            let _ = runtime.app.emit_to("main", "download-completed", job);
+        }
+        Err(error) => {
+            if let Ok(job) = runtime.manager.update(&job_id, |job| {
+                job.status = DownloadJobStatus::Failed;
+                job.error = Some(error);
+            }) {
+                persist_download_job_snapshot(&runtime.registry, &job);
+                let _ = runtime.app.emit_to("main", "download-failed", job);
             }
         }
-    });
+    }
+}
+
+async fn handle_download_failure(runtime: &DownloadTaskRuntime, error: String) {
+    let job_id = runtime.job.id.clone();
+    // 取消导致的失败不写 Failed 状态：cancel 路径已经把 status=Canceled 持久化。
+    if runtime
+        .manager
+        .get(&job_id)
+        .is_ok_and(|job| job.is_some_and(|job| job.status == DownloadJobStatus::Canceled))
+    {
+        return;
+    }
+    let _ = std::fs::remove_file(&runtime.cache_path);
+    if let Ok(job) = runtime.manager.update(&job_id, |job| {
+        job.status = DownloadJobStatus::Failed;
+        job.error = Some(error);
+    }) {
+        persist_download_job_snapshot(&runtime.registry, &job);
+        let _ = runtime.app.emit_to("main", "download-failed", job);
+    }
 }
 
 /// 取消下载任务。

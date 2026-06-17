@@ -132,6 +132,16 @@ pub async fn download_asset_to_file<F>(
 where
     F: FnMut(u64) -> bool + Send,
 {
+    let (part_path, mut response) = prepare_download_partfile(&request, cancel.as_ref()).await?;
+    stream_download_to_partfile(&request, &mut response, cancel.as_ref(), &mut on_progress).await?;
+    finalize_download_cache(request.cache_path, &part_path)
+}
+
+/// 校验下载 URL、创建 `.part` 临时文件、发起 HTTP 请求并校验返回大小。
+async fn prepare_download_partfile<'a>(
+    request: &super::DownloadFileRequest<'a>,
+    cancel: Option<&CancellationToken>,
+) -> Result<(PathBuf, reqwest::Response), String> {
     validate_download_url(request.asset_url).map_err(|error| error.to_string())?;
     let part_path = part_file_path(request.cache_path);
     if let Some(parent) = request.cache_path.parent() {
@@ -143,7 +153,7 @@ where
             .map_err(|error| format!("failed to clear partial download file: {error}"))?;
     }
 
-    if let Some(token) = cancel.as_ref() {
+    if let Some(token) = cancel {
         if token.is_cancelled() {
             return Err("download canceled".to_string());
         }
@@ -152,7 +162,7 @@ where
     let client = crate::network_route::build_routed_client(request.route, None, None, false)?;
     let response = send_download_request(&client, request.asset_url).await?;
 
-    if cancel.as_ref().is_some_and(|token| token.is_cancelled()) {
+    if cancel.is_some_and(|token| token.is_cancelled()) {
         return Err("download canceled".to_string());
     }
 
@@ -163,19 +173,32 @@ where
         return Err("download content length does not match manifest size".to_string());
     }
 
-    let mut response = response;
+    Ok((part_path, response))
+}
+
+/// 流式写入 `.part` 文件，监听 cancel 与 on_progress 信号；任一触发立即清理并返回错误。
+async fn stream_download_to_partfile<F>(
+    request: &super::DownloadFileRequest<'_>,
+    response: &mut reqwest::Response,
+    cancel: Option<&CancellationToken>,
+    on_progress: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(u64) -> bool + Send,
+{
+    let part_path = part_file_path(request.cache_path);
     let mut file = fs::File::create(&part_path)
         .map_err(|error| format!("failed to create download cache file: {error}"))?;
     let mut downloaded = 0_u64;
 
     loop {
         // 在等待下一个 chunk 的同时监听 cancel，让取消信号在 chunk 边界之间也能即时生效。
-        let next_chunk = match cancel.as_ref() {
+        let next_chunk = match cancel {
             Some(token) => {
                 tokio::select! {
                     biased;
                     _ = token.cancelled() => {
-                        let _ = fs::remove_file(&part_path);
+                        let _ = fs::remove_file(part_path);
                         return Err("download canceled".to_string());
                     }
                     chunk = response.chunk() => chunk,
@@ -186,7 +209,7 @@ where
         let next_chunk = match next_chunk {
             Ok(chunk) => chunk,
             Err(error) => {
-                let _ = fs::remove_file(&part_path);
+                let _ = fs::remove_file(part_path);
                 return Err(format!("failed to read download stream: {error}"));
             }
         };
@@ -196,30 +219,34 @@ where
         downloaded = match downloaded.checked_add(chunk.len() as u64) {
             Some(value) => value,
             None => {
-                let _ = fs::remove_file(&part_path);
+                let _ = fs::remove_file(part_path);
                 return Err("downloaded byte count overflow".to_string());
             }
         };
         if downloaded > request.expected_size {
-            let _ = fs::remove_file(&part_path);
+            let _ = fs::remove_file(part_path);
             return Err("downloaded bytes exceed manifest size".to_string());
         }
         if let Err(error) = file.write_all(&chunk) {
-            let _ = fs::remove_file(&part_path);
+            let _ = fs::remove_file(part_path);
             return Err(format!("failed to write download cache file: {error}"));
         }
         if !on_progress(downloaded) {
-            let _ = fs::remove_file(&part_path);
+            let _ = fs::remove_file(part_path);
             return Err("download canceled".to_string());
         }
     }
 
-    drop(file);
-    if request.cache_path.exists() {
-        fs::remove_file(request.cache_path)
+    Ok(())
+}
+
+/// 关闭 `.part` 文件句柄，原子重命名为最终缓存路径。
+fn finalize_download_cache(cache_path: &Path, part_path: &Path) -> Result<(), String> {
+    if cache_path.exists() {
+        fs::remove_file(cache_path)
             .map_err(|error| format!("failed to replace existing cache file: {error}"))?;
     }
-    fs::rename(&part_path, request.cache_path)
+    fs::rename(part_path, cache_path)
         .map_err(|error| format!("failed to finalize download cache file: {error}"))
 }
 
