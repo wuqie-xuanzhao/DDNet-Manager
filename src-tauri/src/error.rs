@@ -92,58 +92,19 @@ impl IpcError {
             message: message.into(),
         }
     }
-
-    /// 将底层 String 错误按已知模式分类为带 code 的 IPC 错误。
-    pub fn classify(message: impl Into<String>) -> Self {
-        let message = message.into();
-        let code = classify_error_code(&message);
-        Self {
-            code: code.to_string(),
-            message,
-        }
-    }
 }
 
 impl From<String> for IpcError {
     fn from(message: String) -> Self {
-        Self::classify(message)
+        // String 错误已经脱离结构化语义，统一归入 unknown；前端可基于 message 兜底展示。
+        // 想要稳定错误码的模块必须返回 [`ManagerError`]，让 [`From<ManagerError>`] 走编译期映射。
+        Self::new(IPC_ERROR_UNKNOWN, message)
     }
 }
 
 impl std::fmt::Display for IpcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
-    }
-}
-
-/// 根据已知错误信息模式推导稳定错误码，作为底层 String 错误的集中分类兜底。
-///
-/// 真正彻底的结构化应让底层模块返回 `thiserror` 枚举；当前先集中分类，
-/// 把字符串匹配从前端散落处收敛到后端单一可测函数。
-pub fn classify_error_code(message: &str) -> &'static str {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("host is not trusted") || lower.contains("host is not enabled") {
-        IPC_ERROR_NETWORK_HOST_NOT_TRUSTED
-    } else if lower.contains("must use https") || lower.contains("https is required") {
-        IPC_ERROR_NETWORK_HTTPS_REQUIRED
-    } else if lower.contains("sha256")
-        && (lower.contains("missing") || lower.contains("缺少") || lower.contains("禁用"))
-    {
-        IPC_ERROR_SHA256_MISSING
-    } else if lower.contains("checksum") || lower.contains("sha256") || lower.contains("校验失败")
-    {
-        IPC_ERROR_CHECKSUM_MISMATCH
-    } else if lower.contains("is running") || lower.contains("正在运行") {
-        IPC_ERROR_CLIENT_RUNNING
-    } else if lower.contains("not found") || lower.contains("未找到") {
-        IPC_ERROR_NOT_FOUND
-    } else if lower.contains("manifest")
-        || lower.contains("failed to fetch")
-        || lower.contains("拉取失败")
-    {
-        IPC_ERROR_MANIFEST_UNREACHABLE
-    } else {
-        IPC_ERROR_UNKNOWN
     }
 }
 

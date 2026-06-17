@@ -1,57 +1,9 @@
 use super::{
-    classify_error_code, IpcError, ManagerError, IPC_ERROR_CHECKSUM_MISMATCH,
-    IPC_ERROR_CLIENT_RUNNING, IPC_ERROR_MANIFEST_UNREACHABLE, IPC_ERROR_NETWORK_HOST_NOT_TRUSTED,
+    IpcError, ManagerError, IPC_ERROR_CHECKSUM_MISMATCH, IPC_ERROR_CLIENT_RUNNING,
+    IPC_ERROR_MANIFEST_UNREACHABLE, IPC_ERROR_NETWORK_HOST_NOT_TRUSTED,
     IPC_ERROR_NETWORK_HTTPS_REQUIRED, IPC_ERROR_NOT_FOUND, IPC_ERROR_SHA256_MISSING,
     IPC_ERROR_UNKNOWN,
 };
-
-#[test]
-fn classifies_known_error_messages_to_stable_codes() {
-    assert_eq!(
-        classify_error_code("host is not trusted: github.com"),
-        IPC_ERROR_NETWORK_HOST_NOT_TRUSTED
-    );
-    assert_eq!(
-        classify_error_code("host is not enabled"),
-        IPC_ERROR_NETWORK_HOST_NOT_TRUSTED
-    );
-    assert_eq!(
-        classify_error_code("asset url must use https"),
-        IPC_ERROR_NETWORK_HTTPS_REQUIRED
-    );
-    assert_eq!(
-        classify_error_code("checksum mismatch for download"),
-        IPC_ERROR_CHECKSUM_MISMATCH
-    );
-    assert_eq!(
-        classify_error_code("sha256 verification failed"),
-        IPC_ERROR_CHECKSUM_MISMATCH
-    );
-    assert_eq!(
-        classify_error_code("client installation not found: abc"),
-        IPC_ERROR_NOT_FOUND
-    );
-    assert_eq!(
-        classify_error_code("client is running, cannot install"),
-        IPC_ERROR_CLIENT_RUNNING
-    );
-    assert_eq!(
-        classify_error_code("failed to fetch manifest"),
-        IPC_ERROR_MANIFEST_UNREACHABLE
-    );
-    assert_eq!(
-        classify_error_code("更新资产缺少 sha256，自动安装已禁用"),
-        IPC_ERROR_SHA256_MISSING
-    );
-}
-
-#[test]
-fn classifies_unknown_message_to_unknown_code() {
-    assert_eq!(
-        classify_error_code("一些未分类的随机错误"),
-        IPC_ERROR_UNKNOWN
-    );
-}
 
 #[test]
 fn ipc_error_serializes_with_code_and_message() {
@@ -62,9 +14,11 @@ fn ipc_error_serializes_with_code_and_message() {
 }
 
 #[test]
-fn ipc_error_from_string_classifies_and_keeps_message() {
+fn ipc_error_from_string_falls_back_to_unknown_code() {
+    // 字符串错误已经脱离结构化语义，统一归入 unknown。
+    // 保留 message 让前端能展示原始诊断信息。
     let error = IpcError::from("host is not trusted".to_string());
-    assert_eq!(error.code, IPC_ERROR_NETWORK_HOST_NOT_TRUSTED);
+    assert_eq!(error.code, IPC_ERROR_UNKNOWN);
     assert_eq!(error.message, "host is not trusted");
 }
 
