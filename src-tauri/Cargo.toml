@@ -30,6 +30,7 @@ zip = "6.0.0"
 sysinfo = "0.39.3"
 tar = "0.4.44"
 xz2 = "0.1.7"
+ntfs-search = { path = "../crates/ntfs-search" }
 
 [build-dependencies]
 tauri-build = { version = "2.6.2", features = [] }

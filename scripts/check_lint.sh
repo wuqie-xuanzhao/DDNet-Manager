@@ -12,7 +12,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUST_SRC_DIR="$PROJECT_ROOT/src-tauri/src"
 CARGO_MANIFEST="$PROJECT_ROOT/src-tauri/Cargo.toml"
-CARGO_LOCK="$PROJECT_ROOT/src-tauri/Cargo.lock"
+# workspace 化后 Cargo.lock 在根目录（不在 src-tauri/）；保留 fallback 仅作兼容
+if [[ -f "$PROJECT_ROOT/Cargo.lock" ]]; then
+    CARGO_LOCK="$PROJECT_ROOT/Cargo.lock"
+else
+    CARGO_LOCK="$PROJECT_ROOT/src-tauri/Cargo.lock"
+fi
 
 PLACEHOLDER_PATTERN="$(
     printf '%s|%s|%s|%s|%s|%s|%s|%s|%s' \
@@ -230,7 +235,13 @@ hdr "=== A4. 依赖安全审计 (cargo audit，可选) ==="
 if "$CARGO_BIN" audit --version >/dev/null 2>&1; then
     audit_log="$(make_temp)"
     audit_exit=0
+    # 先尝试在线（含 DB 更新），网络不通自动 fallback 到 --no-fetch（仅用本地 DB）
     "$CARGO_BIN" audit -f "$CARGO_LOCK_NATIVE" >"$audit_log" 2>&1 || audit_exit=$?
+    if [[ "$audit_exit" -ne 0 ]] && grep -qE 'fetch|advisory database' "$audit_log" 2>/dev/null; then
+        info "网络拉取 advisory-db 失败，回退 --no-fetch"
+        audit_exit=0
+        "$CARGO_BIN" audit --no-fetch -f "$CARGO_LOCK_NATIVE" >"$audit_log" 2>&1 || audit_exit=$?
+    fi
     if [[ "$audit_exit" -ne 0 ]]; then
         show_log_tail "$audit_log" 80
         fail "cargo audit 发现已知漏洞"

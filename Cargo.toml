@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/ntfs-search", "src-tauri"]
+resolver = "2"
+default-members = ["src-tauri"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+
+[workspace.dependencies]
+tokio = { version = "1.52", features = ["full"] }
+tokio-util = "0.7"
+tracing = "0.1"
+thiserror = "2.0"
