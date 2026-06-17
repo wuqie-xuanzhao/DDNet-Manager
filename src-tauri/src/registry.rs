@@ -78,9 +78,7 @@ impl ClientRegistry {
     }
 
     /// 获取互斥锁保护的 SQLite 连接，供内部方法使用。
-    pub(crate) fn lock_conn(
-        &self,
-    ) -> Result<std::sync::MutexGuard<'_, Connection>, ManagerError> {
+    pub(crate) fn lock_conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>, ManagerError> {
         self.conn
             .lock()
             .map_err(|_| ManagerError::Internal("registry connection is poisoned".to_string()))

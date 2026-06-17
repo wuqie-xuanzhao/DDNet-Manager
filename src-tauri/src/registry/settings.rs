@@ -49,8 +49,6 @@ impl ClientRegistry {
             rusqlite::params![value],
         )
         .map(|_| ())
-        .map_err(|error| {
-            ManagerError::Internal(format!("failed to save app settings: {error}"))
-        })
+        .map_err(|error| ManagerError::Internal(format!("failed to save app settings: {error}")))
     }
 }

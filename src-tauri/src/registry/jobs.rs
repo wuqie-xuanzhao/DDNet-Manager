@@ -50,9 +50,7 @@ impl ClientRegistry {
             ],
         )
         .map(|_| ())
-        .map_err(|error| {
-            ManagerError::Internal(format!("failed to upsert download job: {error}"))
-        })
+        .map_err(|error| ManagerError::Internal(format!("failed to upsert download job: {error}")))
     }
 
     /// 返回指定客户端的下载任务列表；为空时返回全部任务。
@@ -77,7 +75,9 @@ impl ClientRegistry {
         let mut jobs = Vec::new();
         if let Some(client_installation_id) = client_installation_id {
             let rows = statement
-                .query_map(params![client_installation_id], |row| row.get::<_, String>(0))
+                .query_map(params![client_installation_id], |row| {
+                    row.get::<_, String>(0)
+                })
                 .map_err(|error| {
                     ManagerError::Internal(format!("failed to read download jobs: {error}"))
                 })?;

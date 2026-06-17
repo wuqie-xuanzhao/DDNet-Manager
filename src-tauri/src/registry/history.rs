@@ -72,7 +72,9 @@ impl ClientRegistry {
                 ManagerError::Internal(format!("failed to query install history: {error}"))
             })?;
         let rows = statement
-            .query_map(params![client_installation_id], |row| row.get::<_, String>(0))
+            .query_map(params![client_installation_id], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(|error| {
                 ManagerError::Internal(format!("failed to read install history: {error}"))
             })?;

@@ -116,9 +116,9 @@ impl ClientRegistry {
 
     /// 设置默认启动客户端。
     pub fn set_default_client(&self, id: &str) -> Result<(), ManagerError> {
-        let client = self
-            .client_installation_by_id(id)?
-            .ok_or_else(|| ManagerError::NotFound(format!("client installation not found: {id}")))?;
+        let client = self.client_installation_by_id(id)?.ok_or_else(|| {
+            ManagerError::NotFound(format!("client installation not found: {id}"))
+        })?;
         if crate::client_scan::is_local_smoke_tmp_path(Path::new(&client.install_dir)) {
             return Err(ManagerError::Internal(
                 "local smoke client cannot be set as default".to_string(),

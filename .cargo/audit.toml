@@ -1,0 +1,34 @@
+# cargo audit 配置：忽略来自上游 Tauri/wry/webkit2gtk Linux 依赖链的已知告警。
+#
+# 这些告警全部源于 Tauri 在 Linux 平台通过 wry/webkit2gtk 间接拉入的 gtk3 0.18
+# 系列绑定。gtk-rs 项目已正式停止维护 gtk3 绑定（推荐迁到 gtk4），但 Tauri 上游
+# 仍依赖 gtk3，等待 Tauri 升级后这些告警会自动消失。
+#
+# 本项目 Windows 优先，Linux 上 gtk3 链路只在 webview 渲染时使用，不构成实际
+# 安全风险。每条 ignore 都带 reason 注释，方便 Tauri 升级后逐条复审。
+
+[advisories]
+ignore = [
+    # === gtk-rs GTK3 bindings (上游 wry/webkit2gtk 间接依赖) ===
+    "RUSTSEC-2024-0411", # gdkwayland-sys 0.18.2 unmaintained
+    "RUSTSEC-2024-0412", # gdk 0.18.2 unmaintained
+    "RUSTSEC-2024-0413", # atk 0.18.2 unmaintained
+    "RUSTSEC-2024-0414", # gdkx11-sys 0.18.2 unmaintained
+    "RUSTSEC-2024-0415", # gtk 0.18.2 unmaintained
+    "RUSTSEC-2024-0416", # atk-sys 0.18.2 unmaintained
+    "RUSTSEC-2024-0417", # gdkx11 0.18.2 unmaintained
+    "RUSTSEC-2024-0418", # gdk-sys 0.18.2 unmaintained
+    "RUSTSEC-2024-0419", # gtk3-macros 0.18.2 unmaintained
+    "RUSTSEC-2024-0420", # gtk-sys 0.18.2 unmaintained
+    "RUSTSEC-2024-0429", # glib 0.18.5 unsound VariantStrIter
+
+    # === proc-macro-error (gtk3-macros/glib-macros 间接依赖) ===
+    "RUSTSEC-2024-0370", # proc-macro-error 1.0.4 unmaintained
+
+    # === unic-* 系列 (urlpattern/tauri-utils 间接依赖) ===
+    "RUSTSEC-2025-0075", # unic-char-range 0.9.0 unmaintained
+    "RUSTSEC-2025-0080", # unic-common 0.9.0 unmaintained
+    "RUSTSEC-2025-0081", # unic-char-property 0.9.0 unmaintained
+    "RUSTSEC-2025-0098", # unic-ucd-version 0.9.0 unmaintained
+    "RUSTSEC-2025-0100", # unic-ucd-identifier 0.9.0 unmaintained
+]
