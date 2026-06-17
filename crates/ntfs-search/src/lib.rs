@@ -20,12 +20,15 @@
 mod backend;
 mod error;
 mod find;
+mod inspect;
 mod matcher;
 mod options;
+mod pe;
 mod rebuild_paths;
 
 pub use crate::error::ScanError;
 pub use crate::find::find_files;
+pub use crate::inspect::{inspect, inspect_many, InspectOutcome};
 pub use crate::matcher::Matcher;
 pub use crate::options::{
     BackendKind, FileAttributes, FileEntry, InspectFields, InspectedEntry, NtfsScanOptions,
