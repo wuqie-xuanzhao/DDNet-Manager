@@ -8,16 +8,19 @@
 //! - 循环依赖（parent_ref 链中遇到自己）→ `RebuildError::CycleDetected`
 //! - 悬空 parent_ref（不在 map 中，通常由杀软实时改 MFT 导致快照不一致）
 //!   → `RebuildError::StaleParent`，调用方应 emit `EntryError` 跳过
-//! - 限深 256 层（防恶意构造数据导致栈溢出）
+//! - 限深 512 层（防恶意构造数据导致栈溢出，同时不误伤深 node_modules）
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// NTFS 根目录的 FileReferenceNumber 固定为 5。
 pub const NTFS_ROOT_FILE_REFERENCE: u64 = 5;
 
 /// 最大允许的目录深度（防恶意构造数据 / 损坏的 NTFS）。
-pub const MAX_PATH_DEPTH: usize = 256;
+///
+/// Windows MAX_PATH=260，NTFS 实际允许 32767 字符路径。256 太接近 260，深 node_modules
+/// 嵌套可能误触；提升到 512 留余量。stale ref 检测才是真正保护机制。
+pub const MAX_PATH_DEPTH: usize = 512;
 
 /// 一条 record 的最小信息（用于路径重建）。
 #[derive(Debug, Clone)]
@@ -46,7 +49,7 @@ pub(super) fn rebuild_path(
 ) -> Result<PathBuf, RebuildError> {
     let mut parts: Vec<&str> = Vec::new();
     let mut current = target;
-    let mut visited = Vec::with_capacity(16);
+    let mut visited: HashSet<u64> = HashSet::with_capacity(16);
 
     loop {
         // 命中 NTFS 根：拼接 drive letter 由调用方处理（这里返回 parts 拼成的相对路径）
@@ -54,11 +57,10 @@ pub(super) fn rebuild_path(
             break;
         }
 
-        // cycle 防御
-        if visited.contains(&current) {
+        // cycle 防御（O(1) lookup）
+        if !visited.insert(current) {
             return Err(RebuildError::CycleDetected);
         }
-        visited.push(current);
 
         // 深度防御
         if visited.len() > MAX_PATH_DEPTH {
@@ -154,6 +156,18 @@ mod tests {
     }
 
     #[test]
+    fn target_is_root_returns_empty_path() {
+        // 调用方对 NTFS_ROOT_FILE_REFERENCE (5) 调 rebuild_path 应该返回空路径
+        // （with_drive_prefix 会补 C:\）
+        let map = HashMap::new();
+        let path = rebuild_path(&map, NTFS_ROOT_FILE_REFERENCE).unwrap();
+        assert_eq!(path, PathBuf::new());
+
+        let full = with_drive_prefix(&path, 'C');
+        assert_eq!(full.to_string_lossy(), "C:\\");
+    }
+
+    #[test]
     fn detects_cycle() {
         // A → B → A（cycle）
         let map = make_map(&[(10, "A", 11), (11, "B", 10)]);
@@ -171,9 +185,9 @@ mod tests {
 
     #[test]
     fn detects_too_deep() {
-        // 构造 300 层深的链
+        // 构造 600 层深的链（MAX_PATH_DEPTH=512，所以 600 会触发 TooDeep）
         let mut records = Vec::new();
-        for i in 1..300 {
+        for i in 1..600 {
             records.push((1000 + i, format!("d{i}"), 1000 + i - 1));
         }
         let map: HashMap<u64, RecordInfo> = records
@@ -188,18 +202,18 @@ mod tests {
                 )
             })
             .collect();
-        // 起点 1000 的 parent = 999，不在 map → 应该是 StaleParent，先加 1000 自己
+        // 起点 1000 的 parent = 5 (NTFS root)
         let mut map = map;
         map.insert(
             1000,
             RecordInfo {
                 file_name: "d0".to_string(),
-                parent_reference: 5,
+                parent_reference: NTFS_ROOT_FILE_REFERENCE,
             },
         );
-        let top = 1000 + 299;
+        let top = 1599; // map 最大 ref
         let result = rebuild_path(&map, top);
-        // 256 层限制 vs 299 实际深度 → TooDeep
+        // 600 层链 vs MAX_PATH_DEPTH=512 → TooDeep
         assert_eq!(result.err(), Some(RebuildError::TooDeep));
     }
 

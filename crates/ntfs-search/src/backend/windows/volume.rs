@@ -9,7 +9,7 @@
 use crate::error::ScanError;
 use std::path::Path;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, HANDLE};
+use windows::Win32::Foundation::{GENERIC_READ, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
@@ -33,8 +33,12 @@ pub(crate) struct VolumeHandle {
 }
 
 // SAFETY: HANDLE 是 Win32 句柄（void*），但本结构对它的访问全部在持有期间
-// 单线程同步完成。tokio::spawn_blocking 的 future 跨线程通过需要 Send。
-// HANDLE 本身在 Win32 中是进程级而非线程级，可以跨线程传递使用。
+// 通过同步 DeviceIoControl 调用完成（lpOverlapped = NULL）。
+// tokio::spawn_blocking 的 future 跨线程通过需要 Send。
+//
+// **重要前提**：HANDLE 跨线程安全的前提是所有 IOCTL 调用必须同步（非 overlapped）。
+// 本 crate 调用 DeviceIoControl 时永远传 None 作为 lpOverlapped。M3+ 接入 overlapped
+// IO 时必须重新评估本 unsafe impl。
 unsafe impl Send for VolumeHandle {}
 
 impl VolumeHandle {
@@ -79,14 +83,14 @@ impl VolumeHandle {
         let mut data = USN_JOURNAL_DATA_V0::default();
         let mut bytes_returned = 0u32;
 
-        // SAFETY: handle 由 CreateFileW 返回；data 是有效栈地址。
+        // SAFETY: handle 由 CreateFileW 返回；data 是有效栈地址；显式 c_void 类型匹配 DeviceIoControl 签名。
         let success = unsafe {
             DeviceIoControl(
                 self.handle,
                 FSCTL_QUERY_USN_JOURNAL,
                 None,
                 0,
-                Some(&mut data as *mut _ as *mut _),
+                Some(&mut data as *mut USN_JOURNAL_DATA_V0 as *mut std::ffi::c_void),
                 std::mem::size_of::<USN_JOURNAL_DATA_V0>() as u32,
                 Some(&mut bytes_returned),
                 None,
@@ -118,8 +122,14 @@ impl VolumeHandle {
 impl Drop for VolumeHandle {
     fn drop(&mut self) {
         // SAFETY: 句柄由我们独占持有，drop 时不会再有其他操作。
-        unsafe {
-            let _ = CloseHandle(self.handle);
+        // CloseHandle 失败（重复 close / 无效 handle）是真 bug 信号，记录但不阻塞 drop。
+        // SAFETY: 同步调用，无并发风险。
+        if let Err(e) = unsafe { windows::Win32::Foundation::CloseHandle(self.handle) } {
+            tracing::error!(
+                drive = %self.drive_letter,
+                error = %e,
+                "CloseHandle failed during VolumeHandle drop (possible double-close or invalid handle)"
+            );
         }
     }
 }
@@ -149,6 +159,26 @@ mod tests {
     fn path_to_drive_letter_returns_none_for_unc() {
         assert_eq!(path_to_drive_letter(Path::new("\\\\server\\share")), None);
         assert_eq!(path_to_drive_letter(Path::new("/usr/local")), None);
+    }
+
+    /// 用一个无效的 raw HANDLE 构造 VolumeHandle，验证 query_usn_journal 在底层
+    /// DeviceIoControl 失败时返回 UsnEnumFailed（模拟 FAT32/exFAT 等不支持 USN 的场景）。
+    ///
+    /// SAFETY: HANDLE 用 -1（INVALID_HANDLE_VALUE），DeviceIoControl 必然失败。
+    /// VolumeHandle 的 Drop 会调 CloseHandle(-1)，Win32 文档明确说返回 FALSE 不抛异常。
+    #[cfg(windows)]
+    #[test]
+    fn query_usn_journal_returns_err_on_invalid_handle() {
+        use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
+        let fake = VolumeHandle {
+            handle: INVALID_HANDLE_VALUE,
+            drive_letter: 'C',
+        };
+        let result = fake.query_usn_journal();
+        assert!(
+            matches!(result, Err(ScanError::UsnEnumFailed { .. })),
+            "expected UsnEnumFailed, got: {result:?}"
+        );
     }
 
     #[cfg(windows)]
