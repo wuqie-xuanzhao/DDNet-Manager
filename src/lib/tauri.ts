@@ -35,10 +35,6 @@ export function validateClientDir(path: string): Promise<ClientInstallation> {
   return invoke<ClientInstallation>("validate_client_dir", { path });
 }
 
-export function scanClientInstallations(options?: ScanClientInstallationsOptions): Promise<ClientInstallation[]> {
-  return invoke<ClientInstallation[]>("scan_client_installations", { options });
-}
-
 /**
  * 通过 ntfs-search crate 全量扫盘（Mft/Usn/Walkdir 自动选择）。
  * 扫描期间 emit `scan-progress` 事件，前端可用 `listen<ScanProgressEvent>` 监听。

@@ -75,7 +75,6 @@ export type LaunchReadiness = {
 export type ScanClientInstallationsOptions = {
   roots?: string[];
   include_saved_paths?: boolean;
-  deep?: boolean;
 };
 
 export type UpsertClientInstallationRequest = {

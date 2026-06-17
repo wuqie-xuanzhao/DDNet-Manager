@@ -172,9 +172,6 @@ pub struct ScanClientInstallationsOptions {
     /// 是否把注册表中已保存的历史路径也纳入扫描。
     #[serde(default)]
     pub include_saved_paths: bool,
-    /// 是否启用更深层级扫描。默认扫描保持轻量，不做全盘扫描。
-    #[serde(default)]
-    pub deep: bool,
 }
 
 /// 表示 manifest 或下载链路的网络路由模式。
