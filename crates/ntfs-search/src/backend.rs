@@ -44,9 +44,13 @@ pub(super) fn select_backend_for_root(root: &Path) -> SelectedBackend {
 
     let backend: Box<dyn Backend> = match requested {
         #[cfg(windows)]
-        BackendKind::Usn | BackendKind::Mft => {
-            // v0.2：admin MFT 路径未实现，请求 Mft 时也用 UsnBackend。
-            // UsnBackend 内部失败会自动降级 Walkdir。
+        BackendKind::Mft => {
+            // admin 路径：$MFT raw record backend。失败自动 fallback USN → Walkdir。
+            let drive = windows::volume::path_to_drive_letter(root).unwrap_or('C');
+            Box::new(windows::mft::MftBackend::new(drive))
+        }
+        #[cfg(windows)]
+        BackendKind::Usn => {
             let drive = windows::volume::path_to_drive_letter(root).unwrap_or('C');
             Box::new(windows::UsnBackend::new(drive))
         }
@@ -75,11 +79,11 @@ pub(super) struct SelectedBackend {
     pub downgraded_from: Option<BackendKind>,
 }
 
-/// Windows 平台 backend 探测：v0.2 默认走 USN（普通用户路径）。
-/// admin $MFT 路径留 M3 实现。
+/// Windows 平台 backend 探测：v0.3 默认走 $MFT（admin 路径），admin 不可用时
+/// MftBackend 内部自动 fallback USN → Walkdir。
 #[cfg(windows)]
 fn probe_windows_backend_kind(_root: &Path) -> BackendKind {
-    BackendKind::Usn
+    BackendKind::Mft
 }
 
 #[cfg(not(windows))]
@@ -178,11 +182,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn select_backend_returns_usn_on_windows() {
+    fn select_backend_returns_mft_on_windows() {
         let sel = select_backend_for_root(Path::new("C:\\"));
         #[cfg(windows)]
         {
-            assert_eq!(sel.kind, BackendKind::Usn);
+            assert_eq!(sel.kind, BackendKind::Mft);
         }
         #[cfg(not(windows))]
         {

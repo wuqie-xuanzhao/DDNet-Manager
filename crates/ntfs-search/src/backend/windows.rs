@@ -6,6 +6,7 @@
 //!
 //! 所有 Windows API 调用都在这里；模块外只暴露 safe Rust 接口。
 
+pub(crate) mod mft;
 pub(crate) mod mft_record;
 pub(crate) mod usn;
 pub(crate) mod volume;
@@ -27,18 +28,18 @@ use tokio_util::sync::CancellationToken;
 /// `C:\Windows` 但拿到整个 C 盘结果"的语义割裂，本 backend 只在 `root` 是整盘
 /// 路径（`C:\` / `C:/` / `D:\` 等）时走 USN；否则**直接**走 Walkdir（不 emit
 /// `BackendDowngraded`，因为不是降级，是调用方语义匹配的选择）。
-pub(super) struct UsnBackend {
+pub(crate) struct UsnBackend {
     drive_letter: char,
 }
 
 impl UsnBackend {
-    pub(super) fn new(drive_letter: char) -> Self {
+    pub(crate) fn new(drive_letter: char) -> Self {
         Self { drive_letter }
     }
 }
 
 /// 判断 `root` 是否是整盘根路径（如 `C:\` / `c:/` / `D:\`）。
-fn is_whole_drive_root(root: &Path, expected_drive: char) -> bool {
+pub(super) fn is_whole_drive_root(root: &Path, expected_drive: char) -> bool {
     let Some(actual) = volume::path_to_drive_letter(root) else {
         return false;
     };

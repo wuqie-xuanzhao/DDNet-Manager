@@ -46,10 +46,6 @@
 //! - `$FILE_NAME` (60)：parent_ref + name
 //! - `$DATA` (128)：size（resident = Content Length，non-resident = Real Size）
 
-// M3a：仅解析器，尚未接入 MftBackend（M3b）。所有 item 暂为 dead code。
-// 4b 接入 MftBackend 后移除本 allow。
-#![allow(dead_code)]
-
 use crate::rebuild_paths::NTFS_ROOT_FILE_REFERENCE;
 
 /// MFT record 固定头偏移常量（参见模块顶部文档）。
