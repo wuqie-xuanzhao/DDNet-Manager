@@ -17,11 +17,14 @@
 //! - commit 4a-c: $MFT raw record backend（Windows admin）
 //! - commit 5: inspect / inspect_many
 
+mod backend;
 mod error;
+mod find;
 mod matcher;
 mod options;
 
 pub use crate::error::ScanError;
+pub use crate::find::find_files;
 pub use crate::matcher::Matcher;
 pub use crate::options::{
     BackendKind, FileAttributes, FileEntry, InspectFields, InspectedEntry, NtfsScanOptions,
