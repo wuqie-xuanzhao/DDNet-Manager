@@ -22,6 +22,7 @@ mod error;
 mod find;
 mod matcher;
 mod options;
+mod rebuild_paths;
 
 pub use crate::error::ScanError;
 pub use crate::find::find_files;

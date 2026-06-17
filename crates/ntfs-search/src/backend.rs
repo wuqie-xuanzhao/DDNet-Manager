@@ -14,6 +14,9 @@ use tokio_util::sync::CancellationToken;
 
 mod walkdir;
 
+#[cfg(windows)]
+mod windows;
+
 /// 扫描某个 root 的 backend 契约。
 #[async_trait]
 pub(super) trait Backend: Send + Sync {
@@ -30,8 +33,8 @@ pub(super) trait Backend: Send + Sync {
 
 /// 为指定 root 探测可用的 backend（按 Mft → Usn → Walkdir 链降级）。
 ///
-/// v0.1 仅 Walkdir backend 已实现，后续 commit 接入 Windows MFT/USN 后
-/// 这里会按权限与平台动态选最优。
+/// - Windows 上 v0.2：尝试 USN backend（普通用户路径）。admin $MFT 路径留 M3 实现。
+/// - 其他平台：直接 Walkdir。
 pub(super) fn select_backend_for_root(root: &Path) -> SelectedBackend {
     let requested = if cfg!(windows) {
         probe_windows_backend_kind(root)
@@ -40,21 +43,27 @@ pub(super) fn select_backend_for_root(root: &Path) -> SelectedBackend {
     };
 
     let backend: Box<dyn Backend> = match requested {
-        BackendKind::Mft | BackendKind::Usn => {
-            // Mft / Usn backend 尚未实现，v0.1 降级到 Walkdir。
-            // commit 3+ 接入后这里会返回真实 backend。
-            Box::new(walkdir::WalkdirBackend)
+        #[cfg(windows)]
+        BackendKind::Usn | BackendKind::Mft => {
+            // v0.2：admin MFT 路径未实现，请求 Mft 时也用 UsnBackend。
+            // UsnBackend 内部失败会自动降级 Walkdir。
+            let drive = windows::volume::path_to_drive_letter(root).unwrap_or('C');
+            Box::new(windows::UsnBackend::new(drive))
         }
+        #[cfg(not(windows))]
+        BackendKind::Mft | BackendKind::Usn => Box::new(walkdir::WalkdirBackend),
         BackendKind::Walkdir => Box::new(walkdir::WalkdirBackend),
     };
 
+    let actual_kind = backend.kind();
+
     SelectedBackend {
-        kind: backend.kind(), // 走 trait 方法拿真实 kind（Walkdir）
+        kind: actual_kind,
         backend,
-        downgraded_from: if requested == BackendKind::Walkdir {
+        downgraded_from: if actual_kind == requested {
             None
         } else {
-            Some(requested) // 请求 Mft/Usn 但实际给 Walkdir → 降级
+            Some(requested)
         },
     }
 }
@@ -66,11 +75,11 @@ pub(super) struct SelectedBackend {
     pub downgraded_from: Option<BackendKind>,
 }
 
-/// Windows 平台 backend 探测（v0.1 stub，全部返回 Walkdir）。
+/// Windows 平台 backend 探测：v0.2 默认走 USN（普通用户路径）。
+/// admin $MFT 路径留 M3 实现。
 #[cfg(windows)]
 fn probe_windows_backend_kind(_root: &Path) -> BackendKind {
-    // commit 3+ 接入：尝试打开 \\.\C:$MFT 探测 admin，失败尝试 USN，再失败 Walkdir
-    BackendKind::Walkdir
+    BackendKind::Usn
 }
 
 #[cfg(not(windows))]
@@ -169,15 +178,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn select_backend_returns_walkdir_on_v0_1() {
-        let sel = select_backend_for_root(Path::new("/tmp"));
-        assert_eq!(sel.kind, BackendKind::Walkdir);
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn select_backend_no_downgrade_on_unix() {
-        let sel = select_backend_for_root(Path::new("/tmp"));
-        assert!(sel.downgraded_from.is_none());
+    fn select_backend_returns_usn_on_windows() {
+        let sel = select_backend_for_root(Path::new("C:\\"));
+        #[cfg(windows)]
+        {
+            assert_eq!(sel.kind, BackendKind::Usn);
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(sel.kind, BackendKind::Walkdir);
+            assert!(sel.downgraded_from.is_none());
+        }
     }
 }

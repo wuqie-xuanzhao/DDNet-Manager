@@ -7,9 +7,7 @@
 //!
 //! 不修改任何业务代码，仅做 ntfs-search 自身能力验证。
 
-use ntfs_search::{
-    find_files, sink_from, BackendKind, NtfsScanOptions, ProgressEvent,
-};
+use ntfs_search::{find_files, sink_from, BackendKind, NtfsScanOptions, ProgressEvent};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -70,7 +68,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 scanned_count.store(scanned, Ordering::Relaxed);
                 found_count.store(found, Ordering::Relaxed);
             }
-            ProgressEvent::BackendDowngraded { from, to, reason, .. } => {
+            ProgressEvent::BackendDowngraded {
+                from, to, reason, ..
+            } => {
                 downgrades.fetch_add(1, Ordering::Relaxed);
                 eprintln!("[downgrade] {:?} -> {:?}: {}", from, to, reason);
             }
@@ -86,10 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    eprintln!(
-        "=== smoke_scan: roots={:?} target={} ===",
-        roots, target
-    );
+    eprintln!("=== smoke_scan: roots={:?} target={} ===", roots, target);
     let entries = find_files(opts, sink, CancellationToken::new()).await?;
     let elapsed = started.elapsed();
 
@@ -102,9 +99,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         entries.len(),
         elapsed
     );
-    println!("downgrades: {}, entry_errors: {}",
+    println!(
+        "downgrades: {}, entry_errors: {}",
         downgrades.load(Ordering::Relaxed),
-        errors.load(Ordering::Relaxed));
+        errors.load(Ordering::Relaxed)
+    );
     println!();
     println!("matched entries:");
     for (i, entry) in entries.iter().enumerate() {
