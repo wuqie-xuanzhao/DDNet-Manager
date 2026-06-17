@@ -1,9 +1,10 @@
 use crate::commands::{
     app_cache_dir, DownloadManagerState, InstallContext, InstallHistoryInput, RegistryState,
 };
+use crate::error::{IpcError, ManagerError};
 use crate::models::{
     ClientHealth, ClientInstallation, DownloadJob, DownloadJobStatus, InstallHistoryRecord,
-    InstallHistoryStatus, IpcError, ManagerError,
+    InstallHistoryStatus,
 };
 use crate::registry::ClientRegistry;
 use std::path::{Path, PathBuf};

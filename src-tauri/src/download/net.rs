@@ -1,7 +1,7 @@
 //! 下载 URL 校验、HTTP 请求重定向跟随、流式写入与缓存清理。
 
+use crate::error::ManagerError;
 use crate::local_smoke;
-use crate::models::ManagerError;
 use reqwest::Url;
 use std::fs;
 use std::io::Write;

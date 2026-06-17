@@ -1,8 +1,7 @@
 //! 下载缓存校验与下载任务恢复摘要构建。
 
-use crate::models::{
-    DownloadCacheState, DownloadJob, DownloadJobRecovery, DownloadJobStatus, ManagerError,
-};
+use crate::error::ManagerError;
+use crate::models::{DownloadCacheState, DownloadJob, DownloadJobRecovery, DownloadJobStatus};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;

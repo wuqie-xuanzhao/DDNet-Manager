@@ -3,9 +3,10 @@ use crate::commands::{
     RegistryState, LOCAL_SMOKE_RESULT_PATH_ENV,
 };
 use crate::download::DownloadManager;
+use crate::error::{IpcError, ManagerError};
 use crate::models::{
-    CheckClientUpdateRequest, DownloadJob, DownloadJobRecovery, DownloadJobStatus, IpcError,
-    ManagerError, NetworkRouteConfig, StartUpdateDownloadRequest, UpdateAction,
+    CheckClientUpdateRequest, DownloadJob, DownloadJobRecovery, DownloadJobStatus,
+    NetworkRouteConfig, StartUpdateDownloadRequest, UpdateAction,
 };
 use crate::registry::ClientRegistry;
 use std::fs;

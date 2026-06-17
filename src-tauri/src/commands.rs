@@ -4,9 +4,10 @@ pub mod download;
 /// 安装事务子命令。
 pub mod install;
 
+use crate::error::IpcError;
 use crate::models::{
     AppSettings, CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
-    DownloadJob, InstallHistoryRecord, InstallHistoryStatus, IpcError, LocalSmokeResultReport,
+    DownloadJob, InstallHistoryRecord, InstallHistoryStatus, LocalSmokeResultReport,
     NetworkRouteConfig, ScanClientInstallationsOptions, UpsertClientInstallationRequest,
 };
 use crate::registry::ClientRegistry;

@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+/// 后端结构化错误类型与稳定 IPC 错误码。
+pub mod error;
+
 /// DDNet Manager 的领域模型定义。
 pub mod models;
 

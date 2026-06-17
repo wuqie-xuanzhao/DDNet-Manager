@@ -1,7 +1,8 @@
+use crate::error::ManagerError;
 use crate::local_smoke;
 use crate::models::{
-    ClientUpdateCheck, ClientUpdateSelector, ManagerError, NetworkRouteConfig, UpdateAction,
-    UpdateManifest, UpdateSourceKind,
+    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, UpdateAction, UpdateManifest,
+    UpdateSourceKind,
 };
 use reqwest::Url;
 use std::net::IpAddr;
