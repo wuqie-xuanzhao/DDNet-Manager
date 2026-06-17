@@ -67,51 +67,11 @@ pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstalla
     crate::client_scan::validate_client_dir(Path::new(&path)).map_err(IpcError::from)
 }
 
-/// 扫描本机候选客户端安装目录。
-#[tauri::command]
-pub fn scan_client_installations(
-    registry: RegistryState<'_>,
-    options: Option<ScanClientInstallationsOptions>,
-) -> Result<Vec<ClientInstallation>, IpcError> {
-    let options = options.unwrap_or_default();
-    let use_everything = options.roots.is_empty();
-    let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
-        crate::client_scan::default_scan_roots()
-    } else {
-        options.roots.iter().map(PathBuf::from).collect()
-    };
-
-    if options.include_saved_paths {
-        roots.extend(
-            registry
-                .list_client_installations()?
-                .into_iter()
-                .map(|client| PathBuf::from(client.install_dir)),
-        );
-    }
-    let settings = registry.load_app_settings()?;
-
-    crate::client_scan::scan_client_installations(&crate::client_scan::ScanOptions {
-        roots,
-        include_saved_paths: options.include_saved_paths,
-        deep: options.deep,
-        use_everything: use_everything && settings.use_everything,
-        excluded_paths: settings
-            .scan_excluded_paths
-            .iter()
-            .map(PathBuf::from)
-            .collect(),
-    })
-    .map_err(IpcError::from)
-}
-
 /// 使用 ntfs-search crate 全量扫盘找 DDNet.exe 兼容客户端。
 ///
 /// 后端自动按平台/权限选 Mft / Usn / Walkdir（admin > 普通 > fallback），失败自动降级。
 /// 扫描期间实时 emit `scan-progress` 事件（[`ntfs_search::ProgressEvent`]），
 /// 前端按 `kind` discriminated union 渲染进度。
-///
-/// 与 [`scan_client_installations`]（旧 BFS）并存，等业务验证稳定后切换默认入口。
 #[tauri::command]
 pub async fn scan_clients_via_mft(
     registry: RegistryState<'_>,

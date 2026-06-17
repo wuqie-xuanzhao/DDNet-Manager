@@ -89,7 +89,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::validate_client_dir,
-            commands::scan_client_installations,
             commands::scan_clients_via_mft,
             commands::upsert_client_installation,
             commands::remove_client_installation,
