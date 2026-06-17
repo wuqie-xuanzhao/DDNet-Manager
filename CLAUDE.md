@@ -123,7 +123,7 @@ useEffect(() => {
 
 | 分组 | 命令 | 当前状态 |
 | --- | --- | --- |
-| 客户端目录与注册表 | `validate_client_dir`、`scan_client_installations`、`upsert_client_installation`、`remove_client_installation`、`set_default_client`、`list_client_installations`、`get_default_client` | 已接入本地目录验证、候选扫描、SQLite 注册表和默认客户端管理 |
+| 客户端目录与注册表 | `validate_client_dir`、`scan_clients_via_mft`、`upsert_client_installation`、`remove_client_installation`、`set_default_client`、`list_client_installations`、`get_default_client` | 已接入本地目录验证、ntfs-search 全盘扫描（Mft/Usn/Walkdir 自动选择 + `scan-progress` 事件）、SQLite 注册表和默认客户端管理 |
 | 启动与运行检测 | `launch_client`、`launch_default_client`、`is_client_running` | 已接入进程启动、默认客户端复检和运行状态检测基础 |
 | 设置与历史 | `load_app_settings`、`save_app_settings`、`list_install_history` | 已接入 SQLite 设置快照和安装历史读取 |
 | 更新与 manifest | `load_manifest`、`check_client_update` | 已接入 manifest 校验、catalog/update source 分派和更新判断基础 |

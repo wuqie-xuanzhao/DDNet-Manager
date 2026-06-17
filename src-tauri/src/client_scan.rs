@@ -63,6 +63,22 @@ pub(crate) fn is_local_smoke_tmp_path(candidate: &Path) -> bool {
     normalized.contains("/tmp/tauri-update-smoke/")
 }
 
+/// 简化路径用于排除路径比较：统一分隔符为 `/`，去末尾 `/`，Windows 下大小写不敏感。
+///
+/// 与 [`normalize_id_seed`] 的区别：本函数不调 canonicalize，纯字符串归一化，
+/// 适合对可能不存在的路径做比较（排除路径列表中的路径可能已删除）。
+pub(crate) fn normalize_for_compare(path: &Path) -> String {
+    let s = path.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    {
+        s.trim_end_matches('/').to_ascii_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        s.trim_end_matches('/').to_string()
+    }
+}
+
 fn detect_client_health(
     executable_path: &Path,
     storage_cfg_path: &Path,

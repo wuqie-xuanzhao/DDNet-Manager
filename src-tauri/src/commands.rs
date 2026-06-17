@@ -67,6 +67,10 @@ pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstalla
     crate::client_scan::validate_client_dir(Path::new(&path)).map_err(IpcError::from)
 }
 
+/// `scan_clients_via_mft` 默认最多收集多少条候选。NTFS 全盘扫很容易超过这个数
+/// （多版本/多客户端机器），命中后扫描提前停止；如需放宽，把它做成 settings 字段。
+const DEFAULT_SCAN_MAX_RESULTS: usize = 50;
+
 /// 使用 ntfs-search crate 全量扫盘找 DDNet.exe 兼容客户端。
 ///
 /// 后端自动按平台/权限选 Mft / Usn / Walkdir（admin > 普通 > fallback），失败自动降级。
@@ -109,7 +113,7 @@ pub async fn scan_clients_via_mft(
             .any(|expected| name.eq_ignore_ascii_case(expected))
     })
     .with_roots(roots)
-    .with_max_results(50);
+    .with_max_results(DEFAULT_SCAN_MAX_RESULTS);
 
     let progress = std::sync::Arc::new(TauriScanSink::new(app));
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -130,7 +134,7 @@ pub async fn scan_clients_via_mft(
         }
         if excluded
             .iter()
-            .any(|ex| normalize_for_compare(ex) == normalize_for_compare(parent))
+            .any(|ex| crate::client_scan::normalize_for_compare(ex) == crate::client_scan::normalize_for_compare(parent))
         {
             continue;
         }
@@ -142,12 +146,6 @@ pub async fn scan_clients_via_mft(
 
     installations.sort_by(|a, b| a.install_dir.cmp(&b.install_dir));
     Ok(installations)
-}
-
-/// 简化路径用于排除路径比较（去末尾分隔符，统一分隔符为 /，大小写不敏感 on Windows）。
-fn normalize_for_compare(path: &Path) -> String {
-    let s = path.to_string_lossy().replace('\\', "/");
-    s.trim_end_matches('/').to_ascii_lowercase()
 }
 
 /// 把 ntfs-search 的 ProgressEvent 转 Tauri event 推到前端。

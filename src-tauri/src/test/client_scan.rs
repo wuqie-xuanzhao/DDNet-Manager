@@ -211,6 +211,24 @@ fn normalize_path_replaces_backslashes_with_forward_slashes() {
 }
 
 #[test]
+fn normalize_for_compare_trims_trailing_slash_and_lowercases_on_windows() {
+    // Windows：大小写不敏感 + 去尾斜杠
+    let expected = if cfg!(windows) {
+        "c:/games/qmclient"
+    } else {
+        "C:/Games/QmClient"
+    };
+    assert_eq!(
+        scan::normalize_for_compare(std::path::Path::new(r"C:\Games\QmClient\")),
+        expected
+    );
+    assert_eq!(
+        scan::normalize_for_compare(std::path::Path::new("C:/Games/QmClient/")),
+        expected
+    );
+}
+
+#[test]
 fn stable_installation_id_uses_fixed_fnv1a64_value() {
     assert_eq!(
         scan::stable_installation_id("qmclient", "C:/Games/QmClient"),
