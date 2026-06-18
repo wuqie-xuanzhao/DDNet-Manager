@@ -243,6 +243,13 @@ export function ClientManager() {
                       {client.display_name} {client.is_default ? "· 默认" : ""}
                     </div>
                     <div className="mt-1 truncate text-xs text-[var(--app-text-dim)] font-mono">{client.install_dir}</div>
+                    {/* 老 third_party 记录：catalog 已移除 third_party tab，这类记录不在 gallery 显示。
+                        review issue #10：加提示让用户知道为啥 gallery 看不到，可去重新扫描用新 PE 元信息识别 */}
+                    {client.client_id === "third_party" && (
+                      <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                        未在 gallery 显示（识别为兼容客户端）
+                      </div>
+                    )}
                   </div>
                   <span className="shrink-0 border border-[var(--app-border)] px-2 py-1 text-xs font-bold uppercase text-[var(--app-text-muted)] rounded">
                     {healthLabel(client)}

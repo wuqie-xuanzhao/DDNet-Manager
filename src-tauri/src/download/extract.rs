@@ -82,9 +82,10 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
         file_entries.push((index, output_path));
     }
 
-    // 单文件快速路径：跳过 thread::scope 的 fork/join overhead。
-    if file_entries.len() <= 1 {
-        if let Some((index, output_path)) = file_entries.into_iter().next() {
+    // ≤ 2 文件快速路径：跳过 thread::scope 的 fork/join overhead（review issue #15）。
+    // 实测 2 个小文件的 thread::scope 启动 + join 比 2 次顺序 IO 还慢，统一走串行。
+    if file_entries.len() <= 2 {
+        for (index, output_path) in file_entries.into_iter() {
             let mut entry = archive
                 .by_index(index)
                 .map_err(|error| format!("failed to read zip entry: {error}"))?;

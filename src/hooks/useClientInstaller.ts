@@ -248,6 +248,10 @@ export function useClientInstaller(params: {
   useEffect(() => {
     if (!tauriRuntime) return;
 
+    // review issue #4：用 Promise.all 并行 listen 所有事件，单个 await 点。
+    // dispose 在 await 之前触发时所有 unlisten 一次性调用；
+    // dispose 在 await 之后触发时 unlistens 已稳定填充，cleanup 调用所有。
+    // 避免 for 循环里逐个 await + push 顺序乱导致的 cleanup race。
     let unlistens: UnlistenFn[] = [];
     let disposed = false;
 
@@ -292,7 +296,6 @@ export function useClientInstaller(params: {
           async (e) => {
             const job = e.payload as DownloadJob;
             if (!isMine(job)) return;
-            // 安装完成 → 创建快捷方式（如果 beginInstall 时设置了 shortcut options）
             const shortcutOpts = pendingShortcutOptionsRef.current;
             const currentClient = clientRef.current;
             if (shortcutOpts && currentClient) {
@@ -309,7 +312,6 @@ export function useClientInstaller(params: {
               }
               pendingShortcutOptionsRef.current = null;
             }
-            // 重新拉 registry 状态（含新 version）
             await refreshFromRegistry();
             void fetchRelease();
           }
@@ -324,14 +326,17 @@ export function useClientInstaller(params: {
         ]
       ];
 
-      for (const [event, handler] of handlers) {
-        const unlisten = await listen(event, handler);
-        if (disposed) {
-          unlisten();
-          return;
-        }
-        unlistens.push(unlisten);
+      // 并行注册所有事件监听器，单次 await
+      const results = await Promise.all(
+        handlers.map(([event, handler]) => listen(event, handler))
+      );
+
+      if (disposed) {
+        // cleanup 在 await 期间触发，立即调用所有 unlisten
+        for (const u of results) u();
+        return;
       }
+      unlistens = results;
     };
 
     void setup();
