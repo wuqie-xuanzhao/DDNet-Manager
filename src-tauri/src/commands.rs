@@ -684,3 +684,74 @@ pub(crate) fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .app_cache_dir()
         .map_err(|error| format!("failed to resolve app cache dir: {error}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_cancel_state_cancel_returns_false_when_no_active_scan() {
+        let state = ScanCancelState::default();
+        assert!(!state.cancel(), "无扫描在跑时 cancel 应返回 false");
+    }
+
+    #[test]
+    fn scan_cancel_state_set_then_cancel_roundtrip() {
+        let state = ScanCancelState::default();
+        let token = tokio_util::sync::CancellationToken::new();
+        state.set(token.clone());
+
+        assert!(!token.is_cancelled(), "set 后 token 不应已取消");
+        assert!(state.cancel(), "有扫描时 cancel 应返回 true");
+        assert!(token.is_cancelled(), "cancel 后 token 应被触发");
+        assert!(!state.cancel(), "二次 cancel 应返回 false（已 take）");
+    }
+
+    #[test]
+    fn scan_cancel_state_clear_drops_active_token() {
+        let state = ScanCancelState::default();
+        let token = tokio_util::sync::CancellationToken::new();
+        state.set(token);
+        state.clear();
+        assert!(!state.cancel(), "clear 后 cancel 应返回 false");
+    }
+
+    /// collect_priority_roots 在 Windows 上应包含 Program Files + 用户目录 + Steam。
+    /// 在 Linux/macOS 上所有 Windows 路径都不存在，返回空 Vec（不 panic）。
+    #[test]
+    fn collect_priority_roots_does_not_panic() {
+        let roots = collect_priority_roots();
+        #[cfg(windows)]
+        {
+            // Windows 应至少找到一些 priority 路径（除非真的全没装）
+            // 这里只断言函数能跑通不 panic，不强制非空（CI 环境可能 stripped）
+            eprintln!("priority roots found: {} entries", roots.len());
+        }
+        #[cfg(not(windows))]
+        {
+            // Linux/macOS 上 Windows 路径都不存在
+            assert!(roots.is_empty(), "Unix 上 collect_priority_roots 应返回空");
+        }
+    }
+
+    /// Windows 上 Program Files 几乎一定存在，验证 priority 收集包含它。
+    #[cfg(windows)]
+    #[test]
+    fn collect_priority_roots_includes_program_files_when_present() {
+        let roots = collect_priority_roots();
+        let pf = std::env::var_os("ProgramFiles").map(PathBuf::from);
+        if let Some(pf) = pf {
+            if pf.is_dir() {
+                assert!(
+                    roots.iter().any(|r| r == &pf),
+                    "priority roots 应包含 Program Files: {}",
+                    pf.display()
+                );
+            }
+        }
+    }
+
+    // run_scan / scan_clients_via_mft 的集成测试需要 AppHandle + Tauri runtime，
+    // 单元测试难以构造。已通过 vitest + invoke mock 在 useClientScanner.test.tsx
+    // 中覆盖端到端流程（包括 cancel 链路）。
+}

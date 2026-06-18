@@ -181,10 +181,24 @@ mod tests {
         );
     }
 
+    /// 真盘测试：打开 C: 卷并查询 USN journal。
+    ///
+    /// 运行方式：`cargo test -p ntfs-search --lib -- --ignored open_volume_c`
+    ///
+    /// 期望行为：
+    /// - admin 进程：open + query_usn_journal 都成功，打印 journal 元数据
+    /// - 普通进程：eprintln 提示后 return（self-skip，不 fail），需 admin 才能真验证
     #[cfg(windows)]
     #[tokio::test]
     #[ignore = "needs real C: drive; run with --ignored"]
     async fn open_volume_c_succeeds_on_windows() {
+        if !super::super::elevation::is_process_elevated() {
+            eprintln!(
+                "skipped: requires admin (elevated) process to open raw volume handle; \
+                 rerun from an elevated shell to actually verify"
+            );
+            return;
+        }
         let v = VolumeHandle::open('C').expect("open C:");
         let info = v.query_usn_journal().expect("query journal");
         eprintln!(

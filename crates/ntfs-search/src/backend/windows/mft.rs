@@ -518,14 +518,25 @@ mod tests {
         assert_eq!(st, SystemTime::UNIX_EPOCH);
     }
 
+    /// 真盘测试：MftBackend 扫 C:\ 找 notepad.exe。
+    ///
+    /// 运行方式：`cargo test -p ntfs-search --lib -- --ignored real_mft_scan`
+    ///
+    /// 期望行为（elevation-aware）：
+    /// - admin 进程：open $MFT 成功 → MFT 主路径极速扫描，downgrades=0
+    /// - 普通进程：open $MFT 失败 → fallback USN → fallback Walkdir，downgrades=2
+    ///   仍能在 System32 找到 notepad.exe
     #[cfg(windows)]
     #[tokio::test]
-    #[ignore = "needs admin to open $MFT; run with --ignored"]
+    #[ignore = "needs real C: drive; admin verifies MFT, non-admin verifies full fallback chain (run with --ignored)"]
     async fn real_mft_scan_finds_notepad_on_admin() {
         use crate::backend::Backend;
         use crate::options::NtfsScanOptions;
         use std::path::PathBuf;
         use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let is_elevated = super::super::super::windows::elevation::is_process_elevated();
+        eprintln!("process elevated = {}", is_elevated);
 
         let downgrades = Arc::new(AtomicUsize::new(0));
         let downgrades_clone = Arc::clone(&downgrades);
@@ -543,13 +554,20 @@ mod tests {
             .await
             .expect("scan_root");
 
+        let downgrade_count = downgrades.load(Ordering::Relaxed);
         eprintln!(
             "found {} notepad.exe (downgrades = {})",
             entries.len(),
-            downgrades.load(Ordering::Relaxed)
+            downgrade_count
         );
-        // admin 环境：应在 System32 找到 notepad.exe（backend = Mft）
-        // 普通环境：自动 fallback Usn → Walkdir，仍能找到
+
+        // admin 应走 MFT 主路径（downgrades=0）；普通用户 Mft→Usn→Walkdir（downgrades=2）
+        if is_elevated {
+            assert_eq!(downgrade_count, 0, "elevated process should use MFT directly");
+        } else {
+            assert!(downgrade_count >= 2, "non-elevated process should fallback Mft→Usn→Walkdir");
+        }
+
         assert!(
             entries
                 .iter()

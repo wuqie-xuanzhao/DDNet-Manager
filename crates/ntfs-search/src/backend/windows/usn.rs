@@ -514,14 +514,25 @@ mod tests {
         assert_eq!(st, SystemTime::UNIX_EPOCH);
     }
 
+    /// 真盘测试：UsnBackend 扫 C:\ 找 notepad.exe。
+    ///
+    /// 运行方式：`cargo test -p ntfs-search --lib -- --ignored real_usn_scan`
+    ///
+    /// 期望行为（elevation-aware）：
+    /// - admin 进程：VolumeHandle::open 成功 → USN 主路径，downgrades=0
+    /// - 普通进程：open volume 拒绝访问 → 自动 fallback Walkdir，downgrades=1
+    ///   仍能在 System32 找到 notepad.exe
     #[cfg(windows)]
     #[tokio::test]
-    #[ignore = "needs real C: drive; run with --ignored"]
+    #[ignore = "needs real C: drive; admin verifies USN, non-admin verifies fallback (run with --ignored)"]
     async fn real_usn_scan_or_fallback_finds_notepad() {
         use crate::backend::windows::UsnBackend;
         use crate::backend::Backend;
         use crate::options::NtfsScanOptions;
         use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let is_elevated = super::super::elevation::is_process_elevated();
+        eprintln!("process elevated = {}", is_elevated);
 
         let downgrades = Arc::new(AtomicUsize::new(0));
         let downgrades_clone = Arc::clone(&downgrades);
@@ -544,11 +555,20 @@ mod tests {
             .await
             .expect("scan_root");
 
+        let downgrade_count = downgrades.load(Ordering::Relaxed);
         eprintln!(
             "found {} notepad.exe copies (downgrades = {})",
             entries.len(),
-            downgrades.load(Ordering::Relaxed)
+            downgrade_count
         );
+
+        // admin 应走 USN 主路径（downgrades=0）；普通用户 fallback Walkdir（downgrades=1）
+        if is_elevated {
+            assert_eq!(downgrade_count, 0, "elevated process should use USN directly");
+        } else {
+            assert!(downgrade_count >= 1, "non-elevated process should fallback");
+        }
+
         assert!(
             entries
                 .iter()
