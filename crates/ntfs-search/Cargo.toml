@@ -17,7 +17,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-walkdir = "2"   # 跨平台 fallback backend；Windows 上 MFT/USN 失败时也降级到 walkdir
+ignore = "0.4"  # 并行 walkdir + 目录过滤；大磁盘扫描主路径
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
