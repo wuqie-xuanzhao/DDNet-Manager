@@ -99,6 +99,28 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{digest:x}")
 }
 
+/// SHA-256 流式读取的缓冲区大小（review issue #14：verify_downloaded_file 和
+/// compute_exe_sha256_if_small 共用同一常量，避免重复魔数 256*1024）。
+pub const SHA256_BUFFER_SIZE: usize = 256 * 1024;
+
+/// 流式计算文件 SHA-256 小写十六进制摘要，使用 [`SHA256_BUFFER_SIZE`] 大小的
+/// 堆分配缓冲区。复用函数避免 verify_downloaded_file 和 compute_exe_sha256_if_small
+/// 各自重复 buffer 分配逻辑。
+pub fn compute_file_sha256_hex(path: &Path) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer: Box<[u8; SHA256_BUFFER_SIZE]> = Box::new([0u8; SHA256_BUFFER_SIZE]);
+    loop {
+        let bytes_read = file.read(&mut buffer[..])?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    let digest = hasher.finalize();
+    Ok(format!("{digest:x}"))
+}
+
 /// 校验已下载文件的字节数和 SHA-256 摘要，使用流式读取避免全量加载到内存。
 ///
 /// 返回 [`ManagerError`]，让 `checksum_mismatch` 稳定错误码在 IPC 边界保持
@@ -108,10 +130,8 @@ pub fn verify_downloaded_file(
     expected_sha256: &str,
     expected_size: u64,
 ) -> Result<(), ManagerError> {
-    let mut file = fs::File::open(path).map_err(|error| {
-        ManagerError::Internal(format!("failed to open download file: {error}"))
-    })?;
-    let metadata = file.metadata().map_err(|error| {
+    // 先做 size 校验（fast fail，避免对 size 不匹配的文件浪费 sha 计算）
+    let metadata = fs::metadata(path).map_err(|error| {
         ManagerError::Internal(format!("failed to read download file metadata: {error}"))
     })?;
     let actual_size = metadata.len();
@@ -121,24 +141,12 @@ pub fn verify_downloaded_file(
         )));
     }
 
-    // 堆分配避免 256KB 占满 Windows 默认 1MB 线程栈；syscall 次数相比 8KB 减少 32 倍
-    let mut buffer: Box<[u8; 256 * 1024]> = Box::new([0u8; 256 * 1024]);
-    let mut hasher = Sha256::new();
-    loop {
-        let bytes_read = file
-            .read(&mut buffer[..])
-            .map_err(|error| {
-                ManagerError::Internal(format!(
-                    "failed to read download file for verification: {error}"
-                ))
-            })?;
-        if bytes_read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes_read]);
-    }
-    let digest = hasher.finalize();
-    let actual_sha256 = format!("{digest:x}");
+    // 用公共 compute_file_sha256_hex 复用缓冲区分配逻辑（review issue #14）
+    let actual_sha256 = compute_file_sha256_hex(path).map_err(|error| {
+        ManagerError::Internal(format!(
+            "failed to read download file for verification: {error}"
+        ))
+    })?;
     if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
         return Err(ManagerError::ChecksumMismatch(format!(
             "download sha256 mismatch: expected {expected_sha256}, got {actual_sha256}"

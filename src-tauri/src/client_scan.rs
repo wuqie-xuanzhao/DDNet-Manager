@@ -2,8 +2,6 @@ use crate::error::ManagerError;
 use crate::models::{
     ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
 };
-use sha2::{Digest, Sha256};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -336,23 +334,13 @@ fn read_pe_version_info_safe(exe_path: &Path) -> Option<ntfs_search::VersionInfo
 
 /// 计算 exe 文件的 SHA-256（小写十六进制）。仅当文件 ≤ EXE_SHA256_MAX_SIZE 时计算，
 /// 避免对超大文件耗时。任何 I/O 错误静默返回 None。
+/// 复用 [`crate::download::verify::compute_file_sha256_hex`] 的缓冲区分配逻辑（review issue #14）。
 fn compute_exe_sha256_if_small(exe_path: &Path) -> Option<String> {
     let metadata = std::fs::metadata(exe_path).ok()?;
     if metadata.len() > EXE_SHA256_MAX_SIZE {
         return None;
     }
-    let mut file = std::fs::File::open(exe_path).ok()?;
-    let mut hasher = Sha256::new();
-    let mut buffer = Box::new([0u8; 256 * 1024]);
-    loop {
-        let bytes_read = file.read(&mut buffer[..]).ok()?;
-        if bytes_read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes_read]);
-    }
-    let digest = hasher.finalize();
-    Some(format!("{digest:x}"))
+    crate::download::verify::compute_file_sha256_hex(exe_path).ok()
 }
 
 fn is_steam_ddnet_path(normalized_lower_path: &str) -> bool {

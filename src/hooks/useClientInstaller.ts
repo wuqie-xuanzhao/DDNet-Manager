@@ -57,6 +57,16 @@ const releaseCache = new Map<string, ReleaseCacheEntry>();
 let catalogCache: ClientCatalogEntry[] | null = null;
 let catalogFetchPromise: Promise<ClientCatalogEntry[]> | null = null;
 
+// review issue #12：dev HMR 下模块级缓存不清空会导致状态错乱。
+// 监听 Vite HMR dispose 钩子，模块重新加载时清空缓存。
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    releaseCache.clear();
+    catalogCache = null;
+    catalogFetchPromise = null;
+  });
+}
+
 async function fetchCatalog(): Promise<ClientCatalogEntry[]> {
   if (catalogCache) return catalogCache;
   if (catalogFetchPromise) return catalogFetchPromise;

@@ -25,14 +25,19 @@ export function useAppUpdater(params: {
   const [error, setError] = useState<string | null>(null);
   const lastCheckRef = useRef<number>(0);
   const inflightRef = useRef(false);
+  // review issue #11：用 ref 持有 updateInfo 让 checkForUpdate callback 依赖 [] 稳定。
+  // 避免 updateInfo 变化时 callback 重建，传给 onClick 时每次渲染创建新函数。
+  const updateInfoRef = useRef<AppUpdateCheck | null>(null);
+  useEffect(() => {
+    updateInfoRef.current = updateInfo;
+  }, [updateInfo]);
 
   const checkForUpdate = useCallback(
     async (options?: { force?: boolean }) => {
       if (!tauriRuntime) return;
       if (inflightRef.current) return;
-      // 冷却期：非 force 模式下 5min 内不重复检查
       const now = Date.now();
-      if (!options?.force && now - lastCheckRef.current < RECHECK_COOLDOWN_MS && updateInfo) {
+      if (!options?.force && now - lastCheckRef.current < RECHECK_COOLDOWN_MS && updateInfoRef.current) {
         return;
       }
 
@@ -52,7 +57,7 @@ export function useAppUpdater(params: {
         inflightRef.current = false;
       }
     },
-    [tauriRuntime, updateInfo]
+    [tauriRuntime]
   );
 
   // 启动后自动检查：仅在 allow_silent_update=true 时触发。

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Download, Loader2, AlertCircle, X, ExternalLink, RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
 import type { useAppUpdater } from "@/hooks/useAppUpdater";
 
 interface WindowControlsProps {
@@ -11,6 +12,41 @@ interface WindowControlsProps {
   onMinimize: () => void;
   /// 启动器自身更新检查 hook 返回值。undefined 时不渲染更新按钮。
   appUpdater?: ReturnType<typeof useAppUpdater>;
+}
+
+/// 通用右上角控制按钮：motion.button + 白底 tooltip 结构。
+/// WindowControls 5 个按钮（声音/设置/最小化/关闭/更新）共用此结构，
+/// review issue #16 抽公共组件消除 60+ 行 DOM 重复。
+function ControlIconButton(props: {
+  id: string;
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+  /// hover 时的文字色（默认 hover:text-white；声音按钮用 hover:text-[#fed330]，关闭按钮 hover:text-red-400）
+  hoverColor?: string;
+  /// 额外的按钮 className（如 ring、bg）
+  buttonClassName?: string;
+}) {
+  return (
+    <div className="relative group flex flex-col items-center">
+      <motion.button
+        id={props.id}
+        type="button"
+        aria-label={props.label}
+        onClick={props.onClick}
+        whileTap={{ scale: 0.92 }}
+        className={`text-[#cccccc] ${props.hoverColor ?? "hover:text-white"} hover:bg-white/10 transition-all cursor-pointer focus:outline-none flex items-center justify-center w-8 h-8 rounded-md ${props.buttonClassName ?? ""}`}
+      >
+        {props.children}
+      </motion.button>
+      <div className="absolute top-[130%] left-1/2 -translate-x-1/2 opacity-0 scale-90 pointer-events-none group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 z-50">
+        <div className="relative bg-white text-black text-[12px] font-bold py-[3.5px] px-[12px] shadow-lg rounded-[5px] whitespace-nowrap font-sans">
+          <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-white" />
+          <span className="relative z-10">{props.label}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function WindowControls({
@@ -26,109 +62,63 @@ export default function WindowControls({
       {/* 启动器更新按钮：和声音/设置/最小化/关闭并列。仅在 appUpdater.visible 时渲染 */}
       {appUpdater && <UpdateControlButton updater={appUpdater} />}
 
-      {/* Sound Controller Button representing atmosphere status */}
-      <div className="relative group flex flex-col items-center">
-        <motion.button
-          id="btn-bgm-sound-controller-top"
-          type="button"
-          aria-label={isAudioOn ? "静音背景乐" : "播放背景乐"}
-          onClick={onToggleAudio}
-          whileTap={{ scale: 0.92 }}
-          className="text-[#cccccc] hover:text-[#fed330] hover:bg-white/10 transition-all cursor-pointer focus:outline-none flex items-center justify-center w-8 h-8 rounded-md"
-        >
-          {isAudioOn ? (
-            <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" />
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none opacity-60" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M11 5L6 9H2v6h4l5 4V5z" />
-              <line x1="23" y1="9" x2="17" y2="15" />
-              <line x1="17" y1="9" x2="23" y2="15" />
-            </svg>
-          )}
-        </motion.button>
-
-        <div className="absolute top-[130%] left-1/2 -translate-x-1/2 opacity-0 scale-90 pointer-events-none group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 z-50">
-          <div className="relative bg-white text-black text-[12px] font-bold py-[3.5px] px-[12px] shadow-lg rounded-[5px] whitespace-nowrap font-sans">
-            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-white" />
-            <span className="relative z-10">{isAudioOn ? "静音背景乐" : "播放背景乐"}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Settings Button */}
-      <div className="relative group flex flex-col items-center">
-        <motion.button
-          id="btn-settings"
-          type="button"
-          aria-label="设置"
-          onClick={onOpenSettings}
-          whileTap={{ scale: 0.92 }}
-          className="text-[#cccccc] hover:text-white hover:bg-white/10 transition-all cursor-pointer focus:outline-none flex items-center justify-center w-8 h-8 rounded-md"
-        >
+      {/* Sound Controller */}
+      <ControlIconButton
+        id="btn-bgm-sound-controller-top"
+        label={isAudioOn ? "静音背景乐" : "播放背景乐"}
+        onClick={onToggleAudio}
+        hoverColor="hover:text-[#fed330]"
+      >
+        {isAudioOn ? (
           <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" />
-            <circle cx="12" cy="12" r="3.2"/>
+            <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" />
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
           </svg>
-        </motion.button>
-
-        <div className="absolute top-[130%] left-1/2 -translate-x-1/2 opacity-0 scale-90 pointer-events-none group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 z-50">
-          <div className="relative bg-white text-black text-[12px] font-bold py-[3.5px] px-[12px] shadow-lg rounded-[5px] whitespace-nowrap font-sans">
-            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-white" />
-            <span className="relative z-10 tracking-wide">设置</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Minimize Button */}
-      <div className="relative group flex flex-col items-center">
-        <motion.button
-          id="btn-minimize"
-          type="button"
-          aria-label="最小化"
-          onClick={onMinimize}
-          whileTap={{ scale: 0.92 }}
-          className="text-[#cccccc] hover:text-white hover:bg-white/10 transition-all cursor-pointer focus:outline-none flex items-center justify-center w-8 h-8 rounded-md"
-        >
-          <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none" strokeWidth="2.8" strokeLinecap="round">
-            <line x1="4" y1="12" x2="20" y2="12" />
+        ) : (
+          <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none opacity-60" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 5L6 9H2v6h4l5 4V5z" />
+            <line x1="23" y1="9" x2="17" y2="15" />
+            <line x1="17" y1="9" x2="23" y2="15" />
           </svg>
-        </motion.button>
+        )}
+      </ControlIconButton>
 
-        <div className="absolute top-[130%] left-1/2 -translate-x-1/2 opacity-0 scale-90 pointer-events-none group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 z-50">
-          <div className="relative bg-white text-black text-[12px] font-bold py-[3.5px] px-[12px] shadow-lg rounded-[5px] whitespace-nowrap font-sans">
-            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-white" />
-            <span className="relative z-10">最小化</span>
-          </div>
-        </div>
-      </div>
+      {/* Settings */}
+      <ControlIconButton
+        id="btn-settings"
+        label="设置"
+        onClick={onOpenSettings}
+      >
+        <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 2L20.66 7V17L12 22L3.34 17V7L12 2Z" />
+          <circle cx="12" cy="12" r="3.2" />
+        </svg>
+      </ControlIconButton>
 
-      {/* Close Button */}
-      <div className="relative group flex flex-col items-center">
-        <motion.button
-          id="btn-close"
-          type="button"
-          aria-label="关闭"
-          onClick={onCloseLauncher}
-          whileTap={{ scale: 0.92 }}
-          className="text-[#cccccc] hover:text-red-400 hover:bg-white/10 transition-all cursor-pointer focus:outline-none flex items-center justify-center w-8 h-8 rounded-md"
-        >
-          <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </motion.button>
+      {/* Minimize */}
+      <ControlIconButton
+        id="btn-minimize"
+        label="最小化"
+        onClick={onMinimize}
+      >
+        <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none" strokeWidth="2.8" strokeLinecap="round">
+          <line x1="4" y1="12" x2="20" y2="12" />
+        </svg>
+      </ControlIconButton>
 
-        <div className="absolute top-[130%] left-1/2 -translate-x-1/2 opacity-0 scale-90 pointer-events-none group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 z-50">
-          <div className="relative bg-white text-black text-[12px] font-bold py-[3.5px] px-[12px] shadow-lg rounded-[5px] whitespace-nowrap font-sans">
-            <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-white" />
-            <span className="relative z-10">关闭</span>
-          </div>
-        </div>
-      </div>
+      {/* Close */}
+      <ControlIconButton
+        id="btn-close"
+        label="关闭"
+        onClick={onCloseLauncher}
+        hoverColor="hover:text-red-400"
+      >
+        <svg viewBox="0 0 24 24" className="w-[18px] h-[18px] stroke-current fill-none" strokeWidth="2.5" strokeLinecap="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </ControlIconButton>
     </div>
   );
 }
@@ -151,14 +141,8 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
     }
   })();
 
-  // 视觉编码：默认（idle/up-to-date）灰色和其他按钮一致；has-update 才变绿色 + 红点提示；
-  // checking/failed 用对应状态图标。颜色和形状和其他 4 个按钮协调（w-8 h-8 rounded-md）。
-  const iconColor = state === "has-update"
-    ? "text-emerald-400"
-    : "text-[#cccccc]";
-  const hoverColor = state === "has-update"
-    ? "hover:text-emerald-300"
-    : "hover:text-white";
+  const iconColor = state === "has-update" ? "text-emerald-400" : "text-[#cccccc]";
+  const hoverColor = state === "has-update" ? "hover:text-emerald-300" : "hover:text-white";
 
   const handleClick = () => {
     if (state === "has-update" || state === "failed") {
@@ -184,7 +168,6 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
           <AlertCircle className="w-[18px] h-[18px] text-red-400" />
         ) : (
           <>
-            {/* 默认 / has-update 都用下载图标，差异在外圈颜色和红点 */}
             <Download className="w-[18px] h-[18px]" />
             {state === "has-update" && (
               <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -193,7 +176,7 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
         )}
       </motion.button>
 
-      {/* 与其他 4 个按钮一致的白底 tooltip（hover 时显示） */}
+      {/* 与其他 4 个按钮一致的白底 tooltip */}
       <div className="absolute top-[130%] left-1/2 -translate-x-1/2 opacity-0 scale-90 pointer-events-none group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 z-50">
         <div className="relative bg-white text-black text-[12px] font-bold py-[3.5px] px-[12px] shadow-lg rounded-[5px] whitespace-nowrap font-sans">
           <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-white" />
@@ -205,10 +188,7 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
       <AnimatePresence>
         {open && (state === "has-update" || state === "failed") && (
           <>
-            <div
-              className="fixed inset-0 z-40"
-              onClick={() => setOpen(false)}
-            />
+            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: -8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
