@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_roots(roots.clone())
         .with_max_results(20)
         .with_max_records_scanned(2_000_000)
-        .with_timeout(std::time::Duration::from_secs(60));
+        .with_timeout(std::time::Duration::from_secs(180));
 
     let started = Instant::now();
     let found_count = Arc::new(AtomicUsize::new(0));
@@ -77,8 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ProgressEvent::EntryError { .. } => {
                 errors.fetch_add(1, Ordering::Relaxed);
             }
-            ProgressEvent::ScanLimitHit { kind, limit } => {
-                eprintln!("[limit] {:?}={}", kind, limit);
+            ProgressEvent::ScanLimitHit { limit_kind, limit } => {
+                eprintln!("[limit] {:?}={}", limit_kind, limit);
             }
             ProgressEvent::DriveSkipped { root, reasons } => {
                 eprintln!("[skip] {} ({})", root.display(), reasons.join(", "));

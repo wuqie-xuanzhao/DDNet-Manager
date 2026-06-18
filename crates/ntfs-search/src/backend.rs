@@ -91,6 +91,22 @@ fn probe_windows_backend_kind(_root: &Path) -> BackendKind {
     BackendKind::Walkdir
 }
 
+/// 把裸盘符 `D:` 规范化为 `D:\`，避免 walkdir 在 Windows 上拼出 `D:Steam\...`。
+///
+/// Windows 路径语义：`D:` 是"D 盘当前目录"（依赖进程的 CDS），`D:\` 才是"D 盘根"。
+/// 其他形式（`D:\` / `D:/` / `C:/Users`）原样返回。
+fn normalize_drive_root(root: PathBuf) -> PathBuf {
+    let Some(s) = root.to_str() else {
+        return root;
+    };
+    let bytes = s.as_bytes();
+    if bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        PathBuf::from(format!("{}\\", s))
+    } else {
+        root
+    }
+}
+
 /// 给定一组 roots 与 backend 选择函数，扫描后聚合结果。
 /// 任一盘失败不阻断其他盘；全部失败才返回 `NoBackendAvailable`。
 pub(super) async fn scan_all_roots(
@@ -102,6 +118,9 @@ pub(super) async fn scan_all_roots(
     let selected: Vec<(PathBuf, SelectedBackend)> = roots
         .into_iter()
         .map(|root| {
+            // Windows 上 `D:` 表示"D 盘当前目录"，walkdir 会拼出 `D:Steam\...`
+            // 这种缺分隔符的路径；统一补成 `D:\`。
+            let root = normalize_drive_root(root);
             let sel = select_backend_for_root(&root);
             (root, sel)
         })
@@ -193,5 +212,35 @@ mod tests {
             assert_eq!(sel.kind, BackendKind::Walkdir);
             assert!(sel.downgraded_from.is_none());
         }
+    }
+
+    #[test]
+    fn normalize_drive_root_appends_separator_for_bare_drive_letter() {
+        assert_eq!(normalize_drive_root(PathBuf::from("D:")), PathBuf::from("D:\\"));
+        assert_eq!(normalize_drive_root(PathBuf::from("c:")), PathBuf::from("c:\\"));
+    }
+
+    #[test]
+    fn normalize_drive_root_passes_through_already_rooted() {
+        assert_eq!(
+            normalize_drive_root(PathBuf::from("D:\\")),
+            PathBuf::from("D:\\")
+        );
+        assert_eq!(
+            normalize_drive_root(PathBuf::from("D:/")),
+            PathBuf::from("D:/")
+        );
+    }
+
+    #[test]
+    fn normalize_drive_root_passes_through_subtree_paths() {
+        assert_eq!(
+            normalize_drive_root(PathBuf::from("C:/Users")),
+            PathBuf::from("C:/Users")
+        );
+        assert_eq!(
+            normalize_drive_root(PathBuf::from(r"D:\Steam")),
+            PathBuf::from(r"D:\Steam")
+        );
     }
 }

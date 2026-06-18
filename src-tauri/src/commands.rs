@@ -71,6 +71,10 @@ pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstalla
 /// （多版本/多客户端机器），命中后扫描提前停止；如需放宽，把它做成 settings 字段。
 const DEFAULT_SCAN_MAX_RESULTS: usize = 50;
 
+/// `scan_clients_via_mft` 软超时（秒）。普通用户无 Mft/Usn 权限时整盘 Walkdir
+/// 较慢，ntfs-search 默认 60s 对 C 盘不够；放宽到 180s 给业务足够时间。
+const DEFAULT_SCAN_TIMEOUT_SECS: u64 = 180;
+
 /// 使用 ntfs-search crate 全量扫盘找 DDNet.exe 兼容客户端。
 ///
 /// 后端自动按平台/权限选 Mft / Usn / Walkdir（admin > 普通 > fallback），失败自动降级。
@@ -113,7 +117,8 @@ pub async fn scan_clients_via_mft(
             .any(|expected| name.eq_ignore_ascii_case(expected))
     })
     .with_roots(roots)
-    .with_max_results(DEFAULT_SCAN_MAX_RESULTS);
+    .with_max_results(DEFAULT_SCAN_MAX_RESULTS)
+    .with_timeout(std::time::Duration::from_secs(DEFAULT_SCAN_TIMEOUT_SECS));
 
     let progress = std::sync::Arc::new(TauriScanSink::new(app));
     let cancel = tokio_util::sync::CancellationToken::new();
