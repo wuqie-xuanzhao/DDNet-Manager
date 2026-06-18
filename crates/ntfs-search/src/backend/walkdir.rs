@@ -59,7 +59,7 @@ impl Backend for WalkdirBackend {
             // 并行度：min(可用 CPU, 8)；HDD 上 IO 瓶颈，再多线程收益小；
             // SSD 上 4-8 线程能跑满带宽。
             let num_threads = std::thread::available_parallelism()
-                .map(|n| n.get().min(8).max(1))
+                .map(|n| n.get().clamp(1, 8))
                 .unwrap_or(4);
 
             let walker = ignore::WalkBuilder::new(&root_owned)

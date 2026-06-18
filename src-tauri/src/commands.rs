@@ -80,6 +80,10 @@ const DEFAULT_SCAN_TIMEOUT_SECS: u64 = 180;
 /// 后端自动按平台/权限选 Mft / Usn / Walkdir（admin > 普通 > fallback），失败自动降级。
 /// 扫描期间实时 emit `scan-progress` 事件（[`ntfs_search::ProgressEvent`]），
 /// 前端按 `kind` discriminated union 渲染进度。
+///
+/// **两阶段扫描**：用户未显式指定 roots 时，先扫 priority（Steam / Program Files /
+/// 用户目录），命中秒级返回；未命中再 fallback 全盘。这样典型用户场景（Steam
+/// 安装的 DDNet）只需扫少数子树，避免大盘（HDD 几 T）长时间扫描。
 #[tauri::command]
 pub async fn scan_clients_via_mft(
     registry: RegistryState<'_>,
@@ -89,7 +93,30 @@ pub async fn scan_clients_via_mft(
     let options = options.unwrap_or_default();
     let settings = registry.load_app_settings()?;
 
-    // 收集 roots：固定盘符 + 用户保存路径
+    let excluded: Vec<PathBuf> = settings
+        .scan_excluded_paths
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+
+    // 两阶段扫描：用户未指定 roots 时先扫 priority 命中即返回
+    if options.roots.is_empty() {
+        let priority_roots = collect_priority_roots();
+        if !priority_roots.is_empty() {
+            let installations = run_scan(
+                priority_roots,
+                &excluded,
+                DEFAULT_SCAN_TIMEOUT_SECS / 3, // priority 阶段给 1/3 时间预算
+                app.clone(),
+            )
+            .await?;
+            if !installations.is_empty() {
+                return Ok(installations);
+            }
+        }
+    }
+
+    // Fallback / 用户显式指定 roots：全盘扫描
     let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
         collect_default_drive_roots()
     } else {
@@ -105,12 +132,17 @@ pub async fn scan_clients_via_mft(
         );
     }
 
-    let excluded: Vec<PathBuf> = settings
-        .scan_excluded_paths
-        .iter()
-        .map(PathBuf::from)
-        .collect();
+    let installations = run_scan(roots, &excluded, DEFAULT_SCAN_TIMEOUT_SECS, app).await?;
+    Ok(installations)
+}
 
+/// 单次扫描的封装：构建 opts + 调 find_files + 转 ClientInstallation。
+async fn run_scan(
+    roots: Vec<PathBuf>,
+    excluded: &[PathBuf],
+    timeout_secs: u64,
+    app: AppHandle,
+) -> Result<Vec<ClientInstallation>, IpcError> {
     let opts = ntfs_search::NtfsScanOptions::new(|name| {
         ["DDNet.exe", "ddnet.exe"]
             .iter()
@@ -118,7 +150,7 @@ pub async fn scan_clients_via_mft(
     })
     .with_roots(roots)
     .with_max_results(DEFAULT_SCAN_MAX_RESULTS)
-    .with_timeout(std::time::Duration::from_secs(DEFAULT_SCAN_TIMEOUT_SECS));
+    .with_timeout(std::time::Duration::from_secs(timeout_secs));
 
     let progress = std::sync::Arc::new(TauriScanSink::new(app));
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -127,7 +159,6 @@ pub async fn scan_clients_via_mft(
         .await
         .map_err(crate::error::ManagerError::from)?;
 
-    // 转 ClientInstallation：FileEntry.path.parent() → validate_client_dir
     let mut installations: Vec<ClientInstallation> = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in entries {
@@ -151,6 +182,67 @@ pub async fn scan_clients_via_mft(
 
     installations.sort_by(|a, b| a.install_dir.cmp(&b.install_dir));
     Ok(installations)
+}
+
+/// Priority roots：DDNet 客户端最可能安装的位置。典型用户场景命中即返回，
+/// 避免大盘（HDD 几 T）长时间扫描。
+///
+/// 包含：
+/// - Steam library（默认 Program Files + 各盘符根下 \Steam）
+/// - Program Files / Program Files (x86)
+/// - 用户目录（Downloads / Desktop / Documents / Games）
+/// - LOCALAPPDATA（部分客户端装这里）
+/// - 各盘 \Games 子目录（玩家常用）
+fn collect_priority_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let push = |roots: &mut Vec<PathBuf>, p: PathBuf| {
+        if p.is_dir() && !roots.contains(&p) {
+            roots.push(p);
+        }
+    };
+
+    // Steam libraries：默认安装位置 + 各盘符根下 \Steam
+    push(
+        &mut roots,
+        PathBuf::from(r"C:\Program Files (x86)\Steam").join("steamapps").join("common"),
+    );
+    push(
+        &mut roots,
+        PathBuf::from(r"C:\Program Files\Steam").join("steamapps").join("common"),
+    );
+    for letter in b'C'..=b'Z' {
+        push(
+            &mut roots,
+            PathBuf::from(format!("{}:\\Steam", letter as char))
+                .join("steamapps")
+                .join("common"),
+        );
+    }
+
+    // Program Files
+    for env in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(p) = std::env::var_os(env) {
+            push(&mut roots, PathBuf::from(p));
+        }
+    }
+
+    // User dirs
+    if let Some(p) = std::env::var_os("USERPROFILE") {
+        let user = PathBuf::from(p);
+        for sub in ["Downloads", "Desktop", "Documents", "Games"] {
+            push(&mut roots, user.join(sub));
+        }
+    }
+    if let Some(p) = std::env::var_os("LOCALAPPDATA") {
+        push(&mut roots, PathBuf::from(p));
+    }
+
+    // 各盘 \Games 子目录（玩家常用）
+    for letter in b'C'..=b'Z' {
+        push(&mut roots, PathBuf::from(format!("{}:\\Games", letter as char)));
+    }
+
+    roots
 }
 
 /// 把 ntfs-search 的 ProgressEvent 转 Tauri event 推到前端。
