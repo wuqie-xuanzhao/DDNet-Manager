@@ -72,13 +72,16 @@ pub(super) trait Backend: Send + Sync {
 /// - 其他平台：直接 Walkdir。
 pub(super) fn select_backend_for_root(root: &Path) -> SelectedBackend {
     // 优先查 per-drive 缓存：上次扫描发现该盘走 Walkdir 的，直接命中跳过探测。
-    let requested = if cfg!(windows) {
+    // 注意：必须用 `#[cfg(windows)]` 属性而非 `cfg!()` runtime 宏 —— 后者两个分支
+    // 都会被 type-check，导致 macOS 编译时 `windows::volume::xxx` 解析失败。
+    #[cfg(windows)]
+    let requested = {
         let cached = windows::volume::path_to_drive_letter(root)
             .and_then(lookup_cached_backend);
         cached.unwrap_or_else(|| probe_windows_backend_kind(root))
-    } else {
-        BackendKind::Walkdir
     };
+    #[cfg(not(windows))]
+    let requested = BackendKind::Walkdir;
 
     let backend: Box<dyn Backend> = match requested {
         #[cfg(windows)]
