@@ -89,6 +89,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::__webview_console,
             commands::validate_client_dir,
             commands::scan_clients_via_mft,
             commands::cancel_scan_clients,

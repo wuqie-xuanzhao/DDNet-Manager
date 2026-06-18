@@ -48,6 +48,7 @@
     "withGlobalTauri": true,
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5173 https://ddnet.org https://*.ddnet.org; font-src 'self' data:; media-src 'self' asset: https://asset.localhost data: blob:",
+      "devCsp": null,
       "capabilities": [
         {
           "identifier": "main-window-core",

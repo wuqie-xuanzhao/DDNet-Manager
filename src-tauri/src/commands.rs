@@ -61,6 +61,18 @@ pub(crate) struct InstallHistoryInput<'a> {
 /// 本地 smoke 结果路径环境变量名。
 pub(crate) const LOCAL_SMOKE_RESULT_PATH_ENV: &str = "DDNET_MANAGER_LOCAL_SMOKE_RESULT_PATH";
 
+/// 内部命令：接收 webview 端 init_script 拦截的 console / error 输出，
+/// 通过 stderr 打到 `tauri dev` 终端。仅用于 webview 渲染调试。
+#[tauri::command]
+pub fn __webview_console(level: String, msg: String) {
+    let tag = match level.as_str() {
+        "error" => "❌ [webview]",
+        "warn" => "⚠️  [webview]",
+        _ => "   [webview]",
+    };
+    eprintln!("{tag} {msg}");
+}
+
 /// 验证用户选择的客户端目录，并返回识别出的安装信息。
 #[tauri::command]
 pub fn validate_client_dir(path: String) -> Result<crate::models::ClientInstallation, IpcError> {
