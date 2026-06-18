@@ -19,6 +19,8 @@ export interface UseClientScannerResult {
   error: string | null;
   /** 触发扫描 */
   start: (params?: ScanClientsViaMftParams) => Promise<ClientInstallation[]>;
+  /** 取消当前扫描（调 cancel_scan_clients command） */
+  cancel: () => Promise<boolean>;
   /** 手动清空事件流 */
   reset: () => void;
 }
@@ -98,5 +100,14 @@ export function useClientScanner(): UseClientScannerResult {
     setError(null);
   }, []);
 
-  return { events, foundCount, scanning, error, start, reset };
+  const cancel = useCallback(async (): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("cancel_scan_clients");
+    } catch (err) {
+      setError(`取消扫描失败：${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }, []);
+
+  return { events, foundCount, scanning, error, start, cancel, reset };
 }

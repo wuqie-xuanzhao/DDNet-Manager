@@ -223,6 +223,8 @@ fn registry_persists_app_settings() {
             local_proxy_url: Some("http://127.0.0.1:7890".to_string()),
         }),
         scan_excluded_paths: vec!["D:/Archive".to_string()],
+        scan_max_results: None,
+        scan_timeout_secs: None,
         close_panel_after_launch: true,
         auto_check_updates: true,
         autostart: false,
@@ -250,6 +252,8 @@ fn registry_does_not_persist_github_token_in_app_settings_json() {
     let settings = AppSettings {
         network_route: None,
         scan_excluded_paths: Vec::new(),
+        scan_max_results: None,
+        scan_timeout_secs: None,
         close_panel_after_launch: true,
         auto_check_updates: false,
         autostart: false,

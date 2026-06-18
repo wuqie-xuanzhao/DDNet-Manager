@@ -43,6 +43,13 @@ export function scanClientsViaMft(options?: ScanClientInstallationsOptions): Pro
   return invoke<ClientInstallation[]>("scan_clients_via_mft", { options });
 }
 
+/**
+ * 取消正在进行的 scan_clients_via_mft 扫描。返回是否成功取消（无扫描时返回 false）。
+ */
+export function cancelScanClients(): Promise<boolean> {
+  return invoke<boolean>("cancel_scan_clients");
+}
+
 export function upsertClientInstallation(request: UpsertClientInstallationRequest): Promise<ClientInstallation> {
   return invoke<ClientInstallation>("upsert_client_installation", { request });
 }

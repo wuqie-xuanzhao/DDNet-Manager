@@ -65,6 +65,7 @@ fn main() {
     let run_result = tauri::Builder::default()
         .manage(manager)
         .manage(registry)
+        .manage(commands::ScanCancelState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -90,6 +91,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::validate_client_dir,
             commands::scan_clients_via_mft,
+            commands::cancel_scan_clients,
             commands::upsert_client_installation,
             commands::remove_client_installation,
             commands::set_default_client,

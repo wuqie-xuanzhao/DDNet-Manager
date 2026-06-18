@@ -92,6 +92,8 @@ export type NetworkRouteConfig = {
 export type AppSettings = {
   network_route: NetworkRouteConfig | null;
   scan_excluded_paths: string[];
+  scan_max_results: number | null;
+  scan_timeout_secs: number | null;
   close_panel_after_launch: boolean;
   auto_check_updates: boolean;
   autostart: boolean;

@@ -212,6 +212,12 @@ pub struct AppSettings {
     /// 扫描时排除的路径列表。
     #[serde(default)]
     pub scan_excluded_paths: Vec<String>,
+    /// 扫描最多收集多少条候选；None 用默认 (50)。大盘可调高，调试可调低。
+    #[serde(default)]
+    pub scan_max_results: Option<usize>,
+    /// 扫描软超时（秒）；None 用默认 (180)。大盘（HDD 几 T）可调到 600+。
+    #[serde(default)]
+    pub scan_timeout_secs: Option<u64>,
     /// 启动客户端后是否最小化 Manager 面板。
     #[serde(default = "default_close_panel_after_launch")]
     pub close_panel_after_launch: bool,
@@ -259,6 +265,8 @@ impl Default for AppSettings {
         Self {
             network_route: None,
             scan_excluded_paths: Vec::new(),
+            scan_max_results: None,
+            scan_timeout_secs: None,
             close_panel_after_launch: default_close_panel_after_launch(),
             auto_check_updates: false,
             autostart: default_autostart(),

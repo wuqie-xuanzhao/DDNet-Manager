@@ -181,6 +181,15 @@ export function ClientManager() {
           >
             {scanner.scanning ? `扫描中… 已找到 ${scanner.foundCount}` : "扫描常见路径"}
           </button>
+          {scanner.scanning ? (
+            <button
+              type="button"
+              onClick={() => void scanner.cancel()}
+              className="px-4 py-2 rounded-lg bg-[var(--app-danger-subtle)] hover:bg-[var(--app-danger-border)] border border-[var(--app-danger-border)] text-sm font-semibold text-[var(--app-danger)] cursor-pointer transition-colors"
+            >
+              取消扫描
+            </button>
+          ) : null}
         </div>
       </div>
 

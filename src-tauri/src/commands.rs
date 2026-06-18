@@ -75,6 +75,46 @@ const DEFAULT_SCAN_MAX_RESULTS: usize = 50;
 /// 较慢，ntfs-search 默认 60s 对 C 盘不够；放宽到 180s 给业务足够时间。
 const DEFAULT_SCAN_TIMEOUT_SECS: u64 = 180;
 
+/// 扫描取消 token 的全局共享状态。
+///
+/// `scan_clients_via_mft` 开始时存入 master token，结束时清理；
+/// `cancel_scan_clients` command 拿 token 调 cancel() 让正在跑的扫描尽快返回。
+#[derive(Default)]
+pub struct ScanCancelState(pub std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>);
+
+impl ScanCancelState {
+    fn set(&self, token: tokio_util::sync::CancellationToken) {
+        if let Ok(mut guard) = self.0.lock() {
+            *guard = Some(token);
+        }
+    }
+
+    fn clear(&self) {
+        if let Ok(mut guard) = self.0.lock() {
+            *guard = None;
+        }
+    }
+
+    /// 触发当前扫描的取消。返回 false 表示当前没有扫描在跑。
+    fn cancel(&self) -> bool {
+        if let Ok(mut guard) = self.0.lock() {
+            if let Some(token) = guard.take() {
+                token.cancel();
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// 取消正在进行的 scan_clients_via_mft 扫描。返回是否成功取消。
+#[tauri::command]
+pub fn cancel_scan_clients(
+    state: tauri::State<'_, ScanCancelState>,
+) -> Result<bool, IpcError> {
+    Ok(state.cancel())
+}
+
 /// 使用 ntfs-search crate 全量扫盘找 DDNet.exe 兼容客户端。
 ///
 /// 后端自动按平台/权限选 Mft / Usn / Walkdir（admin > 普通 > fallback），失败自动降级。
@@ -87,6 +127,7 @@ const DEFAULT_SCAN_TIMEOUT_SECS: u64 = 180;
 #[tauri::command]
 pub async fn scan_clients_via_mft(
     registry: RegistryState<'_>,
+    cancel_state: tauri::State<'_, ScanCancelState>,
     options: Option<ScanClientInstallationsOptions>,
     app: AppHandle,
 ) -> Result<Vec<ClientInstallation>, IpcError> {
@@ -99,49 +140,75 @@ pub async fn scan_clients_via_mft(
         .map(PathBuf::from)
         .collect();
 
-    // 两阶段扫描：用户未指定 roots 时先扫 priority 命中即返回
-    if options.roots.is_empty() {
-        let priority_roots = collect_priority_roots();
-        if !priority_roots.is_empty() {
-            let installations = run_scan(
-                priority_roots,
-                &excluded,
-                DEFAULT_SCAN_TIMEOUT_SECS / 3, // priority 阶段给 1/3 时间预算
-                app.clone(),
-            )
-            .await?;
-            if !installations.is_empty() {
-                return Ok(installations);
+    let max_results = settings.scan_max_results.unwrap_or(DEFAULT_SCAN_MAX_RESULTS);
+    let total_timeout = settings.scan_timeout_secs.unwrap_or(DEFAULT_SCAN_TIMEOUT_SECS);
+
+    // master cancel token：priority 和 fallback 阶段共享；存到全局 state 让
+    // cancel_scan_clients command 能从外部触发取消。
+    let master_cancel = tokio_util::sync::CancellationToken::new();
+    cancel_state.set(master_cancel.clone());
+
+    let result = async {
+        // 两阶段扫描：用户未指定 roots 时先扫 priority 命中即返回
+        if options.roots.is_empty() {
+            let priority_roots = collect_priority_roots();
+            if !priority_roots.is_empty() {
+                let installations = run_scan(
+                    priority_roots,
+                    &excluded,
+                    max_results,
+                    total_timeout / 3, // priority 阶段给 1/3 时间预算
+                    app.clone(),
+                    master_cancel.clone(),
+                )
+                .await?;
+                if !installations.is_empty() {
+                    return Ok(installations);
+                }
             }
         }
+
+        // Fallback / 用户显式指定 roots：全盘扫描
+        let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
+            collect_default_drive_roots()
+        } else {
+            options.roots.iter().map(PathBuf::from).collect()
+        };
+
+        if options.include_saved_paths {
+            roots.extend(
+                registry
+                    .list_client_installations()?
+                    .into_iter()
+                    .filter_map(|c| PathBuf::from(c.install_dir).parent().map(Path::to_path_buf)),
+            );
+        }
+
+        let installations = run_scan(
+            roots,
+            &excluded,
+            max_results,
+            total_timeout,
+            app,
+            master_cancel.clone(),
+        )
+        .await?;
+        Ok(installations)
     }
+    .await;
 
-    // Fallback / 用户显式指定 roots：全盘扫描
-    let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
-        collect_default_drive_roots()
-    } else {
-        options.roots.iter().map(PathBuf::from).collect()
-    };
-
-    if options.include_saved_paths {
-        roots.extend(
-            registry
-                .list_client_installations()?
-                .into_iter()
-                .filter_map(|c| PathBuf::from(c.install_dir).parent().map(Path::to_path_buf)),
-        );
-    }
-
-    let installations = run_scan(roots, &excluded, DEFAULT_SCAN_TIMEOUT_SECS, app).await?;
-    Ok(installations)
+    cancel_state.clear();
+    result
 }
 
 /// 单次扫描的封装：构建 opts + 调 find_files + 转 ClientInstallation。
 async fn run_scan(
     roots: Vec<PathBuf>,
     excluded: &[PathBuf],
+    max_results: usize,
     timeout_secs: u64,
     app: AppHandle,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<ClientInstallation>, IpcError> {
     let opts = ntfs_search::NtfsScanOptions::new(|name| {
         ["DDNet.exe", "ddnet.exe"]
@@ -149,11 +216,10 @@ async fn run_scan(
             .any(|expected| name.eq_ignore_ascii_case(expected))
     })
     .with_roots(roots)
-    .with_max_results(DEFAULT_SCAN_MAX_RESULTS)
+    .with_max_results(max_results)
     .with_timeout(std::time::Duration::from_secs(timeout_secs));
 
     let progress = std::sync::Arc::new(TauriScanSink::new(app));
-    let cancel = tokio_util::sync::CancellationToken::new();
 
     let entries = ntfs_search::find_files(opts, progress, cancel)
         .await

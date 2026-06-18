@@ -475,6 +475,54 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     className="min-h-24 w-full resize-none bg-[var(--app-surface)] border border-white/5 rounded-lg px-3 py-2 text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono leading-normal transition-colors"
                   />
                 </div>
+                <div className="border-t border-white/5" />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-bold text-[var(--app-text-dim)] uppercase tracking-wider block">
+                      最大候选数（留空=默认 50）
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={500}
+                      aria-label="扫描最大候选数"
+                      value={props.settings.scan_max_results ?? ""}
+                      onChange={(event) => {
+                        const v = event.target.value.trim();
+                        update({
+                          ...props.settings,
+                          scan_max_results: v === "" ? null : Math.max(1, parseInt(v, 10) || 50)
+                        });
+                      }}
+                      placeholder="50"
+                      className="w-full bg-[var(--app-surface)] border border-white/5 rounded-lg px-3 py-2 text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono leading-normal transition-colors"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-bold text-[var(--app-text-dim)] uppercase tracking-wider block">
+                      扫描超时秒数（留空=默认 180）
+                    </span>
+                    <input
+                      type="number"
+                      min={10}
+                      max={3600}
+                      aria-label="扫描超时秒数"
+                      value={props.settings.scan_timeout_secs ?? ""}
+                      onChange={(event) => {
+                        const v = event.target.value.trim();
+                        update({
+                          ...props.settings,
+                          scan_timeout_secs: v === "" ? null : Math.max(10, parseInt(v, 10) || 180)
+                        });
+                      }}
+                      placeholder="180"
+                      className="w-full bg-[var(--app-surface)] border border-white/5 rounded-lg px-3 py-2 text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono leading-normal transition-colors"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-[var(--app-text-dim)] leading-relaxed">
+                  大磁盘（HDD 几 T）建议把超时调到 600+ 秒。留空字段使用内置默认值。
+                </p>
               </div>
             </div>
           </div>
