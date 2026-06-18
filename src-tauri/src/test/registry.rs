@@ -3,7 +3,7 @@ use crate::models::{
     ClientInstallation, CompatibilityStatus, DownloadJob, DownloadJobStatus, InstallHistoryRecord,
     InstallHistoryStatus, NetworkRouteConfig, NetworkRouteMode,
 };
-use crate::registry::LaunchProbeStatus;
+use crate::registry::{ClientRegistry, LaunchProbeStatus};
 
 fn test_client(id: &str, is_default: bool) -> ClientInstallation {
     ClientInstallation {
@@ -27,6 +27,10 @@ fn test_client(id: &str, is_default: bool) -> ClientInstallation {
             ..ClientCompatibility::default()
         },
         upstream_url: None,
+        pe_company_name: None,
+        pe_product_name: None,
+        pe_file_version: None,
+        exe_sha256: None,
         last_scanned_at: Some("2026-06-06T12:00:00Z".to_string()),
     }
 }
@@ -478,4 +482,120 @@ fn registry_records_unobserved_launch_without_downgrading_status() {
         client.compatibility.last_launch_result.as_deref(),
         Some("未在限定时间内观察到进程")
     );
+}
+
+// ===== client_fingerprints（用户下载指纹库）测试 =====
+
+fn open_test_registry() -> ClientRegistry {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功")
+    // temp_dir 在函数返回时 drop，但 SQLite 连接已打开并持锁，db 文件在 temp_dir
+    // 被清理前一直可访问；测试结束连接关闭后 temp_dir 才被实际清理。
+}
+
+#[test]
+fn record_and_lookup_fingerprint_roundtrip() {
+    let registry = open_test_registry();
+    crate::registry::fingerprints::FingerprintRecord {
+        sha256: "abc123def456",
+        client_id: "qmclient",
+        display_name: "QmClient",
+        version: Some("1.2.3"),
+        company_name: Some("wxj881027"),
+        product_name: Some("QmClient"),
+    }
+    .record_via(&registry);
+
+    let fp = registry
+        .lookup_fingerprint_by_hash("abc123def456")
+        .expect("查询应成功")
+        .expect("应能查到刚写入的指纹");
+    assert_eq!(fp.client_id, "qmclient");
+    assert_eq!(fp.display_name, "QmClient");
+    assert_eq!(fp.version.as_deref(), Some("1.2.3"));
+    assert_eq!(fp.company_name.as_deref(), Some("wxj881027"));
+}
+
+#[test]
+fn lookup_fingerprint_is_case_insensitive() {
+    let registry = open_test_registry();
+    crate::registry::fingerprints::FingerprintRecord {
+        sha256: "ABCDEF1234567890",
+        client_id: "bestclient",
+        display_name: "BestClient",
+        version: Some("2.0"),
+        company_name: None,
+        product_name: None,
+    }
+    .record_via(&registry);
+
+    // 写入是大写，查询用小写也应命中（内部统一小写存储）
+    let fp = registry
+        .lookup_fingerprint_by_hash("abcdef1234567890")
+        .expect("查询应成功")
+        .expect("大小写不敏感查询应命中");
+    assert_eq!(fp.client_id, "bestclient");
+}
+
+#[test]
+fn lookup_fingerprint_returns_none_for_unknown_hash() {
+    let registry = open_test_registry();
+    assert!(registry
+        .lookup_fingerprint_by_hash("nonexistent-hash")
+        .expect("查询应成功")
+        .is_none());
+}
+
+#[test]
+fn record_fingerprint_overwrites_same_hash() {
+    let registry = open_test_registry();
+    // 第一次写入 qmclient v1.0
+    crate::registry::fingerprints::FingerprintRecord {
+        sha256: "same-hash",
+        client_id: "qmclient",
+        display_name: "QmClient",
+        version: Some("1.0"),
+        company_name: None,
+        product_name: None,
+    }
+    .record_via(&registry);
+    // 同 hash 覆盖为 v2.0
+    crate::registry::fingerprints::FingerprintRecord {
+        sha256: "same-hash",
+        client_id: "qmclient",
+        display_name: "QmClient",
+        version: Some("2.0"),
+        company_name: Some("wxj881027"),
+        product_name: None,
+    }
+    .record_via(&registry);
+
+    let fp = registry
+        .lookup_fingerprint_by_hash("same-hash")
+        .expect("查询应成功")
+        .expect("应查到最新版本");
+    assert_eq!(fp.version.as_deref(), Some("2.0"));
+    assert_eq!(fp.company_name.as_deref(), Some("wxj881027"));
+}
+
+// 辅助 trait：让 FingerprintRecord 可以链式调用 registry.record_client_fingerprint，
+// 测试代码可读性更好。生产代码不需要。
+trait RecordVia {
+    fn record_via(&self, registry: &ClientRegistry);
+}
+
+impl RecordVia for crate::registry::fingerprints::FingerprintRecord<'_> {
+    fn record_via(&self, registry: &ClientRegistry) {
+        registry
+            .record_client_fingerprint(crate::registry::fingerprints::FingerprintRecord {
+                sha256: self.sha256,
+                client_id: self.client_id,
+                display_name: self.display_name,
+                version: self.version,
+                company_name: self.company_name,
+                product_name: self.product_name,
+            })
+            .expect("指纹写入应成功");
+    }
 }

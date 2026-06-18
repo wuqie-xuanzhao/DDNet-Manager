@@ -6,6 +6,7 @@ use crate::models::{
     ClientHealth, ClientInstallation, DownloadJob, DownloadJobStatus, InstallHistoryRecord,
     InstallHistoryStatus,
 };
+use crate::registry::fingerprints::FingerprintRecord;
 use crate::registry::ClientRegistry;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
@@ -223,6 +224,12 @@ fn finish_install_success(
 
     client.version = Some(context.job.version.clone());
     client.health = ClientHealth::Ok;
+
+    // 记录 sha256 指纹到 registry：下载包的 sha256 已经过 verify_downloaded_file
+    // 校验通过，可信；解析刚落地 exe 的 PE 元信息一并存入，供后续扫描升级识别 +
+    // 设置页展示。失败不阻断 install 主流程（指纹缺失只会让扫描识别降级）。
+    let _ = record_fingerprint_after_install(&context, client);
+
     if let Err(error) = context.registry.upsert_client_installation(client) {
         let restore_message = match crate::download::install::restore_rollback(
             Path::new(&client.install_dir),
@@ -265,6 +272,29 @@ fn finish_install_success(
             ManagerError::Internal(format!("failed to emit install-completed: {error}"))
         })?;
     Ok(job)
+}
+
+/// 下载安装成功后记录 sha256 指纹。从刚落地的 exe 读 PE VS_VERSION_INFO，
+/// 把 (sha256, client_id, version, company, product) 一起写到 registry。
+/// 失败不阻断 install 主流程。
+fn record_fingerprint_after_install(
+    context: &InstallContext,
+    client: &ClientInstallation,
+) -> Result<(), ManagerError> {
+    let exe_path = Path::new(&client.executable_path);
+    let (company, product) = match ntfs_search::read_version_info(exe_path) {
+        Ok(vi) => (vi.company_name, vi.product_name),
+        Err(_) => (None, None),
+    };
+    let version_str = context.job.version.as_str();
+    context.registry.record_client_fingerprint(FingerprintRecord {
+        sha256: &context.job.sha256,
+        client_id: &client.client_id,
+        display_name: &client.display_name,
+        version: Some(version_str),
+        company_name: company.as_deref(),
+        product_name: product.as_deref(),
+    })
 }
 
 fn finish_install_failure(

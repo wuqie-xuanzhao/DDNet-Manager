@@ -15,13 +15,13 @@ use std::path::Path;
 ///
 /// 失败返回 Err（非 PE / 资源缺失 / pelite 解析失败）。
 /// 调用方按需 fallback（如 FileEntry.size 取文件大小，version_info 设 None）。
-pub(crate) fn read_version_info(path: &Path) -> Result<VersionInfo, String> {
+pub fn read_version_info(path: &Path) -> Result<VersionInfo, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     parse_version_info_from_bytes(&bytes)
 }
 
 /// 从内存字节流解析 PE VS_VERSION_INFO。抽出便于单测（用 fixture bytes）。
-pub(crate) fn parse_version_info_from_bytes(bytes: &[u8]) -> Result<VersionInfo, String> {
+pub fn parse_version_info_from_bytes(bytes: &[u8]) -> Result<VersionInfo, String> {
     let file = pelite::PeFile::from_bytes(bytes).map_err(|e| format!("pelite parse: {e}"))?;
 
     let resources = match file.resources() {

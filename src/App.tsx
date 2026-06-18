@@ -3,9 +3,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Gamepad, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import logoMark from "./assets/logo.svg";
-import { GAMES_DATA, GAME_ICON_MAP, type LauncherGameId } from "./components/launcher/data";
+import { GAMES_DATA, GAME_ICON_MAP, buildGamesData, type LauncherGameId } from "./components/launcher/data";
 import { ConfirmExitModal, PostDetailModal } from "./components/launcher/Dialogs";
 import DownloadButton from "./components/launcher/DownloadButton";
+import { InstallDialog } from "./components/launcher/InstallDialog";
 import NewsCard from "./components/launcher/NewsCard";
 import SocialSidebar from "./components/launcher/SocialSidebar";
 import type { GameConfig, GameNewsItem, SocialLink } from "./components/launcher/types";
@@ -16,7 +17,9 @@ import { SettingsDialog, type SettingsSectionId } from "./components/settings/Se
 import { useAppSettings } from "./hooks/useAppSettings";
 import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { useClientLauncher } from "./hooks/useClientLauncher";
-import { isTauriRuntime, convertFileSrc } from "./lib/tauri";
+import { useClientInstaller } from "./hooks/useClientInstaller";
+import { useAppUpdater } from "./hooks/useAppUpdater";
+import { isTauriRuntime, convertFileSrc, getClientCatalog } from "./lib/tauri";
 import type { LocalSmokeAutomationConfig } from "./types";
 
 function localSmokeEnvEnabled(value: string | undefined) {
@@ -60,9 +63,6 @@ function getAccentColor(gameId: string) {
   if (gameId === "ddnet") {
     return "rgba(99,102,241,0.72)";
   }
-  if (gameId === "ddnet-steam") {
-    return "rgba(240,218,22,0.82)";
-  }
   return "rgba(204,43,125,0.72)";
 }
 
@@ -83,8 +83,8 @@ function GameLogo(props: { game: GameConfig; large?: boolean }) {
 
 export default function App() {
   const tauriRuntime = isTauriRuntime();
-  const [activeGameId, setActiveGameId] = useState<LauncherGameId>("qmclient");
-  const [displayedGameId, setDisplayedGameId] = useState<LauncherGameId>("qmclient");
+  const [activeGameId, setActiveGameId] = useState<LauncherGameId>("ddnet");
+  const [displayedGameId, setDisplayedGameId] = useState<LauncherGameId>("ddnet");
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [hoveredGameId, setHoveredGameId] = useState<LauncherGameId | null>(null);
   const [hoveredCardIndex, setHoveredCardIndex] = useState<number | null>(null);
@@ -163,11 +163,50 @@ export default function App() {
     tauriRuntime
   });
 
-  const activeGame = GAMES_DATA.find((game) => game.id === activeGameId) ?? GAMES_DATA[0];
-  const displayedGame = GAMES_DATA.find((game) => game.id === displayedGameId) ?? activeGame;
+  // 主界面当前 tab 的安装/下载 hook。DownloadButton + InstallDialog 共享这一个实例。
+  const installer = useClientInstaller({
+    gameId: activeGameId,
+    appSettings,
+    tauriRuntime
+  });
+
+  // 启动器自身更新检查。启动后自动调一次（如果 allow_silent_update=true），
+  // 右上角 AppUpdateButton 显示状态。
+  const appUpdater = useAppUpdater({
+    tauriRuntime,
+    appSettings
+  });
+
+  const [gamesData, setGamesData] = useState(GAMES_DATA);
+
+  // 启动时从 Rust catalog 拉业务数据，合并视觉资产生成动态 game tab。
+  // 失败保留静态 fallback（GAMES_DATA），首屏不白屏。
+  useEffect(() => {
+    if (!tauriRuntime) {
+      return;
+    }
+    let alive = true;
+    void getClientCatalog()
+      .then((catalog) => {
+        if (!alive) return;
+        const built = buildGamesData(catalog);
+        if (built.length > 0) {
+          setGamesData(built);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load client catalog, using fallback:", err);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tauriRuntime]);
+
+  const activeGame = gamesData.find((game) => game.id === activeGameId) ?? gamesData[0];
+  const displayedGame = gamesData.find((game) => game.id === displayedGameId) ?? activeGame;
   const currentBgConfig = useMemo(() => {
     const targetGameId = isLibraryOpen && hoveredGameId ? hoveredGameId : activeGameId;
-    const defaultBg = (GAMES_DATA.find((game) => game.id === targetGameId) ?? activeGame).bgImage;
+    const defaultBg = (gamesData.find((game) => game.id === targetGameId) ?? activeGame).bgImage;
     const custom = customBgs[targetGameId];
     if (custom && custom.type !== "default" && custom.path) {
       return {
@@ -181,8 +220,8 @@ export default function App() {
       path: defaultBg,
       fallbackUrl: defaultBg
     };
-  }, [isLibraryOpen, hoveredGameId, activeGameId, customBgs, activeGame]);
-  const repeatedGames = useMemo(() => GAMES_DATA, []);
+  }, [isLibraryOpen, hoveredGameId, activeGameId, customBgs, activeGame, gamesData]);
+  const repeatedGames = useMemo(() => gamesData, [gamesData]);
   const canLaunch = Boolean(launchReadiness?.can_launch) && launcherState === "ready";
   const primaryDisabled = !tauriRuntime || launcherState === "validating" || launcherState === "launching" || launcherState === "running";
 
@@ -439,6 +478,7 @@ export default function App() {
         <div className="flex-1 h-full relative flex flex-col overflow-hidden">
           <div className="relative z-40 h-16 w-full flex items-center justify-end px-8 select-none pointer-events-auto shrink-0" data-tauri-drag-region>
             <WindowControls
+              appUpdater={appUpdater}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onCloseLauncher={() => {
                 if (appSettings.close_behavior === "minimize_to_tray") {
@@ -552,24 +592,8 @@ export default function App() {
               className="absolute bottom-[28px] right-8 z-35 select-none flex flex-col items-center font-sans"
             >
               <DownloadButton
-                gameId={activeGame.id}
-                sizeGB={activeGame.sizeGB}
-                speedMB={activeGame.installSpeedMB}
+                installer={installer}
                 accentColor={activeGame.accentColor}
-                onLaunchGame={() => void handleLaunchGame()}
-                onLocateGame={() => void handleBrowse()}
-                onGetGame={() => {
-                  if (activeGameId === "qmclient") {
-                    setIsSettingsOpen(true);
-                    setActiveSettingsSection("download");
-                  } else if (activeGameId === "ddnet") {
-                    window.open("https://ddrace.cn/downloads/", "_blank", "noreferrer");
-                  } else if (activeGameId === "ddnet-steam") {
-                    window.open("steam://store/412220", "_blank");
-                  }
-                }}
-                canLaunch={canLaunch}
-                disabled={primaryDisabled}
               />
             </motion.div>
 
@@ -660,6 +684,11 @@ export default function App() {
         </div>
 
         <VideoPlayer isOpen={isPlayerOpen} onClose={() => setIsPlayerOpen(false)} title={activeGame.pvTitle} posterImage={activeGame.pvCardImage} />
+        <InstallDialog
+          installer={installer}
+          displayName={activeGame.name}
+          gameId={activeGame.id}
+        />
         <PostDetailModal
           isOpen={isPostOpen}
           onClose={() => {

@@ -2,6 +2,8 @@ use crate::error::ManagerError;
 use crate::models::{
     ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
 };
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -9,8 +11,15 @@ use time::OffsetDateTime;
 const FNV1A_64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV1A_64_PRIME: u64 = 0x100000001b3;
 const DDNET_EXECUTABLE_NAMES: &[&str] = &["DDNet.exe", "ddnet.exe", "DDNet", "ddnet"];
+/// 超过此大小的 exe 不计算 sha256（避免对超大文件耗时）。
+/// DDNet 客户端 exe 通常 < 100 MB，1 GB 是宽松上限。
+const EXE_SHA256_MAX_SIZE: u64 = 1024 * 1024 * 1024;
 
 /// 验证 DDNet 兼容客户端目录，并返回可供前端展示的安装记录。
+///
+/// 身份识别优先级：sha256 命中 catalog known_hashes > PE VS_VERSION_INFO 元信息 >
+/// 路径关键字匹配 > third_party fallback。所有识别方式失败时 PE 字段仍写入
+/// ClientInstallation 供前端展示。
 pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerError> {
     if !path.is_dir() {
         return Err(ManagerError::NotFound(format!(
@@ -25,11 +34,22 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerErr
     let data_dir = find_data_dir(path);
     let install_dir = normalize_path(path);
     let id_seed = normalized_id_seed(path);
-    let identity = infer_client_identity(path);
+
+    // 读 PE 元信息（仅 Windows PE 文件能解析；非 PE 静默 fallback 到 None）
+    let pe_info = read_pe_version_info_safe(&executable_path);
+    // 计算 sha256（仅 ≤ 1 GB，避免巨型文件耗时）
+    let exe_sha256 = compute_exe_sha256_if_small(&executable_path);
+
+    let identity = infer_client_identity(
+        path,
+        pe_info.as_ref().map(|v| v.company_name.as_deref()).flatten(),
+        pe_info.as_ref().map(|v| v.product_name.as_deref()).flatten(),
+        exe_sha256.as_deref(),
+    );
 
     let health = detect_client_health(&executable_path, &storage_cfg_path, &data_dir);
     let missing_items = missing_items_for_health(&health);
-    let confidence = confidence_for_health(&identity.client_id, &health);
+    let confidence = confidence_for_identity(&identity, &health);
     let can_launch = health == ClientHealth::Ok;
 
     Ok(ClientInstallation {
@@ -41,7 +61,7 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerErr
         storage_cfg_path: normalize_path(&storage_cfg_path),
         data_dir: normalize_path(&data_dir),
         user_data_dir: find_ddnet_user_data_dir(),
-        version: None,
+        version: identity.version,
         is_default: false,
         health,
         missing_items,
@@ -53,6 +73,10 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerErr
             ..ClientCompatibility::default()
         },
         upstream_url: identity.upstream_url,
+        pe_company_name: pe_info.as_ref().and_then(|v| v.company_name.clone()),
+        pe_product_name: pe_info.as_ref().and_then(|v| v.product_name.clone()),
+        pe_file_version: pe_info.as_ref().and_then(|v| v.file_version.clone()),
+        exe_sha256,
         last_scanned_at: Some(current_utc_rfc3339()),
     })
 }
@@ -108,11 +132,25 @@ fn missing_items_for_health(health: &ClientHealth) -> Vec<String> {
     }
 }
 
-fn confidence_for_health(client_id: &str, health: &ClientHealth) -> ClientConfidence {
-    match health {
-        ClientHealth::Ok if client_id == "third_party" => ClientConfidence::Compatible,
-        ClientHealth::Ok => ClientConfidence::Verified,
-        _ => ClientConfidence::Partial,
+fn confidence_for_identity(
+    identity: &ClientIdentity,
+    health: &ClientHealth,
+) -> ClientConfidence {
+    if health != &ClientHealth::Ok {
+        return ClientConfidence::Partial;
+    }
+    match identity.identity_source {
+        IdentitySource::HashMatch => ClientConfidence::Verified,
+        IdentitySource::PeMatch(crate::client_catalog::PeMatchStrength::Strong) => {
+            ClientConfidence::Verified
+        }
+        // PE Weak（只匹配 CompanyName 或 ProductName 之一）：降级到 Compatible，
+        // 因为单字段可能命中多个客户端（DDNet fork 通常都保留 "DDNet" ProductName）
+        IdentitySource::PeMatch(crate::client_catalog::PeMatchStrength::Weak) => {
+            ClientConfidence::Compatible
+        }
+        IdentitySource::PathMatch => ClientConfidence::Verified,
+        IdentitySource::Unknown => ClientConfidence::Compatible,
     }
 }
 
@@ -191,9 +229,31 @@ struct ClientIdentity {
     display_name: String,
     install_source: ClientInstallSource,
     upstream_url: Option<String>,
+    /// 来自 sha256 命中或 PE file_version 的版本号。
+    version: Option<String>,
+    /// 识别来源（驱动 confidence 计算）。
+    identity_source: IdentitySource,
 }
 
-fn infer_client_identity(path: &Path) -> ClientIdentity {
+/// 客户端身份识别的来源。决定 ClientConfidence 计算。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IdentitySource {
+    /// sha256 命中 catalog known_hashes（最高置信度，不可伪造）。
+    HashMatch,
+    /// PE VS_VERSION_INFO 元信息匹配。
+    PeMatch(crate::client_catalog::PeMatchStrength),
+    /// 路径关键字匹配（catalog.aliases）。
+    PathMatch,
+    /// 所有匹配方式都未命中，third_party fallback。
+    Unknown,
+}
+
+fn infer_client_identity(
+    path: &Path,
+    pe_company: Option<&str>,
+    pe_product: Option<&str>,
+    exe_sha256: Option<&str>,
+) -> ClientIdentity {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -205,30 +265,94 @@ fn infer_client_identity(path: &Path) -> ClientIdentity {
         ClientInstallSource::Manual
     };
 
+    // 1. Steam DDNet 强制识别（路径权威，跳过其他匹配）
     if is_steam_ddnet_path(&haystack) {
         return ClientIdentity {
             client_id: "ddnet".to_string(),
             display_name: "DDNet".to_string(),
             install_source,
             upstream_url: Some(crate::client_catalog::ddnet_steam_url().to_string()),
+            version: None,
+            identity_source: IdentitySource::PathMatch,
         };
     }
 
+    // 2. sha256 命中 catalog known_hashes（最高优先级，不可伪造）
+    if let Some(hash) = exe_sha256 {
+        if let Some((entry, version)) = crate::client_catalog::match_catalog_by_hash(hash) {
+            return ClientIdentity {
+                client_id: entry.client_id.to_string(),
+                display_name: entry.display_name.to_string(),
+                install_source,
+                upstream_url: entry.upstream_url.map(str::to_string),
+                version: Some(version.to_string()),
+                identity_source: IdentitySource::HashMatch,
+            };
+        }
+    }
+
+    // 3. PE VS_VERSION_INFO 元信息匹配（优于路径匹配）
+    if let Some((entry, strength)) =
+        crate::client_catalog::match_catalog_by_pe(pe_company, pe_product)
+    {
+        return ClientIdentity {
+            client_id: entry.client_id.to_string(),
+            display_name: entry.display_name.to_string(),
+            install_source,
+            upstream_url: entry.upstream_url.map(str::to_string),
+            version: None,
+            identity_source: IdentitySource::PeMatch(strength),
+        };
+    }
+
+    // 4. 路径关键字匹配（fallback）
     if let Some(entry) = crate::client_catalog::match_catalog_entry(&haystack) {
         return ClientIdentity {
             client_id: entry.client_id.to_string(),
             display_name: entry.display_name.to_string(),
             install_source,
             upstream_url: entry.upstream_url.map(str::to_string),
+            version: None,
+            identity_source: IdentitySource::PathMatch,
         };
     }
 
+    // 5. third_party fallback
     ClientIdentity {
         client_id: "third_party".to_string(),
         display_name: trim_app_extension(name).to_string(),
         install_source,
         upstream_url: None,
+        version: pe_company.map(|_| "unknown".to_string()).or(None),
+        identity_source: IdentitySource::Unknown,
     }
+}
+
+/// 读 PE VS_VERSION_INFO；任何错误（非 PE、资源缺失、解析失败）静默返回 None。
+/// 这样不影响扫描主流程，PE 元信息只是辅助识别手段。
+fn read_pe_version_info_safe(exe_path: &Path) -> Option<ntfs_search::VersionInfo> {
+    ntfs_search::read_version_info(exe_path).ok()
+}
+
+/// 计算 exe 文件的 SHA-256（小写十六进制）。仅当文件 ≤ EXE_SHA256_MAX_SIZE 时计算，
+/// 避免对超大文件耗时。任何 I/O 错误静默返回 None。
+fn compute_exe_sha256_if_small(exe_path: &Path) -> Option<String> {
+    let metadata = std::fs::metadata(exe_path).ok()?;
+    if metadata.len() > EXE_SHA256_MAX_SIZE {
+        return None;
+    }
+    let mut file = std::fs::File::open(exe_path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = Box::new([0u8; 256 * 1024]);
+    loop {
+        let bytes_read = file.read(&mut buffer[..]).ok()?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);
+    }
+    let digest = hasher.finalize();
+    Some(format!("{digest:x}"))
 }
 
 fn is_steam_ddnet_path(normalized_lower_path: &str) -> bool {

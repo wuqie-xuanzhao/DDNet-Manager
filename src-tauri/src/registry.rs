@@ -7,6 +7,7 @@
 //! - [`settings`]：应用设置读写。
 //! - [`jobs`]：下载任务快照读写。
 //! - [`history`]：Manager-owned 安装历史读写。
+//! - [`fingerprints`]：用户下载时记录的客户端 sha256 指纹（用于扫描时升级识别）。
 
 use crate::error::ManagerError;
 use rusqlite::Connection;
@@ -15,6 +16,8 @@ use std::sync::{Arc, Mutex};
 
 /// 客户端安装记录相关表的读写。
 mod clients;
+/// 客户端指纹（sha256 → client_id/version）读写。
+pub mod fingerprints;
 /// Manager-owned 安装历史记录的持久化。
 mod history;
 /// 下载任务快照的持久化。
@@ -134,6 +137,15 @@ impl ClientRegistry {
                 error TEXT,
                 completed_at TEXT,
                 record_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS client_fingerprints (
+                sha256 TEXT PRIMARY KEY NOT NULL,
+                client_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                version TEXT,
+                company_name TEXT,
+                product_name TEXT,
+                recorded_at TEXT NOT NULL
             );",
         )
         .map_err(|error| {

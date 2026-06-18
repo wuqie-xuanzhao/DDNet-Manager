@@ -68,6 +68,18 @@ fn main() {
         .manage(commands::ScanCancelState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            // 仅在用户主动关闭主窗口时退出整个 app，清理托盘图标。
+            // 用 CloseRequested 而非 Destroyed：Destroyed 在 transparent + decorations:false
+            // 窗口上可能被 spawn 子进程（启动游戏）/ 焦点切换 / DWM 合成异常误触发，
+            // 导致启动游戏后启动器意外退出。CloseRequested 只在用户主动点 X 或调 close() 时触发。
+            // minimize / hide / unminimize / focus 切换都不影响。
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    window.app_handle().exit(0);
+                }
+            }
+        })
         .setup(|app| {
             // 启动时清理上次崩溃留下的 staging 残留（每次安装事务在
             // <app_cache>/staging/install-<job_id>/ 下解压）。
@@ -113,7 +125,10 @@ fn main() {
             commands::download::list_download_job_recoveries,
             commands::install::install_downloaded_update,
             commands::check_app_update,
-            commands::get_app_version
+            commands::get_app_version,
+            commands::get_client_catalog,
+            commands::probe_disk,
+            commands::create_shortcuts
         ])
         .run(tauri::generate_context!());
 

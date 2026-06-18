@@ -34,6 +34,10 @@ const selectedClient: ClientInstallation = {
     reasons: []
   },
   upstream_url: null,
+  pe_company_name: null,
+  pe_product_name: null,
+  pe_file_version: null,
+  exe_sha256: null,
   last_scanned_at: null
 };
 

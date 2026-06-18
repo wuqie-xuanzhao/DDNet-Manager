@@ -6,15 +6,60 @@ export type LauncherState =
   | "running"
   | "error";
 
+/// catalog 中按平台分组的可执行文件候选。镜像 Rust `PlatformExecutableCandidates`。
+export type PlatformExecutableCandidates = {
+  windows: string[];
+  macos: string[];
+  linux: string[];
+};
+
+/// 客户端更新来源。镜像 Rust `UpdateSourceDescriptor`（serde tag = "kind"）。
+export type UpdateSourceDescriptor =
+  | { kind: "github_release"; owner: string; repo: string; windows_assets: string[]; macos_assets: string[]; linux_assets: string[] }
+  | { kind: "ddnet_official" }
+  | { kind: "website"; url: string }
+  | { kind: "none" };
+
+/// 内置客户端 catalog 条目。镜像 Rust `ClientCatalogEntry`。
+export type ClientCatalogEntry = {
+  client_id: string;
+  display_name: string;
+  aliases: string[];
+  executable_candidates: PlatformExecutableCandidates;
+  required_markers: string[];
+  pe_company_names: string[];
+  pe_product_names: string[];
+  /// (version, sha256_hex) 元组数组。初始为空，等用户填实际 release hash。
+  known_hashes: [string, string][];
+  update_source: UpdateSourceDescriptor;
+  upstream_url: string | null;
+};
+
+/// 磁盘探测结果。镜像 Rust `DiskProbe`。
+export type DiskProbe = {
+  free_bytes: number;
+  total_bytes: number;
+  /** 是否 SSD。null 表示平台不支持判断或 sysinfo 未识别（NAS / 网络盘等）。 */
+  is_ssd: boolean | null;
+  mount_point: string;
+};
+
+/// 快捷方式创建请求。镜像 Rust `CreateShortcutsRequest`。
+export type CreateShortcutsRequest = {
+  executable_path: string;
+  working_dir: string;
+  display_name: string;
+  desktop: boolean;
+  start_menu: boolean;
+};
+
 export type ClientTypeId =
   | "qmclient"
   | "ddnet"
-  | "ddnet-steam"
   | "qmclient-nightly"
   | "taterclient"
   | "bestclient"
-  | "cactusclient"
-  | "third-party";
+  | "cactusclient";
 
 export type ClientHealth =
   | "ok"
@@ -59,6 +104,14 @@ export type ClientInstallation = {
   manager_owned: boolean;
   compatibility: ClientCompatibility;
   upstream_url: string | null;
+  /** PE VS_VERSION_INFO 的 CompanyName（识别发行方）。非 PE / 解析失败为 null。 */
+  pe_company_name: string | null;
+  /** PE VS_VERSION_INFO 的 ProductName。 */
+  pe_product_name: string | null;
+  /** PE VS_VERSION_INFO 的 FileVersion。 */
+  pe_file_version: string | null;
+  /** 可执行文件 SHA-256（小写十六进制）。仅 ≤ 1 GB 文件才计算。 */
+  exe_sha256: string | null;
   last_scanned_at: string | null;
 };
 
@@ -75,6 +128,8 @@ export type LaunchReadiness = {
 export type ScanClientInstallationsOptions = {
   roots?: string[];
   include_saved_paths?: boolean;
+  /** 是否包含 health != Ok 的残缺客户端（缺 data 目录、storage.cfg 等）。默认 false。 */
+  include_unhealthy?: boolean;
 };
 
 export type UpsertClientInstallationRequest = {

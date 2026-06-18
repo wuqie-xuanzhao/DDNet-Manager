@@ -116,3 +116,99 @@ fn extract_dmg_to_staging_has_platform_specific_manager_owned_boundary() {
         );
     }
 }
+
+#[test]
+fn extract_zip_to_staging_extracts_many_files_in_parallel() {
+    // 100 个文件触发 Phase B 并行解压路径（>1 文件 → std::thread::scope）
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let zip_path = temp_dir.path().join("many.zip");
+    let staging_dir = temp_dir.path().join("staging");
+
+    let entries: Vec<(String, Vec<u8>)> = (0..100)
+        .map(|i| (format!("data/file_{i:03}.bin"), vec![i as u8; 64]))
+        .collect();
+    let entries_ref: Vec<(&str, &[u8])> = entries
+        .iter()
+        .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+        .collect();
+    write_zip(&zip_path, &entries_ref);
+
+    extract_zip_to_staging(&zip_path, &staging_dir).expect("多文件 zip 应并行解压成功");
+
+    for (name, expected) in &entries {
+        let path = staging_dir.join(name);
+        let actual = fs::read(&path)
+            .unwrap_or_else(|e| panic!("解压文件 {name} 应存在且可读：{e}"));
+        assert_eq!(actual, *expected, "解压文件 {name} 内容应匹配");
+    }
+}
+
+#[test]
+fn extract_zip_to_staging_rejects_symlink_in_mixed_zip() {
+    // 混合 zip：一个安全文件 + 一个 symlink。Phase A 串行预处理应捕获 symlink，
+    // Phase B 并行解压不应执行（staging 内不能有任何文件落地）。
+    use std::io::Write;
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let zip_path = temp_dir.path().join("mixed.zip");
+    let staging_dir = temp_dir.path().join("staging");
+
+    let file = fs::File::create(&zip_path).expect("测试 zip 文件应创建成功");
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default();
+    zip.start_file("safe.txt", options)
+        .expect("安全 entry 应创建成功");
+    zip.write_all(b"safe").expect("安全 entry 内容应写入");
+    zip.add_symlink("evil_link", "/etc/passwd", options)
+        .expect("symlink entry 应创建成功");
+    zip.finish().expect("测试 zip 应写入完成");
+
+    let error = extract_zip_to_staging(&zip_path, &staging_dir)
+        .expect_err("混合 zip 中的 symlink 应在 Phase A 被拒绝");
+    assert!(error.contains("unsafe zip symlink entry"));
+}
+
+#[test]
+fn extract_zip_to_staging_single_file_uses_fast_path() {
+    // 单文件 zip 走快速路径（不进 std::thread::scope），仍应正确解压
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let zip_path = temp_dir.path().join("single.zip");
+    let staging_dir = temp_dir.path().join("staging");
+    write_zip(&zip_path, &[("DDNet.exe", b"binary".as_slice())]);
+
+    extract_zip_to_staging(&zip_path, &staging_dir).expect("单文件 zip 应解压成功");
+
+    assert_eq!(
+        fs::read(staging_dir.join("DDNet.exe")).expect("解压文件应可读取"),
+        b"binary"
+    );
+}
+
+#[test]
+fn extract_zip_to_staging_preserves_directory_structure_in_parallel() {
+    // 混合 目录 + 多层嵌套文件 + 多个平级文件，验证并行解压下目录结构正确
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let zip_path = temp_dir.path().join("nested.zip");
+    let staging_dir = temp_dir.path().join("staging");
+    write_zip(
+        &zip_path,
+        &[
+            ("QmClient/DDNet.exe", b"exe".as_slice()),
+            ("QmClient/data/maps/a.map", b"a".as_slice()),
+            ("QmClient/data/maps/b.map", b"b".as_slice()),
+            ("QmClient/data/mapres/x.png", b"x".as_slice()),
+            ("QmClient/storage.cfg", b"cfg".as_slice()),
+        ],
+    );
+
+    extract_zip_to_staging(&zip_path, &staging_dir).expect("嵌套 zip 应并行解压成功");
+
+    assert_eq!(
+        fs::read(staging_dir.join("QmClient").join("DDNet.exe")).unwrap(),
+        b"exe"
+    );
+    assert_eq!(
+        fs::read(staging_dir.join("QmClient").join("data").join("maps").join("a.map")).unwrap(),
+        b"a"
+    );
+    assert!(staging_dir.join("QmClient").join("data").join("mapres").is_dir());
+}

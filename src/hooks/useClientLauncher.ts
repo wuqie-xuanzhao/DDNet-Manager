@@ -34,13 +34,6 @@ function normalizeHealth(health: ClientHealth): string {
 }
 
 function clientTypeIdFromInstallation(client: ClientInstallation): ClientTypeId {
-  if (
-    (client.client_id === "ddnet" || client.client_id === "ddnet_vanilla") &&
-    client.install_source === "steam"
-  ) {
-    return "ddnet-steam";
-  }
-
   switch (client.client_id) {
     case "qmclient":
       return "qmclient";
@@ -57,7 +50,8 @@ function clientTypeIdFromInstallation(client: ClientInstallation): ClientTypeId 
     case "cactusclient":
       return "cactusclient";
     default:
-      return "third-party";
+      // 未识别客户端兜底为 ddnet（gallery 里没有 third-party tab）
+      return "ddnet";
   }
 }
 
@@ -86,25 +80,14 @@ async function closeSmokeWindowIfRequested(enabled: boolean) {
 }
 
 function clientMatchesGameId(client: ClientInstallation, gameId: string): boolean {
+  if (gameId === "ddnet") {
+    // DDNet 官方：Steam 安装和官网下载共用一个 tab
+    return client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
+  }
   if (gameId === "qmclient") {
     return client.client_id === "qmclient" || client.client_id === "qmclient_nightly";
   }
-  if (gameId === "ddnet") {
-    const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
-    const isSteam = client.install_source === "steam";
-    return isDdnet && !isSteam;
-  }
-  if (gameId === "ddnet-steam") {
-    const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
-    const isSteam = client.install_source === "steam";
-    return isDdnet && isSteam;
-  }
-  if (gameId === "third-party") {
-    const isQm = client.client_id === "qmclient" || client.client_id === "qmclient_nightly";
-    const isDdnet = client.client_id === "ddnet" || client.client_id === "ddnet_vanilla";
-    return !isQm && !isDdnet;
-  }
-  return false;
+  return client.client_id === gameId;
 }
 
 export function useClientLauncher(params: {

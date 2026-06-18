@@ -34,6 +34,7 @@ pub use crate::options::{
     BackendKind, FileAttributes, FileEntry, InspectFields, InspectedEntry, NtfsScanOptions,
     ProgressEvent, ScanLimitKind, VersionInfo,
 };
+pub use crate::pe::{parse_version_info_from_bytes, read_version_info};
 
 use std::sync::Arc;
 

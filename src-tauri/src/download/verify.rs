@@ -108,7 +108,7 @@ pub fn verify_downloaded_file(
     expected_sha256: &str,
     expected_size: u64,
 ) -> Result<(), ManagerError> {
-    let file = fs::File::open(path).map_err(|error| {
+    let mut file = fs::File::open(path).map_err(|error| {
         ManagerError::Internal(format!("failed to open download file: {error}"))
     })?;
     let metadata = file.metadata().map_err(|error| {
@@ -121,15 +121,17 @@ pub fn verify_downloaded_file(
         )));
     }
 
-    let mut reader = std::io::BufReader::new(file);
+    // 堆分配避免 256KB 占满 Windows 默认 1MB 线程栈；syscall 次数相比 8KB 减少 32 倍
+    let mut buffer: Box<[u8; 256 * 1024]> = Box::new([0u8; 256 * 1024]);
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 8192];
     loop {
-        let bytes_read = reader.read(&mut buffer).map_err(|error| {
-            ManagerError::Internal(format!(
-                "failed to read download file for verification: {error}"
-            ))
-        })?;
+        let bytes_read = file
+            .read(&mut buffer[..])
+            .map_err(|error| {
+                ManagerError::Internal(format!(
+                    "failed to read download file for verification: {error}"
+                ))
+            })?;
         if bytes_read == 0 {
             break;
         }

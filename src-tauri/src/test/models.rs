@@ -29,6 +29,10 @@ fn serializes_client_installation_with_snake_case_fields_and_ok_health() {
             last_launch_result: None,
         },
         upstream_url: None,
+        pe_company_name: None,
+        pe_product_name: None,
+        pe_file_version: None,
+        exe_sha256: None,
         last_scanned_at: Some("2026-06-06T12:00:00Z".to_string()),
     };
 

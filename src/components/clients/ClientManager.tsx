@@ -29,6 +29,7 @@ export function ClientManager() {
   const [candidates, setCandidates] = useState<ClientInstallation[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const [showUnhealthy, setShowUnhealthy] = useState(false);
   const latestRequestIdRef = useRef(0);
   const scanner = useClientScanner();
   const combinedError = error ?? scanner.error;
@@ -77,7 +78,9 @@ export function ClientManager() {
   const scan = async () => {
     setError(null);
     try {
-      const results = await scanner.start({ options: { include_saved_paths: true } });
+      const results = await scanner.start({
+        options: { include_saved_paths: true, include_unhealthy: showUnhealthy }
+      });
       setCandidates(results);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -181,6 +184,16 @@ export function ClientManager() {
           >
             {scanner.scanning ? `扫描中… 已找到 ${scanner.foundCount}` : "扫描常见路径"}
           </button>
+          <label className="flex items-center gap-1.5 text-xs text-[var(--app-text-dim)] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showUnhealthy}
+              onChange={(event) => setShowUnhealthy(event.target.checked)}
+              disabled={isBusy || scanner.scanning}
+              className="cursor-pointer"
+            />
+            显示残缺客户端
+          </label>
           {scanner.scanning ? (
             <button
               type="button"

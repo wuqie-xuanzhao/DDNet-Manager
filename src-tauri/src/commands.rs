@@ -182,6 +182,8 @@ pub async fn scan_clients_via_mft(
                 &excluded,
                 max_results,
                 total_timeout / 3, // priority 阶段给 1/3 时间预算
+                options.include_unhealthy,
+                &registry,
                 app.clone(),
                 master_cancel.clone(),
             )
@@ -218,6 +220,8 @@ pub async fn scan_clients_via_mft(
             &excluded,
             max_results,
             total_timeout,
+            options.include_unhealthy,
+            &registry,
             app,
             master_cancel.clone(),
         )
@@ -243,6 +247,8 @@ async fn run_scan(
     excluded: &[PathBuf],
     max_results: usize,
     timeout_secs: u64,
+    include_unhealthy: bool,
+    registry: &crate::registry::ClientRegistry,
     app: AppHandle,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<ClientInstallation>, IpcError> {
@@ -276,7 +282,16 @@ async fn run_scan(
         {
             continue;
         }
-        let installation = crate::client_scan::validate_client_dir(parent)?;
+        let mut installation = crate::client_scan::validate_client_dir(parent)?;
+        // 默认过滤残缺客户端（缺 data 目录、storage.cfg 等）。这类候选通常是
+        // QQ 文件夹里的 ddnet.exe 单文件、开发仓库里的 build 产物等噪音。
+        // 前端"显示残缺客户端"开关透传到 include_unhealthy。
+        if !include_unhealthy && installation.health != crate::models::ClientHealth::Ok {
+            continue;
+        }
+        // 用 registry 指纹库升级识别：exe_sha256 命中用户下载记录时覆盖路径/PE
+        // 匹配结果，置信度升到 Verified（不可伪造）。exe_sha256 为 None 时跳过。
+        upgrade_identity_with_registry_fingerprint(&mut installation, registry)?;
         if seen_ids.insert(installation.id.clone()) {
             installations.push(installation);
         }
@@ -284,6 +299,32 @@ async fn run_scan(
 
     installations.sort_by(|a, b| a.install_dir.cmp(&b.install_dir));
     Ok(installations)
+}
+
+/// 用 registry 中的用户下载指纹升级识别结果。命中时覆盖 client_id/display_name/
+/// version/upstream_url/confidence。失败不阻断扫描（指纹缺失只让识别降级）。
+fn upgrade_identity_with_registry_fingerprint(
+    client: &mut ClientInstallation,
+    registry: &crate::registry::ClientRegistry,
+) -> Result<(), IpcError> {
+    let Some(hash) = client.exe_sha256.as_ref() else {
+        return Ok(());
+    };
+    let fp = registry
+        .lookup_fingerprint_by_hash(hash)
+        .map_err(IpcError::from)?;
+    if let Some(fp) = fp {
+        client.client_id = fp.client_id;
+        client.display_name = fp.display_name;
+        if let Some(version) = fp.version {
+            client.version = Some(version);
+        }
+        client.confidence = crate::models::ClientConfidence::Verified;
+        if let Some(entry) = crate::client_catalog::catalog_entry_by_id(&client.client_id) {
+            client.upstream_url = entry.upstream_url.map(str::to_string);
+        }
+    }
+    Ok(())
 }
 
 /// Priority roots：DDNet 客户端最可能安装的位置。典型用户场景命中即返回，
@@ -688,6 +729,275 @@ pub async fn check_app_update(
 #[tauri::command]
 pub fn get_app_version(app: AppHandle) -> Result<String, IpcError> {
     Ok(app.package_info().version.to_string())
+}
+
+/// 返回内置客户端 catalog（6 个客户端定义），供前端动态生成 game tab。
+///
+/// catalog 是编译期静态数据，不读磁盘，无 IPC 状态依赖，可任意调用。
+/// 前端 GAMES_DATA 在启动时调用一次，缓存到 React Context。
+#[tauri::command]
+pub fn get_client_catalog() -> Vec<crate::client_catalog::ClientCatalogEntry> {
+    crate::client_catalog::catalog_entries().to_vec()
+}
+
+/// 磁盘探测结果：剩余空间、总空间、是否 SSD。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DiskProbe {
+    /// 剩余可用字节数。
+    pub free_bytes: u64,
+    /// 磁盘总字节数。
+    pub total_bytes: u64,
+    /// 是否 SSD。`None` 表示平台不支持判断或 sysinfo 未识别（NAS / 网络盘等）。
+    pub is_ssd: Option<bool>,
+    /// 匹配到的磁盘挂载点（前端展示用）。
+    pub mount_point: String,
+}
+
+/// 探测给定路径所在磁盘的剩余空间、总空间、是否 SSD。
+///
+/// 用 sysinfo crate 跨平台（Windows / Linux / macOS），按 mount_point 前缀匹配
+/// 找最具体的磁盘。未匹配返回 NotFound。
+#[tauri::command]
+pub fn probe_disk(path: String) -> Result<DiskProbe, IpcError> {
+    use sysinfo::Disks;
+    let target = std::path::Path::new(&path);
+    let disks = Disks::new_with_refreshed_list();
+
+    // 找最匹配的磁盘：target 必须 starts_with mount_point，取 components 数最多的（最具体）
+    let best = disks
+        .list()
+        .iter()
+        .filter(|d| target.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().components().count());
+
+    let disk = best.ok_or_else(|| {
+        IpcError::from(crate::error::ManagerError::NotFound(format!(
+            "no disk matches path: {}",
+            path
+        )))
+    })?;
+
+    let is_ssd = match disk.kind() {
+        sysinfo::DiskKind::HDD => Some(false),
+        sysinfo::DiskKind::SSD => Some(true),
+        sysinfo::DiskKind::Unknown(_) => None,
+    };
+
+    Ok(DiskProbe {
+        free_bytes: disk.available_space(),
+        total_bytes: disk.total_space(),
+        is_ssd,
+        mount_point: disk.mount_point().to_string_lossy().to_string(),
+    })
+}
+
+/// 快捷方式创建请求：目标 exe 路径 + 工作目录 + 显示名 + 是否创建桌面/开始菜单。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CreateShortcutsRequest {
+    /// 目标可执行文件路径（如客户端 DDNet.exe）。
+    pub executable_path: String,
+    /// 工作目录（通常是客户端 install_dir）。
+    pub working_dir: String,
+    /// 快捷方式显示名（如 "QmClient"）。
+    pub display_name: String,
+    /// 是否创建桌面快捷方式。
+    pub desktop: bool,
+    /// 是否创建开始菜单 / 应用列表快捷方式。
+    pub start_menu: bool,
+}
+
+/// 创建桌面和开始菜单快捷方式。
+///
+/// - Windows：用 PowerShell 调 WScript.Shell COM 创建 .lnk
+/// - Linux：写 .desktop 文件到 ~/.local/share/applications 和 ~/Desktop
+/// - macOS：跳过（dock 已是事实标准），返回 Ok 但不创建
+#[tauri::command]
+pub fn create_shortcuts(request: CreateShortcutsRequest) -> Result<(), IpcError> {
+    let display_name = request.display_name.trim();
+    if display_name.is_empty() {
+        return Err(IpcError::from(crate::error::ManagerError::Internal(
+            "display_name must not be empty".to_string(),
+        )));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if request.desktop {
+            create_windows_shortcut(
+                &request.executable_path,
+                &request.working_dir,
+                display_name,
+                windows_desktop_dir()?,
+            )?;
+        }
+        if request.start_menu {
+            create_windows_shortcut(
+                &request.executable_path,
+                &request.working_dir,
+                display_name,
+                windows_start_menu_dir()?,
+            )?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if request.desktop {
+            create_linux_desktop_file(
+                &request.executable_path,
+                &request.working_dir,
+                display_name,
+                linux_desktop_dir()?,
+            )?;
+        }
+        if request.start_menu {
+            create_linux_desktop_file(
+                &request.executable_path,
+                &request.working_dir,
+                display_name,
+                linux_applications_dir()?,
+            )?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // macOS dock 是事实标准，跳过快捷方式创建
+        let _ = request;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        let _ = request;
+        Err(IpcError::from(crate::error::ManagerError::Internal(
+            "create_shortcuts: unsupported platform".to_string(),
+        )))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_desktop_dir() -> Result<std::path::PathBuf, IpcError> {
+    dirs::desktop_dir().ok_or_else(|| {
+        IpcError::from(crate::error::ManagerError::Internal(
+            "cannot resolve Windows desktop dir".to_string(),
+        ))
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn windows_start_menu_dir() -> Result<std::path::PathBuf, IpcError> {
+    // %APPDATA%\Microsoft\Windows\Start Menu\Programs
+    let appdata = dirs::config_dir().ok_or_else(|| {
+        IpcError::from(crate::error::ManagerError::Internal(
+            "cannot resolve Windows config dir for start menu".to_string(),
+        ))
+    })?;
+    Ok(appdata.join("Microsoft").join("Windows").join("Start Menu").join("Programs"))
+}
+
+#[cfg(target_os = "windows")]
+fn create_windows_shortcut(
+    exe: &str,
+    workdir: &str,
+    name: &str,
+    target_dir: std::path::PathBuf,
+) -> Result<(), IpcError> {
+    std::fs::create_dir_all(&target_dir).map_err(|e| {
+        IpcError::from(crate::error::ManagerError::Internal(format!(
+            "create target dir failed: {e}"
+        )))
+    })?;
+    let lnk_path = target_dir.join(format!("{name}.lnk"));
+    // 用 PowerShell 调 WScript.Shell COM 创建 .lnk。
+    // 单引号转义：路径里可能含空格，PowerShell 字符串用双引号包裹。
+    let script = format!(
+        "$ws = New-Object -ComObject WScript.Shell; \
+         $s = $ws.CreateShortcut(\"{}\"); \
+         $s.TargetPath = \"{}\"; \
+         $s.WorkingDirectory = \"{}\"; \
+         $s.Save()",
+        lnk_path.to_string_lossy().replace('"', "`\""),
+        exe.replace('"', "`\""),
+        workdir.replace('"', "`\"")
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .map_err(|e| {
+            IpcError::from(crate::error::ManagerError::Internal(format!(
+                "powershell launch failed: {e}"
+            )))
+        })?;
+    if !output.status.success() {
+        return Err(IpcError::from(crate::error::ManagerError::Internal(format!(
+            "powershell exit {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ))));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_desktop_dir() -> Result<std::path::PathBuf, IpcError> {
+    let home = dirs::home_dir().ok_or_else(|| {
+        IpcError::from(crate::error::ManagerError::Internal(
+            "cannot resolve home dir".to_string(),
+        ))
+    })?;
+    Ok(home.join("Desktop"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_applications_dir() -> Result<std::path::PathBuf, IpcError> {
+    let home = dirs::home_dir().ok_or_else(|| {
+        IpcError::from(crate::error::ManagerError::Internal(
+            "cannot resolve home dir".to_string(),
+        ))
+    })?;
+    Ok(home.join(".local").join("share").join("applications"))
+}
+
+#[cfg(target_os = "linux")]
+fn create_linux_desktop_file(
+    exe: &str,
+    workdir: &str,
+    name: &str,
+    target_dir: std::path::PathBuf,
+) -> Result<(), IpcError> {
+    std::fs::create_dir_all(&target_dir).map_err(|e| {
+        IpcError::from(crate::error::ManagerError::Internal(format!(
+            "create target dir failed: {e}"
+        )))
+    })?;
+    let file_name = name
+        .to_ascii_lowercase()
+        .replace(|c: char| !c.is_alphanumeric(), "-");
+    let path = target_dir.join(format!("{file_name}.desktop"));
+    let content = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name={name}\n\
+         Exec={exe}\n\
+         Path={workdir}\n\
+         Terminal=false\n\
+         Categories=Game;\n"
+    );
+    std::fs::write(&path, content).map_err(|e| {
+        IpcError::from(crate::error::ManagerError::Internal(format!(
+            "write .desktop failed: {e}"
+        )))
+    })?;
+    // 设置可执行权限（Linux 桌面环境要求 .desktop 文件可执行才会出现在应用列表）
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
+    }
+    Ok(())
 }
 
 /// 返回 Tauri 应用缓存目录。

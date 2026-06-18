@@ -56,7 +56,9 @@ describe("useClientScanner", () => {
     expect(result.current.foundCount).toBe(7);
   });
 
-  it("updates foundCount from drive_completed event", async () => {
+  it("appends drive_completed event without updating foundCount (parallel scan)", async () => {
+    // 多盘并行下，DriveCompleted.found 是 per-drive 语义，不再用于覆盖 foundCount。
+    // foundCount 全权由 entries_found（后端 GlobalizingSink 已转全局累计）驱动。
     const { result } = renderHook(() => useClientScanner());
 
     await waitFor(() => {
@@ -67,7 +69,8 @@ describe("useClientScanner", () => {
       emitHandler!({ payload: { kind: "drive_completed", root: "C:\\", scanned: 100, found: 3 } });
     });
 
-    expect(result.current.foundCount).toBe(3);
+    expect(result.current.events).toHaveLength(1);
+    expect(result.current.foundCount).toBe(0);
   });
 
   it("start invokes scan_clients_via_mft, clears events, and returns installations", async () => {

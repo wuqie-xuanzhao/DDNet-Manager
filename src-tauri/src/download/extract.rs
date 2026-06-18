@@ -11,6 +11,11 @@ const MAX_ZIP_FILES: usize = 20_000;
 const MAX_UNPACKED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// 将 zip 包安全解压到 staging 目录，拒绝路径穿越和绝对路径。
+///
+/// 两阶段：Phase A 串行执行所有安全检查与目录创建，收集文件 entry 的 (index,
+/// output_path)；Phase B 用 `std::thread::scope` 多线程并行解压。
+/// 每个 worker thread 独立 `File::open` + `ZipArchive::new`，因为 zip 6.0 的
+/// `ZipArchive` 不是 `Sync`，`by_index` 期间持锁会串行化 IO。
 pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(), String> {
     if staging_dir.exists() {
         fs::remove_dir_all(staging_dir)
@@ -30,10 +35,13 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
 
     let staging_root = fs::canonicalize(staging_dir)
         .map_err(|error| format!("failed to canonicalize staging dir: {error}"))?;
-    let mut unpacked_bytes = 0_u64;
 
+    // Phase A：串行预处理 —— 全部安全检查 + 目录创建 + 收集待解压文件清单。
+    // unpacked_bytes 在此阶段一次性累加完，Phase B 不再检查（已确定不超上限）。
+    let mut file_entries: Vec<(usize, PathBuf)> = Vec::new();
+    let mut unpacked_bytes = 0_u64;
     for index in 0..archive.len() {
-        let mut entry = archive
+        let entry = archive
             .by_index(index)
             .map_err(|error| format!("failed to read zip entry: {error}"))?;
         // 显式拒绝 symlink entry。zip-rs 不会拒带 S_IFLNK 模式的条目，
@@ -71,12 +79,60 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
                 .map_err(|error| format!("failed to create zip parent directory: {error}"))?;
         }
 
-        let mut output = fs::File::create(&output_path)
-            .map_err(|error| format!("failed to create extracted file: {error}"))?;
-        copy_zip_entry(&mut entry, &mut output)?;
+        file_entries.push((index, output_path));
     }
 
-    Ok(())
+    // 单文件快速路径：跳过 thread::scope 的 fork/join overhead。
+    if file_entries.len() <= 1 {
+        if let Some((index, output_path)) = file_entries.into_iter().next() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| format!("failed to read zip entry: {error}"))?;
+            let mut output = fs::File::create(&output_path)
+                .map_err(|error| format!("failed to create extracted file: {error}"))?;
+            copy_zip_entry(&mut entry, &mut output)?;
+        }
+        return Ok(());
+    }
+
+    // Phase B：并行解压。num_threads = min(available_parallelism, 8, file_count)。
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get().clamp(1, 8))
+        .unwrap_or(4)
+        .min(file_entries.len());
+    let chunk_size = file_entries.len().div_ceil(num_threads);
+
+    std::thread::scope(|s| {
+        let handles: Vec<_> = file_entries
+            .chunks(chunk_size)
+            .map(|chunk| {
+                s.spawn(move || -> Result<(), String> {
+                    let thread_file = fs::File::open(zip_path).map_err(|error| {
+                        format!("failed to reopen zip file in worker: {error}")
+                    })?;
+                    let mut thread_archive = zip::ZipArchive::new(thread_file)
+                        .map_err(|error| format!("invalid zip file in worker: {error}"))?;
+                    for (index, output_path) in chunk {
+                        let mut entry = thread_archive
+                            .by_index(*index)
+                            .map_err(|error| format!("failed to read zip entry: {error}"))?;
+                        let mut output = fs::File::create(output_path).map_err(|error| {
+                            format!("failed to create extracted file: {error}")
+                        })?;
+                        copy_zip_entry(&mut entry, &mut output)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|error| format!("zip worker thread panicked: {error:?}"))??;
+        }
+        Ok(())
+    })
 }
 
 /// 按安装包类型安全解包或复制到 staging 目录。

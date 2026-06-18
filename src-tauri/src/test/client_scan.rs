@@ -238,7 +238,12 @@ fn stable_installation_id_uses_fixed_fnv1a64_value() {
 
 #[test]
 fn infer_client_identity_matches_qmclient_path() {
-    let identity = scan::infer_client_identity(std::path::Path::new("D:/Games/QmClient"));
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("D:/Games/QmClient"),
+        None,
+        None,
+        None,
+    );
     assert_eq!(identity.client_id, "qmclient");
     assert_eq!(identity.display_name, "QmClient");
     assert_eq!(identity.install_source, ClientInstallSource::Manual);
@@ -247,8 +252,12 @@ fn infer_client_identity_matches_qmclient_path() {
 
 #[test]
 fn infer_client_identity_marks_steam_ddnet_as_steam_source() {
-    let identity =
-        scan::infer_client_identity(std::path::Path::new("C:/Steam/steamapps/common/ddnet"));
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("C:/Steam/steamapps/common/ddnet"),
+        None,
+        None,
+        None,
+    );
     assert_eq!(identity.client_id, "ddnet");
     assert_eq!(identity.display_name, "DDNet");
     assert_eq!(identity.install_source, ClientInstallSource::Steam);
@@ -256,9 +265,84 @@ fn infer_client_identity_marks_steam_ddnet_as_steam_source() {
 
 #[test]
 fn infer_client_identity_falls_back_to_third_party_for_unknown_path() {
-    let identity = scan::infer_client_identity(std::path::Path::new("D:/Games/random-game"));
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("D:/Games/random-game"),
+        None,
+        None,
+        None,
+    );
     assert_eq!(identity.client_id, "third_party");
     assert_eq!(identity.display_name, "random-game");
     assert_eq!(identity.install_source, ClientInstallSource::Manual);
     assert!(identity.upstream_url.is_none());
+}
+
+// ===== PE 元信息优先级测试 =====
+
+#[test]
+fn infer_client_identity_prefers_pe_over_path_match() {
+    // 核心回归：路径含 "tclient" 子串会让路径匹配命中 taterclient，
+    // 但 PE 元信息显示是 BestProjectTeam / BestClient，应优先识别为 bestclient。
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("D:/Games/tclient-fork/bestclient"),
+        Some("BestProjectTeam"),
+        Some("BestClient"),
+        None,
+    );
+    assert_eq!(
+        identity.client_id, "bestclient",
+        "PE 元信息应覆盖路径匹配，避免 BestClient 误判为 taterclient"
+    );
+    assert_eq!(identity.display_name, "BestClient");
+}
+
+#[test]
+fn infer_client_identity_uses_pe_when_path_does_not_match_any_alias() {
+    // 路径无任何 alias 命中，但 PE 元信息匹配 ddnet → 应识别为 ddnet 而非 third_party
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("D:/MyStuff/random-folder"),
+        Some("DDNet Team"),
+        Some("DDNet"),
+        None,
+    );
+    assert_eq!(identity.client_id, "ddnet");
+}
+
+#[test]
+fn infer_client_identity_falls_back_to_path_when_pe_does_not_match() {
+    // PE 元信息不匹配任何 catalog entry（第三方发行方），应 fallback 到路径匹配
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("D:/Games/QmClient"),
+        Some("Unknown Studio"),
+        Some("Custom Fork"),
+        None,
+    );
+    assert_eq!(
+        identity.client_id, "qmclient",
+        "PE 不匹配时应 fallback 到路径匹配"
+    );
+}
+
+#[test]
+fn infer_client_identity_falls_back_to_third_party_when_both_pe_and_path_miss() {
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("D:/Games/random-shooter"),
+        Some("Unknown Studio"),
+        Some("Some Game"),
+        None,
+    );
+    assert_eq!(identity.client_id, "third_party");
+}
+
+#[test]
+fn infer_client_identity_steam_path_overrides_pe_match() {
+    // Steam DDNet 路径权威，即使 PE 元信息显示是第三方 fork，也强制识别为 ddnet
+    let identity = scan::infer_client_identity(
+        std::path::Path::new("C:/Steam/steamapps/common/ddnet"),
+        Some("Custom Studio"),
+        Some("Custom Fork"),
+        None,
+    );
+    assert_eq!(identity.client_id, "ddnet");
+    assert_eq!(identity.install_source, ClientInstallSource::Steam);
 }

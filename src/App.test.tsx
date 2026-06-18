@@ -85,15 +85,16 @@ describe("App launcher shell", () => {
     expect(document.querySelector("#ddnet-launcher")).toBeInTheDocument();
     expect(screen.getByLabelText("DDNet Manager 首页")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "全部游戏" })).toBeInTheDocument();
-    expect(screen.getAllByText("QmClient").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("DDNet").length).toBeGreaterThan(0);
   });
 
   it("keeps DDNet community and website actions in the launcher social rail", () => {
     render(<App />);
 
-    expect(screen.getByRole("link", { name: "加入 QmClient QQ 群" })).toHaveAttribute("href", expect.stringContaining("1076765929"));
-    expect(screen.getByRole("link", { name: "访问 DDRace Workshop" })).toHaveAttribute("href", "https://ddrace.cn/");
+    // 默认 tab 是 DDNet，社交链接含官网 / Workshop / Steam / GitHub（无 QQ 群）
     expect(screen.getByRole("link", { name: "访问 DDNet 官方网站" })).toHaveAttribute("href", "https://ddnet.org/");
+    expect(screen.getByRole("link", { name: "访问 DDRace Workshop" })).toHaveAttribute("href", "https://ddrace.cn/");
+    expect(screen.getByRole("link", { name: "打开 Steam 商店页" })).toHaveAttribute("href", "https://store.steampowered.com/app/412220/DDNet/");
   });
 
   it("opens the integrated settings panel with section navigation", () => {

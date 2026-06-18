@@ -46,9 +46,10 @@ export function useClientScanner(): UseClientScannerResult {
       if (cancelled) return;
       const event = e.payload;
       setEvents((prev) => [...prev, event]);
+      // 仅由 entries_found 驱动 foundCount。多盘并行下，后端 GlobalizingSink 把
+      // 各盘 per-drive found 累加成全局总数后 emit，覆盖式更新即正确。
+      // 不再用 drive_completed.found（per-drive 语义），否则并行下会跳变回退。
       if (event.kind === "entries_found") {
-        setFoundCount(event.found);
-      } else if (event.kind === "drive_completed") {
         setFoundCount(event.found);
       }
     })

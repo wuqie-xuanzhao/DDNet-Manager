@@ -3,8 +3,11 @@ import type {
   AppSettings,
   AppUpdateCheck,
   CheckClientUpdateRequest,
+  ClientCatalogEntry,
   ClientInstallation,
   ClientUpdateCheck,
+  CreateShortcutsRequest,
+  DiskProbe,
   DownloadJob,
   DownloadJobRecovery,
   InstallHistoryRecord,
@@ -183,6 +186,32 @@ export function isClientRunning(path: string): Promise<boolean> {
 
 export function getAppVersion(): Promise<string> {
   return invoke<string>("get_app_version");
+}
+
+/**
+ * 拉取内置客户端 catalog（6 个客户端定义）。
+ * 编译期静态数据，无 IPC 状态依赖。前端启动时调用一次缓存到 React Context。
+ */
+export function getClientCatalog(): Promise<ClientCatalogEntry[]> {
+  return invoke<ClientCatalogEntry[]>("get_client_catalog");
+}
+
+/**
+ * 探测给定路径所在磁盘的剩余空间、总空间、是否 SSD。
+ * 用于安装弹窗显示磁盘信息，建议用户安装在 SSD。
+ */
+export function probeDisk(path: string): Promise<DiskProbe> {
+  return invoke<DiskProbe>("probe_disk", { path });
+}
+
+/**
+ * 创建桌面和开始菜单快捷方式。
+ * - Windows：用 PowerShell 调 WScript.Shell COM 创建 .lnk
+ * - Linux：写 .desktop 文件
+ * - macOS：跳过（dock 已是事实标准）
+ */
+export function createShortcuts(request: CreateShortcutsRequest): Promise<void> {
+  return invoke<void>("create_shortcuts", { request });
 }
 
 export function checkAppUpdate(): Promise<AppUpdateCheck> {

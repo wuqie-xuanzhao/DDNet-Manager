@@ -48,6 +48,8 @@
   --color-foreground: var(--app-text);
   --color-card: var(--app-sunken);
   --color-card-foreground: var(--app-text);
+  --color-popover: var(--app-surface);
+  --color-popover-foreground: var(--app-text);
   --color-primary: var(--app-accent);
   --color-primary-foreground: var(--app-accent-foreground);
   --color-secondary: var(--app-accent-subtle);
@@ -57,7 +59,10 @@
   --color-accent: var(--app-accent-subtle);
   --color-accent-foreground: var(--app-accent);
   --color-border: var(--app-border);
+  --color-input: var(--app-border-strong);
+  --color-ring: var(--app-focus);
   --color-danger: var(--app-danger);
+  --color-destructive: var(--app-danger);
 }
 
 * {
@@ -79,7 +84,7 @@ body,
 
 body {
   min-width: 1024px;
-  min-height: 640px;
+  min-height: 600px;
 }
 
 button,

@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { TooltipProvider } from "./components/ui/tooltip";
 import "./index.css";
 
 const root = document.getElementById("root");
@@ -13,7 +14,9 @@ if (!root) {
 createRoot(root).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <TooltipProvider delayDuration={200}>
+        <App />
+      </TooltipProvider>
     </ErrorBoundary>
   </StrictMode>
 );

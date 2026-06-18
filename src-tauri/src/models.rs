@@ -159,6 +159,20 @@ pub struct ClientInstallation {
     /// 官方下载、GitHub release 或 Steam 管理入口。
     #[serde(default)]
     pub upstream_url: Option<String>,
+    /// PE VS_VERSION_INFO 的 CompanyName 字段（识别客户端发行方）。
+    /// 仅 Windows PE exe 可解析，非 PE / 解析失败时为 None。
+    #[serde(default)]
+    pub pe_company_name: Option<String>,
+    /// PE VS_VERSION_INFO 的 ProductName 字段。
+    #[serde(default)]
+    pub pe_product_name: Option<String>,
+    /// PE VS_VERSION_INFO 的 FileVersion 字段。优先 StringFileInfo，否则 fallback 到 VS_FIXEDFILEINFO。
+    #[serde(default)]
+    pub pe_file_version: Option<String>,
+    /// 可执行文件的 SHA-256（小写十六进制）。扫描时若文件 ≤ 1 GB 才计算。
+    /// 用于和 catalog known_hashes / registry 用户指纹库比对，升级识别置信度。
+    #[serde(default)]
+    pub exe_sha256: Option<String>,
     /// 最后一次扫描或验证该安装记录的 UTC 时间。
     pub last_scanned_at: Option<String>,
 }
@@ -172,6 +186,11 @@ pub struct ScanClientInstallationsOptions {
     /// 是否把注册表中已保存的历史路径也纳入扫描。
     #[serde(default)]
     pub include_saved_paths: bool,
+    /// 是否包含 health != Ok 的残缺客户端（缺 data 目录、storage.cfg 等）。
+    /// 默认 false：扫描结果只返回结构完整的客户端，避免 QQ 文件夹单文件 exe
+    /// 之类的残缺候选污染列表。前端"显示残缺客户端"开关透传到这里。
+    #[serde(default)]
+    pub include_unhealthy: bool,
 }
 
 /// 表示 manifest 或下载链路的网络路由模式。
