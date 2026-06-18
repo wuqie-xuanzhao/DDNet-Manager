@@ -238,12 +238,8 @@ fn stable_installation_id_uses_fixed_fnv1a64_value() {
 
 #[test]
 fn infer_client_identity_matches_qmclient_path() {
-    let identity = scan::infer_client_identity(
-        std::path::Path::new("D:/Games/QmClient"),
-        None,
-        None,
-        None,
-    );
+    let identity =
+        scan::infer_client_identity(std::path::Path::new("D:/Games/QmClient"), None, None, None);
     assert_eq!(identity.client_id, "qmclient");
     assert_eq!(identity.display_name, "QmClient");
     assert_eq!(identity.install_source, ClientInstallSource::Manual);
@@ -280,32 +276,37 @@ fn infer_client_identity_falls_back_to_third_party_for_unknown_path() {
 // ===== PE 元信息优先级测试 =====
 
 #[test]
-fn infer_client_identity_prefers_pe_over_path_match() {
-    // 核心回归：路径含 "tclient" 子串会让路径匹配命中 taterclient，
-    // 但 PE 元信息显示是 BestProjectTeam / BestClient，应优先识别为 bestclient。
+fn infer_client_identity_falls_back_to_path_when_pe_indistinguishable() {
+    // 真实场景：PE 元信息是 "DDNet Team"/"DDNet"（5 个 entry 都匹配，match_catalog_by_pe
+    // 返回 None），路径含 "tclient" 子串 → 走路径匹配识别为 taterclient。
+    // 历史反例：旧逻辑会把任何 PE="DDNet Team" 的客户端识别为 ddnet 原版，导致
+    // QmClient/TaterClient/BestClient/Cactus 全部误判。
     let identity = scan::infer_client_identity(
         std::path::Path::new("D:/Games/tclient-fork/bestclient"),
-        Some("BestProjectTeam"),
-        Some("BestClient"),
+        Some("DDNet Team"),
+        Some("DDNet"),
         None,
     );
+    // 路径 "tclient" 命中 taterclient alias（顺序优先于 "bestclient"，因为 taterclient
+    // 在 CATALOG 中先定义），且 PE 不可区分不再覆盖路径匹配。
     assert_eq!(
-        identity.client_id, "bestclient",
-        "PE 元信息应覆盖路径匹配，避免 BestClient 误判为 taterclient"
+        identity.client_id, "taterclient",
+        "PE 不可区分时应 fallback 到路径匹配"
     );
-    assert_eq!(identity.display_name, "BestClient");
 }
 
 #[test]
-fn infer_client_identity_uses_pe_when_path_does_not_match_any_alias() {
-    // 路径无任何 alias 命中，但 PE 元信息匹配 ddnet → 应识别为 ddnet 而非 third_party
+fn infer_client_identity_returns_third_party_when_pe_indistinguishable_and_path_misses() {
+    // 路径无任何 alias 命中，PE 元信息 5 个 entry 都匹配（"DDNet Team"/"DDNet"）
+    // → match_catalog_by_pe 返回 None → 路径无命中 → third_party fallback。
+    // 历史反例：旧逻辑会把这种场景识别为 ddnet，错误归属。
     let identity = scan::infer_client_identity(
         std::path::Path::new("D:/MyStuff/random-folder"),
         Some("DDNet Team"),
         Some("DDNet"),
         None,
     );
-    assert_eq!(identity.client_id, "ddnet");
+    assert_eq!(identity.client_id, "third_party");
 }
 
 #[test]

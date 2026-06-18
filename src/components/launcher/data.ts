@@ -214,7 +214,7 @@ export const GAMES_DATA: GameConfig[] = buildGamesData([
     pe_company_names: [],
     pe_product_names: [],
     known_hashes: [],
-    update_source: { kind: "website", url: "https://cactuss.top/" },
-    upstream_url: "https://cactuss.top/"
+    update_source: { kind: "website", url: "https://cactusss.vercel.app/" },
+    upstream_url: "https://cactusss.vercel.app/"
   }
 ]);

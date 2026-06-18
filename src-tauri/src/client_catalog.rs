@@ -89,6 +89,8 @@ const CATALOG: &[ClientCatalogEntry] = &[
         executable_candidates: COMMON_EXECUTABLES,
         required_markers: REQUIRED_MARKERS,
         // DDNet 官方上游 build 脚本里硬编码的 VS_VERSION_INFO。
+        // 注意：所有衍生客户端（QmClient/TaterClient/BestClient/Cactus）都继承这组值，
+        // match_catalog_by_pe 在多客户端共享同一 PE 时返回 None，识别走路径 + sha256。
         pe_company_names: &["DDNet Team", "ddnet-team", "ddnet team"],
         pe_product_names: &["DDNet", "DDNet Client"],
         known_hashes: &[],
@@ -101,10 +103,13 @@ const CATALOG: &[ClientCatalogEntry] = &[
         aliases: &["qmclient", "qm-client"],
         executable_candidates: COMMON_EXECUTABLES,
         required_markers: REQUIRED_MARKERS,
-        // 推断依据：GitHub owner=wxj881027, repo=QmClient。
-        // 实际填值请用 ResourceHacker 检查 DDNet.exe 后修正。
-        pe_company_names: &["wxj881027", "QmClient", "Qm Client"],
-        pe_product_names: &["QmClient", "Qm Client"],
+        // 实测值（E:\个人资料\Game\DDnet\客户端\QmClient\DDNet.exe）：
+        // CompanyName="DDNet Team", ProductName="DDNet"。
+        // DDNet 上游 CMakeLists.txt 硬编码 VS_VERSION_INFO，所有衍生客户端都继承，
+        // PE 元信息无法区分衍生客户端，仅用于识别"DDNet 家族"。
+        // 具体客户端识别靠路径 + sha256 指纹。
+        pe_company_names: &["DDNet Team"],
+        pe_product_names: &["DDNet"],
         known_hashes: &[],
         update_source: UpdateSourceDescriptor::GithubRelease {
             owner: "wxj881027",
@@ -121,9 +126,11 @@ const CATALOG: &[ClientCatalogEntry] = &[
         aliases: &["taterclient", "tclient", "t-client"],
         executable_candidates: COMMON_EXECUTABLES,
         required_markers: REQUIRED_MARKERS,
-        // 推断依据：GitHub owner=TaterClient, repo=TClient。
-        pe_company_names: &["TaterClient", "TaterClient Team", "TClient"],
-        pe_product_names: &["TaterClient", "TClient"],
+        // 实测值（E:\个人资料\Game\DDnet\客户端\TClient\DDNet.exe）：
+        // CompanyName="DDNet Team", ProductName="DDNet"。继承 DDNet 上游硬编码。
+        // PE 元信息无法区分衍生客户端，仅用于识别"DDNet 家族"。
+        pe_company_names: &["DDNet Team"],
+        pe_product_names: &["DDNet"],
         known_hashes: &[],
         update_source: UpdateSourceDescriptor::GithubRelease {
             owner: "TaterClient",
@@ -140,9 +147,11 @@ const CATALOG: &[ClientCatalogEntry] = &[
         aliases: &["bestclient", "best-client"],
         executable_candidates: COMMON_EXECUTABLES,
         required_markers: REQUIRED_MARKERS,
-        // 推断依据：GitHub owner=BestProjectTeam, repo=BestClient。
-        pe_company_names: &["BestProjectTeam", "BestClient", "Best Project"],
-        pe_product_names: &["BestClient", "Best Client"],
+        // 实测值（E:\个人资料\Game\DDnet\客户端\bestclient\DDNet.exe）：
+        // CompanyName="DDNet Team", ProductName="DDNet"。继承 DDNet 上游硬编码。
+        // PE 元信息无法区分衍生客户端，仅用于识别"DDNet 家族"。
+        pe_company_names: &["DDNet Team"],
+        pe_product_names: &["DDNet"],
         known_hashes: &[],
         update_source: UpdateSourceDescriptor::GithubRelease {
             owner: "BestProjectTeam",
@@ -159,14 +168,16 @@ const CATALOG: &[ClientCatalogEntry] = &[
         aliases: &["cactusclient", "cactus-client", "cactus"],
         executable_candidates: COMMON_EXECUTABLES,
         required_markers: REQUIRED_MARKERS,
-        // 推断依据：官网 cactuss.top，无 GitHub。
-        pe_company_names: &["CactusClient", "Cactus", "cactuss"],
-        pe_product_names: &["Cactus Client", "CactusClient", "Cactus"],
+        // 实测值（E:\个人资料\Game\DDnet\客户端\Cactus\DDNet.exe）：
+        // CompanyName="DDNet Team", ProductName="DDNet"。继承 DDNet 上游硬编码。
+        // PE 元信息无法区分衍生客户端，仅用于识别"DDNet 家族"。
+        pe_company_names: &["DDNet Team"],
+        pe_product_names: &["DDNet"],
         known_hashes: &[],
         update_source: UpdateSourceDescriptor::Website {
-            url: "https://cactuss.top/",
+            url: "https://cactusss.vercel.app/",
         },
-        upstream_url: Some("https://cactuss.top/"),
+        upstream_url: Some("https://cactusss.vercel.app/"),
     },
 ];
 
@@ -216,16 +227,25 @@ pub fn match_catalog_entry(path_text: &str) -> Option<&'static ClientCatalogEntr
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PeMatchStrength {
     /// CompanyName + ProductName 都匹配（最高置信度）。
+    ///
+    /// 注意：在当前 catalog 下永远不会返回 Strong —— 因为所有 DDNet 衍生客户端
+    /// 共享同一组 PE 值（"DDNet Team" / "DDNet"），任何"双字段匹配"都会让
+    /// 多个 entry 同时命中，`match_catalog_by_pe` 会直接返回 None。保留此变体
+    /// 是为了未来若出现 PE 唯一可识别的客户端时使用。
     Strong,
-    /// 只匹配 CompanyName 或 ProductName 之一。
+    /// 只匹配 CompanyName 或 ProductName 之一，或当前 catalog 下唯一匹配的 entry。
     Weak,
 }
 
 /// 根据 PE VS_VERSION_INFO 字段匹配 catalog entry。
 ///
-/// 匹配规则：CompanyName 与 ProductName 各算一分，取累计得分最高的 entry。
-/// 同分时返回 CATALOG 中靠前的（按定义顺序优先）。
-/// `None` 表示没有任何客户端匹配（应 fallback 到路径匹配）。
+/// **关键设计**：当 ≥ 2 个 catalog entry 都匹配同一组 PE 值时（即 PE 元信息无法
+/// 区分这些客户端，典型场景：所有 DDNet 衍生客户端 PE 都是 "DDNet Team"/"DDNet"），
+/// 返回 `None`，让识别走到路径匹配 + sha256 指纹。这是为了避免把 QmClient /
+/// TaterClient / BestClient / Cactus 等衍生客户端误识别为 ddnet 原版。
+///
+/// 只有当 PE 唯一匹配单个 entry 时（其他 entry 都不匹配），才返回 `(entry, Weak)`。
+/// `None` 表示 PE 元信息不可用或无法区分，应 fallback 到路径匹配。
 pub fn match_catalog_by_pe(
     company_name: Option<&str>,
     product_name: Option<&str>,
@@ -233,32 +253,36 @@ pub fn match_catalog_by_pe(
     let company_lower = company_name.map(|s| s.to_ascii_lowercase());
     let product_lower = product_name.map(|s| s.to_ascii_lowercase());
 
-    let mut best: Option<(&'static ClientCatalogEntry, u8)> = None;
+    let mut matches: Vec<&'static ClientCatalogEntry> = Vec::new();
     for entry in CATALOG.iter().filter(|e| e.client_id != "third_party") {
         // 跳过没有 PE 元信息规则的客户端（避免空候选误匹配）
         if entry.pe_company_names.is_empty() && entry.pe_product_names.is_empty() {
             continue;
         }
-        let company_match = company_lower
-            .as_ref()
-            .is_some_and(|c| entry.pe_company_names.iter().any(|n| n.to_ascii_lowercase() == *c));
-        let product_match = product_lower
-            .as_ref()
-            .is_some_and(|p| entry.pe_product_names.iter().any(|n| n.to_ascii_lowercase() == *p));
-        let strength: u8 = (company_match as u8) + (product_match as u8);
-        if strength > 0 && best.map_or(true, |(_, s)| strength > s) {
-            best = Some((entry, strength));
+        let company_match = company_lower.as_ref().is_some_and(|c| {
+            entry
+                .pe_company_names
+                .iter()
+                .any(|n| n.to_ascii_lowercase() == *c)
+        });
+        let product_match = product_lower.as_ref().is_some_and(|p| {
+            entry
+                .pe_product_names
+                .iter()
+                .any(|n| n.to_ascii_lowercase() == *p)
+        });
+        if company_match || product_match {
+            matches.push(entry);
         }
     }
 
-    best.map(|(entry, strength)| {
-        let s = if strength >= 2 {
-            PeMatchStrength::Strong
-        } else {
-            PeMatchStrength::Weak
-        };
-        (entry, s)
-    })
+    // 关键：≥2 个 entry 匹配意味着 PE 元信息无法区分这些客户端（如所有 DDNet 衍生
+    // 客户端 PE 都是 "DDNet Team"/"DDNet"），返回 None 让识别走到路径匹配 + sha256。
+    if matches.len() == 1 {
+        Some((matches[0], PeMatchStrength::Weak))
+    } else {
+        None
+    }
 }
 
 /// 根据 exe 的 sha256 匹配 catalog entry（known_hashes 内置指纹库）。

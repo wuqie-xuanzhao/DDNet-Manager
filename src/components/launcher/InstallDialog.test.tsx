@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InstallDialog } from "./InstallDialog";
 import type { useClientInstaller } from "@/hooks/useClientInstaller";
-import type { AppSettings, ClientCatalogEntry, ClientInstallation } from "@/types";
+import type { ClientCatalogEntry, ClientInstallation } from "@/types";
 
 // Mock framer-motion 让动画立即完成，避免 jsdom 下卡住
 vi.mock("framer-motion", () => ({
@@ -33,19 +33,6 @@ vi.mock("@/lib/tauri", () => ({
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ hide: vi.fn() })
 }));
-
-const baseSettings: AppSettings = {
-  network_route: null,
-  scan_excluded_paths: [],
-  scan_max_results: null,
-  scan_timeout_secs: null,
-  close_panel_after_launch: true,
-  auto_check_updates: false,
-  autostart: false,
-  exit_game_show_launcher: true,
-  close_behavior: "ask",
-  allow_silent_update: true
-};
 
 function makeClient(overrides: Partial<ClientInstallation> = {}): ClientInstallation {
   return {
@@ -104,7 +91,7 @@ const githubCatalogEntry: ClientCatalogEntry = {
 const websiteCatalogEntry: ClientCatalogEntry = {
   ...githubCatalogEntry,
   client_id: "cactusclient",
-  update_source: { kind: "website", url: "https://cactuss.top/" }
+  update_source: { kind: "website", url: "https://cactusss.vercel.app/" }
 };
 
 const noneCatalogEntry: ClientCatalogEntry = {
@@ -172,7 +159,7 @@ describe("InstallDialog", () => {
       state: { kind: "installed", version: null, latest: null, needsUpdate: false, assetSize: null, releaseUrl: null }
     });
     render(<InstallDialog installer={installer} displayName="Cactus Client" gameId="cactusclient" />);
-    expect(screen.getByText("打开官网下载")).toHaveAttribute("href", "https://cactuss.top/");
+    expect(screen.getByText("打开官网下载")).toHaveAttribute("href", "https://cactusss.vercel.app/");
     // 不应该显示 GitHub Release 链接（website 源不显示版本卡）
     expect(screen.queryByText("GitHub Release")).not.toBeInTheDocument();
   });
