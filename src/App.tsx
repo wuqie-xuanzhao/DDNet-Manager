@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AnimatePresence, motion } from "framer-motion";
 import { Gamepad, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type UIEvent, type WheelEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import logoMark from "./assets/logo.svg";
 import { GAMES_DATA, GAME_ICON_MAP, type LauncherGameId } from "./components/launcher/data";
 import { ConfirmExitModal, PostDetailModal } from "./components/launcher/Dialogs";
@@ -182,7 +182,7 @@ export default function App() {
       fallbackUrl: defaultBg
     };
   }, [isLibraryOpen, hoveredGameId, activeGameId, customBgs, activeGame]);
-  const repeatedGames = useMemo(() => [...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA, ...GAMES_DATA], []);
+  const repeatedGames = useMemo(() => GAMES_DATA, []);
   const canLaunch = Boolean(launchReadiness?.can_launch) && launcherState === "ready";
   const primaryDisabled = !tauriRuntime || launcherState === "validating" || launcherState === "launching" || launcherState === "running";
 
@@ -219,8 +219,8 @@ export default function App() {
     setDisplayedGameId(activeGameId);
     scrollTargetRef.current = null;
     if (trackRef.current) {
-      const itemWidth = 196;
-      trackRef.current.scrollLeft = itemWidth * GAMES_DATA.length * 2;
+      // 线性滚动：库打开时滚回最左，让用户从头看起
+      trackRef.current.scrollLeft = 0;
     }
   }, [activeGameId, isLibraryOpen]);
 
@@ -259,6 +259,10 @@ export default function App() {
     scrollTargetRef.current ??= container.scrollLeft;
     scrollTargetRef.current += event.deltaY * 1.1;
 
+    // 线性滚动：到边界时 clamp，不再 wrap-around
+    const maxScroll = container.scrollWidth - container.clientWidth;
+    scrollTargetRef.current = Math.max(0, Math.min(maxScroll, scrollTargetRef.current));
+
     const animateScroll = () => {
       if (!trackRef.current || scrollTargetRef.current === null) {
         return;
@@ -280,26 +284,6 @@ export default function App() {
     };
 
     animationFrameRef.current ??= requestAnimationFrame(animateScroll);
-  };
-
-  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
-    const container = event.currentTarget;
-    const itemWidth = 196;
-    const singleSetWidth = itemWidth * GAMES_DATA.length;
-    let delta = 0;
-
-    if (container.scrollLeft >= singleSetWidth * 3) {
-      delta = -singleSetWidth;
-    } else if (container.scrollLeft <= singleSetWidth) {
-      delta = singleSetWidth;
-    }
-
-    if (delta !== 0) {
-      container.scrollLeft += delta;
-      if (scrollTargetRef.current !== null) {
-        scrollTargetRef.current += delta;
-      }
-    }
   };
 
   const handleLaunchGame = async () => {
@@ -617,7 +601,7 @@ export default function App() {
                   <div className="relative w-full overflow-hidden">
                     <div className="absolute left-0 top-0 bottom-0 w-16 bg-gradient-to-r from-[#111215] to-transparent pointer-events-none z-10" />
                     <div className="absolute right-0 top-0 bottom-0 w-16 bg-gradient-to-l from-[#111215] to-transparent pointer-events-none z-10" />
-                    <div ref={trackRef} onWheel={handleWheel} onScroll={handleScroll} className="flex items-center space-x-4 overflow-x-auto py-2 px-12 scrollbar-none" style={{ scrollBehavior: "auto" }}>
+                    <div ref={trackRef} onWheel={handleWheel} className="flex items-center space-x-4 overflow-x-auto py-2 px-12 scrollbar-none" style={{ scrollBehavior: "auto" }}>
                       {repeatedGames.map((game, index) => {
                         const isSelected = game.id === activeGameId;
                         const isCardHovered = index === hoveredCardIndex;
