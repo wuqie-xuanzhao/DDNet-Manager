@@ -101,6 +101,8 @@ const externalJob: DownloadJob = {
 const mockSettings = {
   network_route: null,
   scan_excluded_paths: [],
+  scan_max_results: null,
+  scan_timeout_secs: null,
   close_panel_after_launch: true,
   auto_check_updates: false,
   autostart: false,
