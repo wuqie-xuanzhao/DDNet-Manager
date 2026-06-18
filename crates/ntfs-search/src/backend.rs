@@ -8,9 +8,38 @@ use crate::error::ScanError;
 use crate::options::{BackendKind, FileEntry, NtfsScanOptions, ProgressEvent};
 use crate::ProgressSink;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio_util::sync::CancellationToken;
+
+/// Per-drive backend 选型缓存。
+///
+/// 第一次扫描发现某盘 Mft/Usn 都不可用时记录"该盘用 Walkdir"，下次扫描同盘
+/// 直接走 Walkdir，跳过无效探测。key 是 drive letter（小写），value 是实际
+/// 能跑通的 backend kind。子模块（windows/fallback_to_walkdir）写入；
+/// `select_backend_for_root` 读取。
+static BACKEND_FALLBACK_CACHE: OnceLock<Mutex<HashMap<char, BackendKind>>> = OnceLock::new();
+
+fn backend_fallback_cache() -> &'static Mutex<HashMap<char, BackendKind>> {
+    BACKEND_FALLBACK_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 子模块记录"该 drive 实际能跑通的 backend"，下次 select 直接命中。
+pub(super) fn remember_backend_for_drive(drive: char, kind: BackendKind) {
+    if let Ok(mut cache) = backend_fallback_cache().lock() {
+        cache.insert(drive.to_ascii_lowercase(), kind);
+    }
+}
+
+/// 查询某 drive 的缓存 backend。未扫描过返回 None。
+pub(super) fn lookup_cached_backend(drive: char) -> Option<BackendKind> {
+    backend_fallback_cache()
+        .lock()
+        .ok()?
+        .get(&drive.to_ascii_lowercase())
+        .copied()
+}
 
 mod walkdir;
 
@@ -36,8 +65,11 @@ pub(super) trait Backend: Send + Sync {
 /// - Windows 上 v0.2：尝试 USN backend（普通用户路径）。admin $MFT 路径留 M3 实现。
 /// - 其他平台：直接 Walkdir。
 pub(super) fn select_backend_for_root(root: &Path) -> SelectedBackend {
+    // 优先查 per-drive 缓存：上次扫描发现该盘走 Walkdir 的，直接命中跳过探测。
     let requested = if cfg!(windows) {
-        probe_windows_backend_kind(root)
+        let cached = windows::volume::path_to_drive_letter(root)
+            .and_then(lookup_cached_backend);
+        cached.unwrap_or_else(|| probe_windows_backend_kind(root))
     } else {
         BackendKind::Walkdir
     };
@@ -255,5 +287,14 @@ mod tests {
             normalize_drive_root(PathBuf::from(r"D:\Steam")),
             PathBuf::from(r"D:\Steam")
         );
+    }
+
+    #[test]
+    fn backend_cache_roundtrip_lowercases_drive_letter() {
+        // 清空：用小写 d 写入，大写 D 查询也能命中（内部统一小写）
+        remember_backend_for_drive('D', BackendKind::Walkdir);
+        assert_eq!(lookup_cached_backend('D'), Some(BackendKind::Walkdir));
+        assert_eq!(lookup_cached_backend('d'), Some(BackendKind::Walkdir));
+        assert_eq!(lookup_cached_backend('E'), None);
     }
 }

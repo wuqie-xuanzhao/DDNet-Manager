@@ -146,6 +146,9 @@ impl Backend for UsnBackend {
 ///
 /// `DriveStarted` 在顶层 scan_all_roots 已 emit 一次（backend=probe 结果，通常是 Mft）；
 /// 这里再 emit 一次是为了让前端事件流准确反映"实际接管扫描的 backend"。
+///
+/// 同时把"该 drive 走 Walkdir"写入 per-drive 缓存，下次扫描同盘直接命中，
+/// 跳过 Mft/Usn 无效探测。
 async fn fallback_to_walkdir(
     root: &Path,
     opts: &NtfsScanOptions,
@@ -163,6 +166,9 @@ async fn fallback_to_walkdir(
         root: root.to_path_buf(),
         backend: BackendKind::Walkdir,
     });
+    if let Some(drive) = volume::path_to_drive_letter(root) {
+        super::remember_backend_for_drive(drive, BackendKind::Walkdir);
+    }
     WalkdirBackend.scan_root(root, opts, progress, cancel).await
 }
 
