@@ -10,6 +10,11 @@ use crate::ProgressSink;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// 单个 root 的扫描任务句柄：root 路径 + 后台异步扫描的 JoinHandle。
+/// 拆出 type alias 是为了把过长的 `Vec<(PathBuf, JoinHandle<Result<...>>)>`
+/// 从函数体内挪出来（clippy::type_complexity）。
+type ScanTask = (PathBuf, tokio::task::JoinHandle<Result<Vec<FileEntry>, ScanError>>);
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio_util::sync::CancellationToken;
 
@@ -184,8 +189,7 @@ pub(super) async fn scan_all_roots(
     let max_results = opts.max_results;
 
     // spawn 所有盘的 scan_root 并发执行；保留 (root, task) 用于 join 后聚合。
-    let mut tasks: Vec<(PathBuf, tokio::task::JoinHandle<Result<Vec<FileEntry>, ScanError>>)> =
-        Vec::with_capacity(selected.len());
+    let mut tasks: Vec<ScanTask> = Vec::with_capacity(selected.len());
 
     for (root, selected_backend) in selected {
         if cancel.is_cancelled() {

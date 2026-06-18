@@ -4,8 +4,6 @@ import {
   checkClientUpdate,
   createShortcuts,
   getClientCatalog,
-  installDownloadedUpdate,
-  isTauriRuntime,
   launchClient,
   listClientInstallations,
   removeClientInstallation,
@@ -165,6 +163,22 @@ export function useClientInstaller(params: {
     }
   }, [gameId, tauriRuntime]);
 
+  /// 把 release 元数据合并到当前 installed state。
+  /// 只在 state 是 installed 时刷新 latest/needsUpdate/assetSize/releaseUrl。
+  /// 必须声明在 fetchRelease 前（fetchRelease 的缓存命中分支会调它）。
+  const applyReleaseToState = useCallback((check: ClientUpdateCheck | null) => {
+    setState((prev) => {
+      if (prev.kind !== "installed") return prev;
+      return {
+        ...prev,
+        latest: check?.latest_version ?? null,
+        needsUpdate: Boolean(check?.needs_update),
+        assetSize: check?.asset.size ?? null,
+        releaseUrl: check?.action_url ?? null
+      };
+    });
+  }, []);
+
   /// 拉当前 tab 对应客户端的 GitHub Release 元数据。命中 5min 缓存直接返回。
   /// release 拉到后，如果当前是 installed 状态，刷新 latest / needsUpdate / assetSize / releaseUrl。
   const fetchRelease = useCallback(async () => {
@@ -223,22 +237,7 @@ export function useClientInstaller(params: {
     } finally {
       releaseFetchingRef.current = false;
     }
-  }, [appSettings.network_route, gameId, tauriRuntime]);
-
-  /// 把 release 元数据合并到当前 installed state。
-  /// 只在 state 是 installed 时刷新 latest/needsUpdate/assetSize/releaseUrl。
-  const applyReleaseToState = useCallback((check: ClientUpdateCheck | null) => {
-    setState((prev) => {
-      if (prev.kind !== "installed") return prev;
-      return {
-        ...prev,
-        latest: check?.latest_version ?? null,
-        needsUpdate: Boolean(check?.needs_update),
-        assetSize: check?.asset.size ?? null,
-        releaseUrl: check?.action_url ?? null
-      };
-    });
-  }, []);
+  }, [appSettings.network_route, gameId, tauriRuntime, applyReleaseToState]);
 
   /// 启动时：先 refreshFromRegistry，再 fetchRelease。
   useEffect(() => {
@@ -456,6 +455,11 @@ export function useClientInstaller(params: {
         });
         upsertedId = upserted.id;
         setClient(upserted);
+        // pendingShortcutOptionsRef 在事件回调（非 effect）里写：beginInstall 是用户
+        // 触发的安装动作，install-completed 事件触发时读它决定是否调 create_shortcuts。
+        // react-hooks/immutability 规则把"ref 在 effect 里被读"判定为不可在外部写，
+        // 这里是用户事件触发，不在 effect 链上，eslint-disable 显式豁免。
+        // eslint-disable-next-line react-hooks/immutability
         pendingShortcutOptionsRef.current = { desktop: params.desktop, startMenu: params.startMenu };
         setInstallDialogOpen(false);
         await startDownloadFor(upserted);

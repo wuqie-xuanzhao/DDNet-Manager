@@ -40,8 +40,8 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerErr
 
     let identity = infer_client_identity(
         path,
-        pe_info.as_ref().map(|v| v.company_name.as_deref()).flatten(),
-        pe_info.as_ref().map(|v| v.product_name.as_deref()).flatten(),
+        pe_info.as_ref().and_then(|v| v.company_name.as_deref()),
+        pe_info.as_ref().and_then(|v| v.product_name.as_deref()),
         exe_sha256.as_deref(),
     );
 
@@ -130,10 +130,7 @@ fn missing_items_for_health(health: &ClientHealth) -> Vec<String> {
     }
 }
 
-fn confidence_for_identity(
-    identity: &ClientIdentity,
-    health: &ClientHealth,
-) -> ClientConfidence {
+fn confidence_for_identity(identity: &ClientIdentity, health: &ClientHealth) -> ClientConfidence {
     if health != &ClientHealth::Ok {
         return ClientConfidence::Partial;
     }

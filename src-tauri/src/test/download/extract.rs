@@ -137,8 +137,8 @@ fn extract_zip_to_staging_extracts_many_files_in_parallel() {
 
     for (name, expected) in &entries {
         let path = staging_dir.join(name);
-        let actual = fs::read(&path)
-            .unwrap_or_else(|e| panic!("解压文件 {name} 应存在且可读：{e}"));
+        let actual =
+            fs::read(&path).unwrap_or_else(|e| panic!("解压文件 {name} 应存在且可读：{e}"));
         assert_eq!(actual, *expected, "解压文件 {name} 内容应匹配");
     }
 }
@@ -207,8 +207,19 @@ fn extract_zip_to_staging_preserves_directory_structure_in_parallel() {
         b"exe"
     );
     assert_eq!(
-        fs::read(staging_dir.join("QmClient").join("data").join("maps").join("a.map")).unwrap(),
+        fs::read(
+            staging_dir
+                .join("QmClient")
+                .join("data")
+                .join("maps")
+                .join("a.map")
+        )
+        .unwrap(),
         b"a"
     );
-    assert!(staging_dir.join("QmClient").join("data").join("mapres").is_dir());
+    assert!(staging_dir
+        .join("QmClient")
+        .join("data")
+        .join("mapres")
+        .is_dir());
 }

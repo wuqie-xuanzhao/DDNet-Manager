@@ -46,10 +46,10 @@ describe("useClientScanner", () => {
     });
 
     act(() => {
-      emitHandler!({ payload: { kind: "drive_started", root: "C:\\", backend: "mft" } });
+      emitHandler?.({ payload: { kind: "drive_started", root: "C:\\", backend: "mft" } });
     });
     act(() => {
-      emitHandler!({ payload: { kind: "entries_found", found: 7 } });
+      emitHandler?.({ payload: { kind: "entries_found", found: 7 } });
     });
 
     expect(result.current.events).toHaveLength(2);
@@ -66,7 +66,7 @@ describe("useClientScanner", () => {
     });
 
     act(() => {
-      emitHandler!({ payload: { kind: "drive_completed", root: "C:\\", scanned: 100, found: 3 } });
+      emitHandler?.({ payload: { kind: "drive_completed", root: "C:\\", scanned: 100, found: 3 } });
     });
 
     expect(result.current.events).toHaveLength(1);
@@ -82,7 +82,7 @@ describe("useClientScanner", () => {
     await waitFor(() => expect(emitHandler).not.toBeNull());
 
     act(() => {
-      emitHandler!({ payload: { kind: "entries_found", found: 1 } });
+      emitHandler?.({ payload: { kind: "entries_found", found: 1 } });
     });
     expect(result.current.events).toHaveLength(1);
 
@@ -142,7 +142,7 @@ describe("useClientScanner", () => {
     await waitFor(() => expect(emitHandler).not.toBeNull());
 
     act(() => {
-      emitHandler!({ payload: { kind: "entries_found", found: 5 } });
+      emitHandler?.({ payload: { kind: "entries_found", found: 5 } });
     });
     act(() => {
       result.current.reset();

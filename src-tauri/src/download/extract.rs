@@ -108,18 +108,16 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
             .chunks(chunk_size)
             .map(|chunk| {
                 s.spawn(move || -> Result<(), String> {
-                    let thread_file = fs::File::open(zip_path).map_err(|error| {
-                        format!("failed to reopen zip file in worker: {error}")
-                    })?;
+                    let thread_file = fs::File::open(zip_path)
+                        .map_err(|error| format!("failed to reopen zip file in worker: {error}"))?;
                     let mut thread_archive = zip::ZipArchive::new(thread_file)
                         .map_err(|error| format!("invalid zip file in worker: {error}"))?;
                     for (index, output_path) in chunk {
                         let mut entry = thread_archive
                             .by_index(*index)
                             .map_err(|error| format!("failed to read zip entry: {error}"))?;
-                        let mut output = fs::File::create(output_path).map_err(|error| {
-                            format!("failed to create extracted file: {error}")
-                        })?;
+                        let mut output = fs::File::create(output_path)
+                            .map_err(|error| format!("failed to create extracted file: {error}"))?;
                         copy_zip_entry(&mut entry, &mut output)?;
                     }
                     Ok(())

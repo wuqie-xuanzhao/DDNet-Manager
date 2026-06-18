@@ -216,8 +216,9 @@ function renderState(
           : null;
       // 多副本切换器：仅 clients.length > 1 时显示，放在主按钮和小链接之间
       const showInstanceSwitcher = installer.clients.length > 1;
+      const currentClientId = installer.client?.id ?? "";
       const currentIndex = installer.client
-        ? installer.clients.findIndex((c) => c.id === installer.client!.id) + 1
+        ? installer.clients.findIndex((c) => c.id === currentClientId) + 1
         : 1;
       return (
         <motion.div
