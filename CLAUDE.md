@@ -27,7 +27,7 @@ DDNet Manager 是面向 DDNet / QmClient 玩家的第三方游戏启动器与管
 - **后端**：Tauri v2 + Rust 2021 + tokio + reqwest + serde
 - **包管理**：Bun（JS/TS）、Cargo（Rust）
 - **命令编排**：Makefile
-- **目标平台**：Windows 优先，窗口使用 `windows_subsystem = "windows"`
+- **目标平台**：Windows 为主（生产级），macOS 编译级支持（CI 产出 `.dmg`/`.app`，端到端运行验证待补）。窗口使用 `windows_subsystem = "windows"`
 
 ## 命令规则
 
@@ -65,6 +65,8 @@ make check-lint
 `make check-lint` 底层调用 `bash scripts/check_lint.sh`。Windows 环境需要可用的 Bash，例如 Git Bash、WSL Bash 或系统可发现的 `bash.exe`。
 
 当前 `Makefile` 使用 `powershell.exe` 作为 shell，这是 Windows 优先项目的明确约束。非 Windows CI 或开发环境需要先提供 PowerShell，或新增独立的 POSIX Makefile / CI 脚本后再运行 make 目标。
+
+`release.yml` 的 macOS matrix 不依赖 Makefile，直接调 `bun install --frozen-lockfile` + `tauri-apps/tauri-action`，绕过 PowerShell 约束。`make check-lint` 只在 Windows runner 上跑。
 
 ## 架构概览
 

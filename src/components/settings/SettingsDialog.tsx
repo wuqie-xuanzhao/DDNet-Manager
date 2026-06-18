@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Loader2, ArrowUpRight, CheckCircle2, AlertCircle, Check, Trash2, FolderPlus } from "lucide-react";
+import { X, Loader2, ArrowUpRight, CheckCircle2, AlertCircle, Check, Trash2, FolderPlus, Download } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ClientManager } from "@/components/clients/ClientManager";
 import { UpdatePanel } from "@/components/update/UpdatePanel";
@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 import { getAppVersion, checkAppUpdate } from "@/lib/tauri";
+import type { useAppUpdater } from "@/hooks/useAppUpdater";
 import type { AppSettings, LauncherState, LocalSmokeAutomationConfig, AppUpdateCheck } from "@/types";
 import logoMark from "@/assets/logo.svg";
 
@@ -39,6 +40,10 @@ type SettingsDialogProps = {
   onClientPathChange: (value: string) => void;
   onBrowse: () => Promise<void>;
   onValidate: () => Promise<void>;
+  /// 启动器自更新 hook 实例。"立即更新"按钮调用其 downloadAndInstall；
+  /// 进度展示仍在右上角 UpdateControlButton，SettingsDialog 只负责触发。
+  /// undefined 时（非 tauriRuntime）退回"前往下载"跳浏览器。
+  appUpdater?: ReturnType<typeof useAppUpdater>;
 };
 
 const sections: { id: SettingsSectionId; label: string }[] = [
@@ -71,7 +76,7 @@ function StepperField(props: {
   onChange: (v: number | null) => void;
 }) {
   const isDefault = props.value === null;
-  const display = isDefault ? props.defaultValue : props.value!;
+  const display = isDefault ? props.defaultValue : (props.value ?? props.defaultValue);
   const clamp = (n: number) => Math.min(props.max, Math.max(props.min, n));
 
   return (
@@ -696,11 +701,21 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   </div>
                   <button
                     type="button"
-                    onClick={() => window.open(updateInfo.release_url, "_blank", "noreferrer")}
+                    onClick={() => {
+                      if (props.appUpdater) {
+                        void props.appUpdater.downloadAndInstall();
+                      } else if (updateInfo.release_url) {
+                        window.open(updateInfo.release_url, "_blank", "noreferrer");
+                      }
+                    }}
                     className="flex items-center space-x-1 px-3.5 py-1.5 rounded-lg font-bold bg-amber-500 text-black hover:bg-amber-400 transition-all cursor-pointer focus:outline-none"
                   >
-                    <span>前往下载</span>
-                    <ArrowUpRight className="w-3.5 h-3.5" />
+                    <span>立即更新</span>
+                    {props.appUpdater ? (
+                      <Download className="w-3.5 h-3.5" />
+                    ) : (
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    )}
                   </button>
                 </div>
                 {updateInfo.release_notes && (

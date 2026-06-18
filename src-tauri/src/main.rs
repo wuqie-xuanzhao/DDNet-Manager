@@ -65,9 +65,11 @@ fn main() {
     let run_result = tauri::Builder::default()
         .manage(manager)
         .manage(registry)
-        .manage(commands::ScanCancelState::default())
+        .manage(commands::scan::ScanCancelState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
             // 仅在用户主动关闭主窗口时退出整个 app，清理托盘图标。
             // 用 CloseRequested 而非 Destroyed：Destroyed 在 transparent + decorations:false
@@ -77,7 +79,9 @@ fn main() {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     // 显式销毁托盘图标（review issue #5），不依赖 OS 进程退出回收。
-                    let _ = window.app_handle().remove_tray_by_id(crate::tray::MAIN_TRAY_ID);
+                    let _ = window
+                        .app_handle()
+                        .remove_tray_by_id(crate::tray::MAIN_TRAY_ID);
                     window.app_handle().exit(0);
                 }
             }
@@ -105,8 +109,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::__webview_console,
             commands::validate_client_dir,
-            commands::scan_clients_via_mft,
-            commands::cancel_scan_clients,
+            commands::scan::scan_clients_via_mft,
+            commands::scan::cancel_scan_clients,
             commands::upsert_client_installation,
             commands::remove_client_installation,
             commands::set_default_client,

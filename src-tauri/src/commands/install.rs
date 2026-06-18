@@ -277,6 +277,10 @@ fn finish_install_success(
 /// 下载安装成功后记录 sha256 指纹。从刚落地的 exe 读 PE VS_VERSION_INFO，
 /// 把 (sha256, client_id, version, company, product) 一起写到 registry。
 /// 失败不阻断 install 主流程。
+///
+/// macOS 上：`ntfs_search::read_version_info` 是 PE 解析，对 Mach-O 不工作，
+/// 此调用一定 Err，company/product 落到 (None, None)。这是预期行为 —— macOS
+/// 客户端识别只靠路径 + sha256，PE 元信息通道在 macOS 上整个不适用。
 fn record_fingerprint_after_install(
     context: &InstallContext,
     client: &ClientInstallation,
@@ -287,14 +291,16 @@ fn record_fingerprint_after_install(
         Err(_) => (None, None),
     };
     let version_str = context.job.version.as_str();
-    context.registry.record_client_fingerprint(FingerprintRecord {
-        sha256: &context.job.sha256,
-        client_id: &client.client_id,
-        display_name: &client.display_name,
-        version: Some(version_str),
-        company_name: company.as_deref(),
-        product_name: product.as_deref(),
-    })
+    context
+        .registry
+        .record_client_fingerprint(FingerprintRecord {
+            sha256: &context.job.sha256,
+            client_id: &client.client_id,
+            display_name: &client.display_name,
+            version: Some(version_str),
+            company_name: company.as_deref(),
+            product_name: product.as_deref(),
+        })
 }
 
 fn finish_install_failure(

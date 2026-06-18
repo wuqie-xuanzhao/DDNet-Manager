@@ -9,9 +9,29 @@ permissions:
   contents: write
 
 jobs:
-  tauri-build:
-    name: Tauri Build
-    runs-on: windows-latest
+  release:
+    name: Build & Publish (${{ matrix.platform }})
+    # 使用 environment 层的密钥（TAURI_SIGNING_PRIVATE_KEY 等），与仓库层 secret 隔离。
+    # environment "release" 应在仓库 Settings → Environments 创建，并配置：
+    #   - Deployment branches: Selected branches → 只允许 tag v* 触发
+    #   - Required reviewers: 至少 1 人 approve（多人协作时启用）
+    environment: release
+    strategy:
+      # 单个平台失败不阻塞另一个平台产出 release 资产
+      fail-fast: false
+      matrix:
+        include:
+          # Windows x64：NSIS installer（updaterJsonPreferNsis=true 让 latest.json 优先匹配）
+          - platform: windows
+            os: windows-latest
+            args: --target x86_64-pc-windows-msvc
+          # macOS arm64（Apple Silicon）：dmg + .app.tar.gz
+          # 当前未配 codesign/notarization，产物为 ad-hoc 签名，首次启动会有 Gatekeeper 警告。
+          # 端到端运行验证留待以后有 macOS 验证环境补；本次只确保 CI 编译通过。
+          - platform: macos
+            os: macos-latest
+            args: --target aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -24,8 +44,11 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin' || 'x86_64-pc-windows-msvc' }}
 
-      - name: Install command tools
+      - name: Install make + Git Bash（make check-lint 需要 bash；仅 Windows）
+        if: matrix.platform == 'windows'
         shell: powershell
         run: |
           choco install make --no-progress -y
@@ -56,29 +79,36 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Check command tools
+      - name: Check command tools（仅 Windows）
+        if: matrix.platform == 'windows'
         run: |
           make --version
           bash --version
 
-      - name: Run quality gate
+      - name: Install frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run quality gate（仅 Windows：Makefile 是 PowerShell-only）
+        if: matrix.platform == 'windows'
         run: make check-lint
 
-      - name: Install frontend dependencies
-        run: make install-frozen
-
-      - name: Build Tauri bundles
-        run: make tauri-build
-
-      - name: Upload release bundles
-        uses: actions/upload-artifact@v4
+      - name: Build Tauri bundles + sign + upload
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Tauri updater 签名密钥（一次性本地 tauri signer generate 生成，
+          # 私钥 + 密码存到 environment "release" secret）。pubkey 已写入
+          # src-tauri/tauri.conf.json 的 plugins.updater.pubkey。
+          # 跨平台通用：同一组密钥同时签 Windows .nsis.zip.sig 和 macOS .app.tar.gz.sig。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          name: ddnet-manager-windows-${{ github.ref_name }}
-          path: src-tauri/target/release/bundle/**
-          if-no-files-found: error
-
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: src-tauri/target/release/bundle/**
-          fail_on_unmatched_files: true
+          tagName: ${{ github.ref_name }}
+          releaseName: "DDNet-Manager ${{ github.ref_name }}"
+          releaseDraft: false
+          prerelease: false
+          # updater 优先匹配 NSIS installer（仅 Windows；macOS 不适用）
+          updaterJsonPreferNsis: ${{ matrix.platform == 'windows' }}
+          # 用 bun 跑 tauri CLI（与 Makefile/CLAUDE.md 的 bun 优先约束一致）
+          tauriScript: bun run tauri
+          args: ${{ matrix.args }}

@@ -4,6 +4,8 @@ import type { AppUpdateCheck } from "../types";
 import { useAppUpdater } from "./useAppUpdater";
 
 const checkAppUpdate = vi.fn();
+const checkUpdater = vi.fn();
+const relaunch = vi.fn();
 
 vi.mock("../lib/tauri", () => ({
   checkAppUpdate: (...a: unknown[]) => checkAppUpdate(...a)
@@ -11,6 +13,14 @@ vi.mock("../lib/tauri", () => ({
 
 vi.mock("../lib/errors", () => ({
   getErrorMessage: (e: unknown) => (e instanceof Error ? e.message : String(e))
+}));
+
+vi.mock("@tauri-apps/plugin-updater", () => ({
+  check: (...a: unknown[]) => checkUpdater(...a)
+}));
+
+vi.mock("@tauri-apps/plugin-process", () => ({
+  relaunch: (...a: unknown[]) => relaunch(...a)
 }));
 
 const baseSettings = {
@@ -167,5 +177,95 @@ describe("useAppUpdater", () => {
     await new Promise((r) => setTimeout(r, 2000));
     expect(checkAppUpdate).not.toHaveBeenCalled();
     expect(result.current.state).toBe("idle");
+  });
+
+  // ===== downloadAndInstall 测试（新状态：downloading/installing/ready-to-restart）=====
+
+  /// 构造一个 fake Update，模拟 plugin-updater 的 downloadAndInstall 行为：
+  /// 调用 onEvent 触发 Started / Progress / Finished，然后 Promise resolve。
+  function makeFakeUpdate(opts?: { failWith?: Error }) {
+    return {
+      version: "0.2.0",
+      currentVersion: "0.1.0",
+      downloadAndInstall: vi.fn(async (onEvent: (event: { event: string; data: Record<string, unknown> }) => void) => {
+        if (opts?.failWith) throw opts.failWith;
+        onEvent({ event: "Started", data: { contentLength: 1000 } });
+        onEvent({ event: "Progress", data: { chunkLength: 400 } });
+        onEvent({ event: "Progress", data: { chunkLength: 600 } });
+        onEvent({ event: "Finished", data: {} });
+      }),
+      close: vi.fn(async () => {})
+    };
+  }
+
+  it("downloadAndInstall 流式更新 progress 并最终切到 ready-to-restart", async () => {
+    checkAppUpdate.mockResolvedValue(hasUpdateResult);
+    checkUpdater.mockResolvedValue(makeFakeUpdate());
+
+    const { result } = renderHook(() =>
+      useAppUpdater({
+        tauriRuntime: true,
+        appSettings: baseSettings as never
+      })
+    );
+
+    await waitFor(() => expect(result.current.state).toBe("has-update"), { timeout: 5000 });
+
+    await act(async () => {
+      await result.current.downloadAndInstall();
+    });
+
+    expect(checkUpdater).toHaveBeenCalledTimes(1);
+    expect(result.current.state).toBe("ready-to-restart");
+    // 流式进度最后一帧应是 1000/1000 = 100%
+    expect(result.current.progress).toBeNull(); // 完成后清空
+  });
+
+  it("downloadAndInstall 失败时 state 切 failed + installError 填充", async () => {
+    checkAppUpdate.mockResolvedValue(hasUpdateResult);
+    checkUpdater.mockResolvedValue(makeFakeUpdate({ failWith: new Error("签名校验失败") }));
+
+    const { result } = renderHook(() =>
+      useAppUpdater({
+        tauriRuntime: true,
+        appSettings: baseSettings as never
+      })
+    );
+
+    await waitFor(() => expect(result.current.state).toBe("has-update"), { timeout: 5000 });
+
+    await act(async () => {
+      await result.current.downloadAndInstall();
+    });
+
+    expect(result.current.state).toBe("failed");
+    expect(result.current.installError).toBe("签名校验失败");
+    expect(result.current.progress).toBeNull();
+  });
+
+  it("restartNow 调用 process.relaunch()", async () => {
+    checkAppUpdate.mockResolvedValue(hasUpdateResult);
+    checkUpdater.mockResolvedValue(makeFakeUpdate());
+
+    const { result } = renderHook(() =>
+      useAppUpdater({
+        tauriRuntime: true,
+        appSettings: baseSettings as never
+      })
+    );
+
+    await waitFor(() => expect(result.current.state).toBe("has-update"), { timeout: 5000 });
+
+    await act(async () => {
+      await result.current.downloadAndInstall();
+    });
+
+    expect(result.current.state).toBe("ready-to-restart");
+
+    await act(async () => {
+      await result.current.restartNow();
+    });
+
+    expect(relaunch).toHaveBeenCalledTimes(1);
   });
 });

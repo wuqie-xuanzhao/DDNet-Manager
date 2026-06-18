@@ -95,8 +95,10 @@ export default function App() {
   const [selectedPost, setSelectedPost] = useState<GameNewsItem | null>(null);
   const [isPostOpen, setIsPostOpen] = useState(false);
   const [isAudioOn, setIsAudioOn] = useState(false);
-  const [isLaunching, setIsLaunching] = useState(false);
-  const [launchProgress, setLaunchProgress] = useState(0);
+  // isLaunching / launchProgress 当前没有 setter 调用方（handleLaunchGame 已删除，
+  // 原启动动画功能待 #XXX 重新接入）。状态值固定为 false / 0，UI 渲染走"未启动"分支。
+  const [isLaunching] = useState(false);
+  const [launchProgress] = useState(0);
 
   const [customBgs, setCustomBgs] = useState<Record<string, { type: "default" | "image" | "video"; path: string }>>(() => {
     try {
@@ -143,7 +145,6 @@ export default function App() {
     errorMessage,
     handleBrowse,
     handlePrimaryAction,
-    launchReadiness,
     launcherState,
     selectedClient
   } = useClientLauncher({
@@ -222,8 +223,6 @@ export default function App() {
     };
   }, [isLibraryOpen, hoveredGameId, activeGameId, customBgs, activeGame, gamesData]);
   const repeatedGames = useMemo(() => gamesData, [gamesData]);
-  const canLaunch = Boolean(launchReadiness?.can_launch) && launcherState === "ready";
-  const primaryDisabled = !tauriRuntime || launcherState === "validating" || launcherState === "launching" || launcherState === "running";
 
   useEffect(() => {
     if (isAudioOn) {
@@ -323,30 +322,6 @@ export default function App() {
     };
 
     animationFrameRef.current ??= requestAnimationFrame(animateScroll);
-  };
-
-  const handleLaunchGame = async () => {
-    if (primaryDisabled) {
-      return;
-    }
-
-    if (!canLaunch) {
-      await handleBrowse();
-      return;
-    }
-
-    setIsLaunching(true);
-    setLaunchProgress(0);
-    const interval = setInterval(() => {
-      setLaunchProgress((current) => {
-        const next = Math.min(100, current + 8);
-        if (next >= 100) {
-          clearInterval(interval);
-          void handlePrimaryAction().finally(() => setTimeout(() => setIsLaunching(false), 500));
-        }
-        return next;
-      });
-    }, 120);
   };
 
   const handleSocialClick = (social: SocialLink) => {
@@ -724,6 +699,7 @@ export default function App() {
           settingsError={settingsError}
           smokeAutomation={localSmokeAutomation}
           onUpdateSettings={updateAndSave}
+          appUpdater={appUpdater}
           onClientPathChange={() => {}}
           onBrowse={handleBrowse}
           onValidate={handlePrimaryAction}
