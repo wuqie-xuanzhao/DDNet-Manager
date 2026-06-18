@@ -11,8 +11,13 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 use tauri::{AppHandle, Listener, Manager, PhysicalPosition};
 
 /// 构建系统托盘图标，并注册托盘事件与菜单 action 监听器。
+///
+/// tray id 固定为 `MAIN_TRAY_ID`，便于 main.rs 在 CloseRequested 时显式 destroy
+/// （review issue #5：避免托盘图标依赖 OS 进程退出回收）。
+pub const MAIN_TRAY_ID: &str = "ddnet-manager-main-tray";
+
 pub fn setup_tray(app: &tauri::App) -> Result<(), tauri::Error> {
-    let mut tray_builder = TrayIconBuilder::new().tooltip("DDNet Manager");
+    let mut tray_builder = TrayIconBuilder::with_id(MAIN_TRAY_ID).tooltip("DDNet Manager");
     if let Some(icon) = app.default_window_icon() {
         tray_builder = tray_builder.icon(icon.clone());
     }

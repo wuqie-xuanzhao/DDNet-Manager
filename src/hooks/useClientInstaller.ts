@@ -8,6 +8,7 @@ import {
   isTauriRuntime,
   launchClient,
   listClientInstallations,
+  removeClientInstallation,
   scanClientsViaMft,
   startUpdateDownload,
   upsertClientInstallation
@@ -101,6 +102,9 @@ export function useClientInstaller(params: {
   /// 同 gameId 匹配的所有客户端副本（用户装了多个 QmClient 时 > 1）。
   /// selectedClient 默认取 is_default 或第一个，用户可通过 selectClient() 切换。
   const [clients, setClients] = useState<ClientInstallation[]>([]);
+  /// 当前 gameId 对应的 catalog entry。InstallDialog 用它判断更新源类型
+  /// （github_release / ddnet_official 显示版本卡片；website/none 显示"打开官网下载"）。
+  const [catalogEntry, setCatalogEntry] = useState<ClientCatalogEntry | null>(null);
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [installDialogMode, setInstallDialogMode] = useState<InstallDialogMode>("install");
   const [scanning, setScanning] = useState(false);
@@ -171,6 +175,9 @@ export function useClientInstaller(params: {
     try {
       const catalog = await fetchCatalog();
       const entry = catalog.find((e) => e.client_id === catalogClientId);
+      if (entry) {
+        setCatalogEntry(entry);
+      }
       if (!entry) {
         releaseFetchingRef.current = false;
         return;
@@ -423,24 +430,39 @@ export function useClientInstaller(params: {
   const beginInstall = useCallback(
     async (params: { installDir: string; desktop: boolean; startMenu: boolean }) => {
       if (!tauriRuntime) return;
+      // install 模式（新建路径）：失败时回滚 upsert，避免下次 refresh 显示 installed
+      // 与 failed 文案矛盾（review issue #2）。update 模式不回滚（保留原记录）。
+      const shouldRollbackOnFailure = installDialogMode === "install";
+      let upsertedId: string | null = null;
       try {
-        // upsert 用选定路径创建/更新 client 记录
         const upserted = await upsertClientInstallation({
           install_dir: params.installDir,
           is_default: false
         });
+        upsertedId = upserted.id;
         setClient(upserted);
         pendingShortcutOptionsRef.current = { desktop: params.desktop, startMenu: params.startMenu };
         setInstallDialogOpen(false);
         await startDownloadFor(upserted);
       } catch (err) {
+        // startDownloadFor 内部已 setState failed。这里负责回滚 registry：
+        // install 模式下移除刚创建的占位记录，下次 refresh 回到 unknown 状态。
+        if (shouldRollbackOnFailure && upsertedId) {
+          try {
+            await removeClientInstallation(upsertedId);
+            setClient(null);
+            setClients((prev) => prev.filter((c) => c.id !== upsertedId));
+          } catch (rollbackErr) {
+            console.warn(`[useClientInstaller] rollback failed:`, rollbackErr);
+          }
+        }
         setState({
           kind: "failed",
           error: err instanceof Error ? err.message : String(err)
         });
       }
     },
-    [startDownloadFor, tauriRuntime]
+    [installDialogMode, startDownloadFor, tauriRuntime]
   );
 
   const closeInstallDialog = useCallback(() => {
@@ -533,6 +555,7 @@ export function useClientInstaller(params: {
     state,
     client,
     clients,
+    catalogEntry,
     scanning,
     installDialogOpen,
     installDialogMode,

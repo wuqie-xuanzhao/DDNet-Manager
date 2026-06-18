@@ -757,17 +757,24 @@ pub struct DiskProbe {
 ///
 /// 用 sysinfo crate 跨平台（Windows / Linux / macOS），按 mount_point 前缀匹配
 /// 找最具体的磁盘。未匹配返回 NotFound。
+///
+/// 边界处理（review issue #7）：
+/// - 多 mount_point 同前缀时取 components 数最多的（最具体）
+/// - 如果 path 能 canonicalize（已存在），用 canonical 后的路径再匹配一次，
+///   避免符号链接 / 大小写差异导致的误匹配
+/// - 不能 canonicalize（路径还不存在，安装弹窗常见）时退回原始 path 匹配
 #[tauri::command]
 pub fn probe_disk(path: String) -> Result<DiskProbe, IpcError> {
     use sysinfo::Disks;
-    let target = std::path::Path::new(&path);
+    let raw_target = std::path::Path::new(&path);
+    // 优先用 canonicalize 后的绝对路径匹配；不存在则用原始
+    let canonical = raw_target.canonicalize().unwrap_or_else(|_| raw_target.to_path_buf());
     let disks = Disks::new_with_refreshed_list();
 
-    // 找最匹配的磁盘：target 必须 starts_with mount_point，取 components 数最多的（最具体）
     let best = disks
         .list()
         .iter()
-        .filter(|d| target.starts_with(d.mount_point()))
+        .filter(|d| canonical.starts_with(d.mount_point()))
         .max_by_key(|d| d.mount_point().components().count());
 
     let disk = best.ok_or_else(|| {
@@ -822,22 +829,24 @@ pub fn create_shortcuts(request: CreateShortcutsRequest) -> Result<(), IpcError>
 
     #[cfg(target_os = "windows")]
     {
+        // review issue #8：合并 desktop + start_menu 为单次 PowerShell 调用，
+        // 两个 CreateShortcut 写在同一个脚本里，省一次 powershell.exe spawn（~150ms）。
+        let mut lnk_targets: Vec<std::path::PathBuf> = Vec::new();
         if request.desktop {
-            create_windows_shortcut(
-                &request.executable_path,
-                &request.working_dir,
-                display_name,
-                windows_desktop_dir()?,
-            )?;
+            lnk_targets.push(windows_desktop_dir()?);
         }
         if request.start_menu {
-            create_windows_shortcut(
-                &request.executable_path,
-                &request.working_dir,
-                display_name,
-                windows_start_menu_dir()?,
-            )?;
+            lnk_targets.push(windows_start_menu_dir()?);
         }
+        if lnk_targets.is_empty() {
+            return Ok(());
+        }
+        create_windows_shortcuts_batch(
+            &request.executable_path,
+            &request.working_dir,
+            display_name,
+            &lnk_targets,
+        )?;
         return Ok(());
     }
 
@@ -899,30 +908,28 @@ fn windows_start_menu_dir() -> Result<std::path::PathBuf, IpcError> {
 }
 
 #[cfg(target_os = "windows")]
-fn create_windows_shortcut(
+fn create_windows_shortcuts_batch(
     exe: &str,
     workdir: &str,
     name: &str,
-    target_dir: std::path::PathBuf,
+    target_dirs: &[std::path::PathBuf],
 ) -> Result<(), IpcError> {
-    std::fs::create_dir_all(&target_dir).map_err(|e| {
-        IpcError::from(crate::error::ManagerError::Internal(format!(
-            "create target dir failed: {e}"
-        )))
-    })?;
-    let lnk_path = target_dir.join(format!("{name}.lnk"));
-    // 用 PowerShell 调 WScript.Shell COM 创建 .lnk。
-    // 单引号转义：路径里可能含空格，PowerShell 字符串用双引号包裹。
-    let script = format!(
-        "$ws = New-Object -ComObject WScript.Shell; \
-         $s = $ws.CreateShortcut(\"{}\"); \
-         $s.TargetPath = \"{}\"; \
-         $s.WorkingDirectory = \"{}\"; \
-         $s.Save()",
-        lnk_path.to_string_lossy().replace('"', "`\""),
-        exe.replace('"', "`\""),
-        workdir.replace('"', "`\"")
-    );
+    // 拼接 PowerShell 脚本：为每个 target_dir 创建一个 .lnk
+    let mut script = String::from("$ws = New-Object -ComObject WScript.Shell; ");
+    for dir in target_dirs {
+        std::fs::create_dir_all(dir).map_err(|e| {
+            IpcError::from(crate::error::ManagerError::Internal(format!(
+                "create target dir failed: {e}"
+            )))
+        })?;
+        let lnk_path = dir.join(format!("{name}.lnk"));
+        script.push_str(&format!(
+            "$s = $ws.CreateShortcut(\"{}\"); $s.TargetPath = \"{}\"; $s.WorkingDirectory = \"{}\"; $s.Save(); ",
+            lnk_path.to_string_lossy().replace('"', "`\""),
+            exe.replace('"', "`\""),
+            workdir.replace('"', "`\"")
+        ));
+    }
     let output = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .output()

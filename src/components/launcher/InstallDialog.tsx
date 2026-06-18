@@ -49,7 +49,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function InstallDialog({ installer, displayName, gameId }: InstallDialogProps) {
-  const { state, installDialogOpen, installDialogMode, closeInstallDialog, beginInstall, triggerScan, scanning } = installer;
+  const { state, installDialogOpen, installDialogMode, closeInstallDialog, beginInstall, triggerScan, scanning, catalogEntry } = installer;
 
   // 从 state 提取 release 元数据（installed 状态时 latest/assetSize/releaseUrl 可用）。
   // 否则 release 尚未拉到，弹窗显示加载状态。
@@ -57,6 +57,16 @@ export function InstallDialog({ installer, displayName, gameId }: InstallDialogP
   const latestVersion = releaseInfo?.latest ?? null;
   const assetSize = releaseInfo?.assetSize ?? null;
   const releaseUrl = releaseInfo?.releaseUrl ?? null;
+
+  // catalog entry 的更新源类型，决定弹窗显示什么（review issue #13）：
+  // - github_release / ddnet_official：能自动下载，显示版本卡 + spinner（拉取中）
+  // - website：不自动下载，直接显示"打开官网下载"按钮（避免死 spinner）
+  // - none：无更新源，显示"暂无自动下载源"
+  const updateSourceKind = catalogEntry?.update_source.kind ?? null;
+  const hasAutoDownloadSource = updateSourceKind === "github_release" || updateSourceKind === "ddnet_official";
+  const websiteUrl = updateSourceKind === "website"
+    ? (catalogEntry?.update_source as { kind: "website"; url: string }).url
+    : catalogEntry?.upstream_url ?? null;
 
   const [installDir, setInstallDir] = useState("");
   const [desktopShortcut, setDesktopShortcut] = useState(true);
@@ -156,31 +166,54 @@ export function InstallDialog({ installer, displayName, gameId }: InstallDialogP
           {/* 版本信息 */}
           <div className="rounded-lg border border-[var(--app-border-subtle)] bg-[var(--app-sunken)] p-3 space-y-1.5">
             <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-text-muted)]">版本信息</div>
-            {latestVersion ? (
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-[var(--app-text)]">v{latestVersion}</span>
-                  <span className="text-[var(--app-text-dim)]">{isUpdate ? "最新" : "(最新)"}</span>
+            {hasAutoDownloadSource ? (
+              latestVersion ? (
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-[var(--app-text)]">v{latestVersion}</span>
+                    <span className="text-[var(--app-text-dim)]">{isUpdate ? "最新" : "(最新)"}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[var(--app-text-muted)] font-mono">
+                    {assetSize != null && <span>{formatBytes(assetSize)}</span>}
+                    {releaseUrl && (
+                      <a
+                        href={releaseUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[var(--app-accent)] hover:text-[var(--app-accent-hover)] font-bold transition-colors"
+                      >
+                        GitHub Release
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 text-[var(--app-text-muted)] font-mono">
-                  {assetSize != null && <span>{formatBytes(assetSize)}</span>}
-                  {releaseUrl && (
-                    <a
-                      href={releaseUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[var(--app-accent)] hover:text-[var(--app-accent-hover)] font-bold transition-colors"
-                    >
-                      GitHub Release
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
+              ) : (
+                <div className="flex items-center gap-2 text-xs text-[var(--app-text-muted)] py-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  正在获取版本信息…
                 </div>
+              )
+            ) : websiteUrl ? (
+              // website 源：无自动下载，直接给官网入口（避免死 spinner，review #13）
+              <div className="space-y-1.5">
+                <div className="text-xs text-[var(--app-text-secondary)] leading-relaxed">
+                  该客户端不提供自动下载，需到官网手动获取。
+                </div>
+                <a
+                  href={websiteUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-[var(--app-accent)] hover:text-[var(--app-accent-hover)] font-bold transition-colors no-underline"
+                >
+                  打开官网下载
+                  <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-xs text-[var(--app-text-muted)] py-1">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                正在获取版本信息…
+              // none 源：无更新渠道
+              <div className="text-xs text-[var(--app-text-muted)] py-1 leading-relaxed">
+                暂无自动下载源。如已下载，请通过「设置 → 客户端」手动添加安装目录。
               </div>
             )}
           </div>
@@ -308,12 +341,12 @@ export function InstallDialog({ installer, displayName, gameId }: InstallDialogP
             {scanning ? "扫描中…" : "已安装？定位游戏"}
           </button>
 
-          {/* 右下：开始安装 / 更新 */}
+          {/* 右下：开始安装 / 更新。无自动下载源时禁用 */}
           <Button
             type="button"
             onClick={() => void handleStartInstall()}
-            disabled={submitting || !installDir.trim() || !latestVersion}
-            className="bg-[var(--app-accent)] text-[var(--app-accent-foreground)] hover:bg-[var(--app-accent-hover)] font-bold"
+            disabled={submitting || !installDir.trim() || !latestVersion || !hasAutoDownloadSource}
+            className="bg-[var(--app-accent)] text-[var(--app-accent-foreground)] hover:bg-[var(--app-accent-hover)] font-bold disabled:opacity-40"
           >
             {submitting ? (
               <>

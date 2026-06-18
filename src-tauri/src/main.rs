@@ -76,6 +76,8 @@ fn main() {
             // minimize / hide / unminimize / focus 切换都不影响。
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    // 显式销毁托盘图标（review issue #5），不依赖 OS 进程退出回收。
+                    let _ = window.app_handle().remove_tray_by_id(crate::tray::MAIN_TRAY_ID);
                     window.app_handle().exit(0);
                 }
             }
