@@ -5,9 +5,11 @@
 //! - `usn`：FSCTL_ENUM_USN_DATA + USN_RECORD V2 解析
 //! - `mft_record`：$MFT FILE record 字节解析（纯逻辑，跨平台测试）
 //! - `mft`：$MFT raw record backend（admin 极速路径）
+//! - `elevation`：进程 UAC 提权检测，未提权时跳过 Mft/Usn 探测
 //!
 //! 所有 Windows API 调用都在这里；模块外只暴露 safe Rust 接口。
 
+pub(crate) mod elevation;
 pub(crate) mod mft;
 pub(crate) mod mft_record;
 pub(crate) mod usn;

@@ -79,11 +79,18 @@ pub(super) struct SelectedBackend {
     pub downgraded_from: Option<BackendKind>,
 }
 
-/// Windows 平台 backend 探测：v0.3 默认走 $MFT（admin 路径），admin 不可用时
-/// MftBackend 内部自动 fallback USN → Walkdir。
+/// Windows 平台 backend 探测：admin（UAC elevated）走 Mft 极速路径，普通用户
+/// 直接走 Walkdir，避免 Mft/Usn 无效探测（两个都需要 raw volume 句柄权限）。
 #[cfg(windows)]
 fn probe_windows_backend_kind(_root: &Path) -> BackendKind {
-    BackendKind::Mft
+    if windows::elevation::is_process_elevated() {
+        BackendKind::Mft
+    } else {
+        tracing::debug!(
+            "process not elevated; skipping Mft/Usn probe, using Walkdir directly"
+        );
+        BackendKind::Walkdir
+    }
 }
 
 #[cfg(not(windows))]
@@ -205,7 +212,13 @@ mod tests {
         let sel = select_backend_for_root(Path::new("C:\\"));
         #[cfg(windows)]
         {
-            assert_eq!(sel.kind, BackendKind::Mft);
+            // elevated 进程走 Mft；普通进程跳过 Mft/Usn 直接 Walkdir
+            if windows::elevation::is_process_elevated() {
+                assert_eq!(sel.kind, BackendKind::Mft);
+            } else {
+                assert_eq!(sel.kind, BackendKind::Walkdir);
+                assert!(sel.downgraded_from.is_none());
+            }
         }
         #[cfg(not(windows))]
         {
