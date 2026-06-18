@@ -73,6 +73,10 @@ impl Backend for MftBackend {
                 reason: "subtree path; $MFT scans whole volume, using walkdir for subtree"
                     .to_string(),
             });
+            progress.emit(ProgressEvent::DriveStarted {
+                root: root.to_path_buf(),
+                backend: BackendKind::Walkdir,
+            });
             return WalkdirBackend.scan_root(root, opts, progress, cancel).await;
         }
 
@@ -476,6 +480,10 @@ async fn fallback_to_usn_or_walkdir(
         from: BackendKind::Mft,
         to: BackendKind::Usn,
         reason: reason.to_string(),
+    });
+    progress.emit(ProgressEvent::DriveStarted {
+        root: root.to_path_buf(),
+        backend: BackendKind::Usn,
     });
 
     // 复用 UsnBackend 的失败自动 fallback Walkdir 逻辑

@@ -89,6 +89,12 @@ impl Backend for UsnBackend {
                 drive = %self.drive_letter,
                 "root is a subtree, not whole drive; using walkdir directly"
             );
+            // 顶层 DriveStarted 标记的 backend 是 probe 结果（Mft），实际接管的是
+            // Walkdir，emit 一次 DriveStarted(Walkdir) 让前端事件流准确。
+            progress.emit(ProgressEvent::DriveStarted {
+                root: root.to_path_buf(),
+                backend: BackendKind::Walkdir,
+            });
             return WalkdirBackend.scan_root(root, opts, progress, cancel).await;
         }
 
@@ -134,7 +140,10 @@ impl Backend for UsnBackend {
     }
 }
 
-/// 降级到 Walkdir。先 emit `BackendDowngraded`，再调 WalkdirBackend。
+/// 降级到 Walkdir。先 emit `BackendDowngraded` + `DriveStarted(Walkdir)`，再调 WalkdirBackend。
+///
+/// `DriveStarted` 在顶层 scan_all_roots 已 emit 一次（backend=probe 结果，通常是 Mft）；
+/// 这里再 emit 一次是为了让前端事件流准确反映"实际接管扫描的 backend"。
 async fn fallback_to_walkdir(
     root: &Path,
     opts: &NtfsScanOptions,
@@ -147,6 +156,10 @@ async fn fallback_to_walkdir(
         from: BackendKind::Usn,
         to: BackendKind::Walkdir,
         reason: reason.to_string(),
+    });
+    progress.emit(ProgressEvent::DriveStarted {
+        root: root.to_path_buf(),
+        backend: BackendKind::Walkdir,
     });
     WalkdirBackend.scan_root(root, opts, progress, cancel).await
 }
