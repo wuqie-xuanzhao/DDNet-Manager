@@ -148,23 +148,40 @@ pub async fn scan_clients_via_mft(
     let master_cancel = tokio_util::sync::CancellationToken::new();
     cancel_state.set(master_cancel.clone());
 
+    // collect_priority_roots 含 30-50 次同步 is_dir，移到 spawn_blocking 不阻塞 executor
+    let priority_roots = if options.roots.is_empty() {
+        tokio::task::spawn_blocking(collect_priority_roots)
+            .await
+            .map_err(|e| {
+                crate::error::ManagerError::Internal(format!("priority_roots join: {e}"))
+            })?
+    } else {
+        Vec::new()
+    };
+
     let result = async {
-        // 两阶段扫描：用户未指定 roots 时先扫 priority 命中即返回
-        if options.roots.is_empty() {
-            let priority_roots = collect_priority_roots();
-            if !priority_roots.is_empty() {
-                let installations = run_scan(
-                    priority_roots,
-                    &excluded,
-                    max_results,
-                    total_timeout / 3, // priority 阶段给 1/3 时间预算
-                    app.clone(),
-                    master_cancel.clone(),
-                )
-                .await?;
-                if !installations.is_empty() {
-                    return Ok(installations);
+        let mut all_installations: Vec<ClientInstallation> = Vec::new();
+        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // 两阶段扫描：priority 先扫常见安装位置，命中数 < max_results 时继续 fallback 找全
+        if !priority_roots.is_empty() {
+            let priority_installations = run_scan(
+                priority_roots,
+                &excluded,
+                max_results,
+                total_timeout / 3, // priority 阶段给 1/3 时间预算
+                app.clone(),
+                master_cancel.clone(),
+            )
+            .await?;
+            for inst in priority_installations {
+                if seen_ids.insert(inst.id.clone()) {
+                    all_installations.push(inst);
                 }
+            }
+            // priority 已找到 max_results 个，提前返回；否则继续 fallback
+            if all_installations.len() >= max_results {
+                return Ok(all_installations);
             }
         }
 
@@ -184,7 +201,7 @@ pub async fn scan_clients_via_mft(
             );
         }
 
-        let installations = run_scan(
+        let fallback_installations = run_scan(
             roots,
             &excluded,
             max_results,
@@ -193,7 +210,14 @@ pub async fn scan_clients_via_mft(
             master_cancel.clone(),
         )
         .await?;
-        Ok(installations)
+        for inst in fallback_installations {
+            if seen_ids.insert(inst.id.clone()) {
+                all_installations.push(inst);
+            }
+        }
+
+        all_installations.sort_by(|a, b| a.install_dir.cmp(&b.install_dir));
+        Ok(all_installations)
     }
     .await;
 

@@ -137,10 +137,17 @@ impl Backend for WalkdirBackend {
                     };
 
                     let current_len = {
-                        let mut guard = found.lock().expect("found mutex poisoned");
+                        let mut guard = found
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
                         guard.push(FileEntry::from_metadata(path, &meta));
                         guard.len()
                     };
+
+                    // 首次命中立即 emit，让前端尽早看到"找到 1 个"，避免 100ms+ 黑屏
+                    if current_len == 1 {
+                        progress.emit(ProgressEvent::EntriesFound { found: 1 });
+                    }
 
                     if let Some(max) = max_results {
                         if current_len >= max {
@@ -153,7 +160,9 @@ impl Backend for WalkdirBackend {
                     }
 
                     if n % 1000 == 0 {
-                        let mut le = last_emit.lock().expect("last_emit mutex poisoned");
+                        let mut le = last_emit
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
                         if le.elapsed() > std::time::Duration::from_millis(100) {
                             progress.emit(ProgressEvent::EntriesFound { found: current_len });
                             *le = Instant::now();
@@ -172,7 +181,9 @@ impl Backend for WalkdirBackend {
                 })
             });
 
-            let mut guard = found.lock().expect("found mutex poisoned");
+            let mut guard = found
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             Ok(std::mem::take(&mut *guard))
         })
         .await

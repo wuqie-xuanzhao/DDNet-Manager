@@ -107,6 +107,32 @@ describe("useClientScanner", () => {
     expect(result.current.scanning).toBe(false);
   });
 
+  it("cancel invokes cancel_scan_clients and returns true on success", async () => {
+    invoke.mockResolvedValueOnce(true);
+    const { result } = renderHook(() => useClientScanner());
+
+    let cancelled = false;
+    await act(async () => {
+      cancelled = await result.current.cancel();
+    });
+
+    expect(cancelled).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("cancel_scan_clients");
+  });
+
+  it("cancel returns false and sets error when invoke rejects", async () => {
+    invoke.mockRejectedValueOnce(new Error("network down"));
+    const { result } = renderHook(() => useClientScanner());
+
+    let cancelled = true;
+    await act(async () => {
+      cancelled = await result.current.cancel();
+    });
+
+    expect(cancelled).toBe(false);
+    expect(result.current.error).toContain("network down");
+  });
+
   it("reset clears events, foundCount, and error", async () => {
     const { result } = renderHook(() => useClientScanner());
 

@@ -102,7 +102,13 @@ export function useClientScanner(): UseClientScannerResult {
 
   const cancel = useCallback(async (): Promise<boolean> => {
     try {
-      return await invoke<boolean>("cancel_scan_clients");
+      const cancelled = await invoke<boolean>("cancel_scan_clients");
+      if (cancelled) {
+        // 后端确认取消，前端立即停止"扫描中"显示；实际 scan_clients_via_mft
+        // 会在 master_cancel 触发后秒级返回，UI 状态对齐避免一直 spinner
+        setScanning(false);
+      }
+      return cancelled;
     } catch (err) {
       setError(`取消扫描失败：${err instanceof Error ? err.message : String(err)}`);
       return false;

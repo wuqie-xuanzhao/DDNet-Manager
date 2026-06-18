@@ -62,7 +62,8 @@ pub(super) trait Backend: Send + Sync {
 
 /// 为指定 root 探测可用的 backend（按 Mft → Usn → Walkdir 链降级）。
 ///
-/// - Windows 上 v0.2：尝试 USN backend（普通用户路径）。admin $MFT 路径留 M3 实现。
+/// - Windows 上：elevated 进程走 Mft，普通进程跳过 Mft/Usn 直接 Walkdir
+///   （per-drive cache 命中时进一步跳过 probe）
 /// - 其他平台：直接 Walkdir。
 pub(super) fn select_backend_for_root(root: &Path) -> SelectedBackend {
     // 优先查 per-drive 缓存：上次扫描发现该盘走 Walkdir 的，直接命中跳过探测。
@@ -165,11 +166,10 @@ pub(super) async fn scan_all_roots(
         })
         .collect();
 
-    // v0.1：串行扫描各盘，让 cancel/timeout 逻辑清晰可见。
-    // commit 3+ 接入 MFT 后会重写为 spawn_blocking 并行（每盘一个阻塞线程）。
+    // 串行扫描各盘，让 cancel/timeout 逻辑清晰可见。各盘后端在自己的 spawn_blocking
+    // 内并行（walkdir 用 ignore::WalkParallel 多线程），盘间串行避免 IO 抢占。
     let mut all: Vec<FileEntry> = Vec::new();
     let mut all_skipped: Vec<(PathBuf, ScanError)> = Vec::new();
-    let total_scanned: Mutex<Vec<(PathBuf, usize, usize)>> = Mutex::new(Vec::new());
 
     for (root, selected_backend) in selected {
         if cancel.is_cancelled() {
@@ -181,7 +181,7 @@ pub(super) async fn scan_all_roots(
                 root: root.clone(),
                 from,
                 to: selected_backend.kind,
-                reason: "v0.1: backend not yet implemented".to_string(),
+                reason: "backend not available".to_string(),
             });
         }
 
@@ -202,13 +202,9 @@ pub(super) async fn scan_all_roots(
                 all.extend(entries);
                 progress.emit(ProgressEvent::DriveCompleted {
                     root: root_for_track.clone(),
-                    scanned: found, // walkdir 不区分 scanned/found；commit 4 MFT 后会精确区分
+                    scanned: found, // walkdir 不区分 scanned/found；MFT backend 区分
                     found,
                 });
-                total_scanned
-                    .lock()
-                    .expect("total_scanned mutex poisoned")
-                    .push((root_for_track, found, found));
             }
             Err(ScanError::Cancelled) => {
                 return Err(ScanError::Cancelled);
