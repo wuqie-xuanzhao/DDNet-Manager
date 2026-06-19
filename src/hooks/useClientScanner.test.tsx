@@ -152,4 +152,25 @@ describe("useClientScanner", () => {
     expect(result.current.foundCount).toBe(0);
     expect(result.current.error).toBeNull();
   });
+
+  it("events 数组 cap 到最近 50 条，超出后保留尾部", async () => {
+    const { result } = renderHook(() => useClientScanner());
+
+    await waitFor(() => expect(emitHandler).not.toBeNull());
+
+    // 连续 emit 60 条事件，验证 cap 行为
+    for (let i = 0; i < 60; i++) {
+      const event: ScanProgressEvent = { kind: "entries_found", found: i + 1 };
+      act(() => {
+        emitHandler?.({ payload: event });
+      });
+    }
+
+    expect(result.current.events).toHaveLength(50);
+    // 头部应是第 11 条事件（found=11），尾部应是第 60 条（found=60）
+    expect((result.current.events[0] as { found: number }).found).toBe(11);
+    expect((result.current.events[49] as { found: number }).found).toBe(60);
+    // foundCount 由最后一条 entries_found 驱动，应为 60
+    expect(result.current.foundCount).toBe(60);
+  });
 });
