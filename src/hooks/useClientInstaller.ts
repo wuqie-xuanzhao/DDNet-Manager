@@ -361,8 +361,14 @@ export function useClientInstaller(params: {
     };
   }, [tauriRuntime, refreshFromRegistry, fetchRelease]);
 
-  /// 点"定位游戏"触发后台扫描。命中后 upsert 落 registry，state 自动切到 installed。
-  /// 如果是从安装弹窗里点的（installDialogOpen=true），命中后自动关闭弹窗（review issue #6）。
+  /// 点"定位游戏"触发后台扫描。命中后 setClient + refreshFromRegistry 让 state
+  /// 自动切到 installed；如果是从安装弹窗里点的（installDialogOpen=true），命中后
+  /// 自动关闭弹窗（review issue #6）。
+  ///
+  /// B4 之后 Rust 端在 priority 命中时已自动 upsert 落 registry，前端不再二次调用
+  /// upsert（fallback 命中或 health 非 ok 的 priority 命中除外，那两种情况
+  /// Rust 端不落库，但 refreshFromRegistry 会从 registry 拉已存在的记录，所以
+  /// UI 状态仍正确）。
   const triggerScan = useCallback(async () => {
     if (!tauriRuntime || scanning) return;
     setScanning(true);
@@ -374,10 +380,6 @@ export function useClientInstaller(params: {
       });
       const matched = results.find((inst: ClientInstallation) => clientMatchesGameId(inst, gameId)) ?? null;
       if (matched) {
-        await upsertClientInstallation({
-          install_dir: matched.install_dir,
-          is_default: false
-        });
         setClient(matched);
         await refreshFromRegistry();
         // 弹窗里点"定位游戏"命中后自动关闭弹窗

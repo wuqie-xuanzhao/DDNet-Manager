@@ -6,7 +6,7 @@
 //! "函数参数超过 4 个优先封装为结构体" 规约。
 
 use crate::error::IpcError;
-use crate::models::{ClientInstallation, ScanClientInstallationsOptions};
+use crate::models::{ClientHealth, ClientInstallation, ScanClientInstallationsOptions};
 use crate::registry::ClientRegistry;
 use std::path::PathBuf;
 use tauri::AppHandle;
@@ -160,6 +160,18 @@ pub async fn scan_clients_via_mft(
             .await?;
             for inst in priority_installations {
                 if seen_ids.insert(inst.id.clone()) {
+                    // B4: priority 命中且 health=ok 时自动 upsert 落 registry，
+                    // 让前端 triggerScan 不再需要二次 IPC 调用。跳过 broken
+                    // 客户端避免污染（用户曾装过又删了 / 残留目录等场景，
+                    // plan 风险点 #2 要求 health check 把关）。
+                    if inst.health == ClientHealth::Ok {
+                        if let Err(e) = registry.upsert_client_installation(&inst) {
+                            eprintln!(
+                                "[scan] priority upsert failed for {}: {}",
+                                inst.install_dir, e
+                            );
+                        }
+                    }
                     all_installations.push(inst);
                 }
             }

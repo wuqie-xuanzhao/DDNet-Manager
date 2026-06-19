@@ -228,7 +228,8 @@ describe("useClientInstaller", () => {
     });
 
     expect(scanClientsViaMft).toHaveBeenCalledWith({ include_saved_paths: true, include_unhealthy: false });
-    expect(upsertClientInstallation).toHaveBeenCalledWith({ install_dir: "D:/Games/QmClient", is_default: false });
+    // B4: Rust 端 priority 命中时已自动 upsert 落 registry，前端不再二次调用
+    expect(upsertClientInstallation).not.toHaveBeenCalled();
     expect(result.current.state.kind).toBe("installed");
   });
 
