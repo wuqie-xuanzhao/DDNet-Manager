@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { toast } from "sonner";
 import {
   checkClientUpdate,
   createShortcuts,
@@ -13,6 +14,7 @@ import {
 } from "../lib/tauri";
 import { buildStartUpdateDownloadRequest, buildUpdateSourceRequest } from "../lib/updateLogic";
 import { appendScanEventCapped, type ScanProgressEvent } from "../lib/scanProgress";
+import { getUpdateErrorMessage } from "../lib/errors";
 import type {
   AppSettings,
   ClientCatalogEntry,
@@ -134,6 +136,20 @@ export function useClientInstaller(params: {
   const requestIdRef = useRef(0);
   const releaseFetchingRef = useRef(false);
 
+  /// 进入 failed state 的统一入口。C3：把原始 err/message 经 getUpdateErrorMessage
+  /// 映射成中文友好消息（按 IPC 错误码 + 关键字兜底），并可选弹 sonner toast。
+  /// 下载/安装失败这种用户主动操作触发弹 toast；后台 refresh 失败等静默场景不弹。
+  const setFailedState = useCallback(
+    (error: unknown, options: { toast: boolean } = { toast: false }) => {
+      const friendly = getUpdateErrorMessage(error);
+      setState({ kind: "failed", error: friendly });
+      if (options.toast) {
+        toast.error(friendly);
+      }
+    },
+    []
+  );
+
   /// 从 registry 拉匹配 gameId 的客户端，推导 state。
   /// 同步触发 release 元数据刷新（缓存过期时）。
   const refreshFromRegistry = useCallback(async () => {
@@ -172,9 +188,10 @@ export function useClientInstaller(params: {
       });
     } catch (err) {
       if (requestId !== requestIdRef.current) return;
-      setState({ kind: "failed", error: err instanceof Error ? err.message : String(err) });
+      // refresh 失败静默：后台刷新不弹 toast 干扰用户
+      setFailedState(err);
     }
-  }, [gameId, tauriRuntime]);
+  }, [gameId, setFailedState, tauriRuntime]);
 
   /// 把 release 元数据合并到当前 installed state。
   /// 只在 state 是 installed 时刷新 latest/needsUpdate/assetSize/releaseUrl。
@@ -326,7 +343,8 @@ export function useClientInstaller(params: {
           (e) => {
             const job = e.payload as DownloadJob;
             if (!isMine(job)) return;
-            setState({ kind: "failed", error: job.error ?? "下载失败" });
+            // 下载失败弹 toast：用户主动操作触发，需要明确反馈
+            setFailedState(job.error ?? "下载失败", { toast: true });
           }
         ],
         [
@@ -359,7 +377,8 @@ export function useClientInstaller(params: {
           (e) => {
             const job = e.payload as DownloadJob;
             if (!isMine(job)) return;
-            setState({ kind: "failed", error: job.error ?? "安装失败" });
+            // 安装失败弹 toast：用户主动操作触发
+            setFailedState(job.error ?? "安装失败", { toast: true });
           }
         ]
       ];
@@ -384,7 +403,7 @@ export function useClientInstaller(params: {
       for (const u of unlistens) u();
       unlistens = [];
     };
-  }, [tauriRuntime, refreshFromRegistry, fetchRelease]);
+  }, [tauriRuntime, refreshFromRegistry, fetchRelease, setFailedState]);
 
   /// 点"定位游戏"触发后台扫描。命中后 setClient + refreshFromRegistry 让 state
   /// 自动切到 installed；如果是从安装弹窗里点的（installDialogOpen=true），命中后
@@ -415,14 +434,13 @@ export function useClientInstaller(params: {
         setState({ kind: "not_installed", scanned: true });
       }
     } catch (err) {
-      setState({
-        kind: "failed",
-        error: err instanceof Error ? err.message : String(err)
-      });
+      // triggerScan 失败：用户在 InstallDialog 点"定位游戏"，反馈走弹窗内的
+      // failed 文案 + 进度区域，不弹 toast（避免遮挡弹窗）
+      setFailedState(err);
     } finally {
       setScanning(false);
     }
-  }, [gameId, installDialogOpen, refreshFromRegistry, scanning, tauriRuntime]);
+  }, [gameId, installDialogOpen, refreshFromRegistry, scanning, setFailedState, tauriRuntime]);
 
   /// 点"获取游戏"主按钮：立即打开安装对话框（不阻塞）。
   /// 弹窗里的"已安装？定位游戏"小链接负责主动扫描，不在 openInstallDialog 里做。
@@ -459,13 +477,11 @@ export function useClientInstaller(params: {
         );
         // 实际进度通过 download-progress 事件流回，state 会被 listener 刷新
       } catch (err) {
-        setState({
-          kind: "failed",
-          error: err instanceof Error ? err.message : String(err)
-        });
+        // startUpdateDownload 调用失败：用户主动操作触发，弹 toast 反馈
+        setFailedState(err, { toast: true });
       }
     },
-    [appSettings.network_route]
+    [appSettings.network_route, setFailedState]
   );
 
   /// 弹窗"开始安装"按钮的真实入口：接收弹窗收集的 installDir + shortcut 选项，
@@ -507,13 +523,11 @@ export function useClientInstaller(params: {
             console.warn(`[useClientInstaller] rollback failed:`, rollbackErr);
           }
         }
-        setState({
-          kind: "failed",
-          error: err instanceof Error ? err.message : String(err)
-        });
+        // beginInstall 失败：用户主动操作触发，弹 toast 反馈
+        setFailedState(err, { toast: true });
       }
     },
-    [installDialogMode, startDownloadFor, tauriRuntime]
+    [installDialogMode, setFailedState, startDownloadFor, tauriRuntime]
   );
 
   const closeInstallDialog = useCallback(() => {
@@ -535,12 +549,10 @@ export function useClientInstaller(params: {
         console.warn(`[useClientInstaller] hide launcher after launch failed:`, hideErr);
       }
     } catch (err) {
-      setState({
-        kind: "failed",
-        error: err instanceof Error ? err.message : String(err)
-      });
+      // launchGame 失败：用户主动操作触发，弹 toast 反馈
+      setFailedState(err, { toast: true });
     }
-  }, [client, tauriRuntime]);
+  }, [client, setFailedState, tauriRuntime]);
 
   /// 切换 selectedClient 到指定副本（用户装了多个同 gameId 客户端时用）。
   /// 切换后 state 自动按新 client.health / version 重新评估。
