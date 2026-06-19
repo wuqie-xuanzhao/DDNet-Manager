@@ -269,9 +269,18 @@ export function useClientInstaller(params: {
     }
   }, [appSettings.network_route, gameId, tauriRuntime, applyReleaseToState]);
 
-  /// 启动时：先 refreshFromRegistry，再 fetchRelease。
+  /// 启动时：并行 refreshFromRegistry 和 fetchRelease 缩短启动链路（D2）。
+  /// race 处理：fetchRelease 完成时若 state 还不是 installed，applyReleaseToState
+  /// 跳过；refreshFromRegistry 完成后再调一次 fetchRelease，命中刚拉的缓存立即 apply。
+  /// 切 tab/game 时旧 effect cleanup 让 cancelled=true，避免 setState 到已卸载组件。
   useEffect(() => {
-    void refreshFromRegistry().then(() => void fetchRelease());
+    let cancelled = false;
+    void Promise.all([refreshFromRegistry(), fetchRelease()]).then(() => {
+      if (!cancelled) void fetchRelease();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [refreshFromRegistry, fetchRelease]);
 
   /// 监听 download-progress / download-completed / download-failed / install-* 事件。
