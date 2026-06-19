@@ -28,7 +28,7 @@ export type AppUpdaterProgress = {
   ratio: number;
 };
 
-const AUTO_CHECK_DELAY_MS = 1500; // 启动后延迟 1.5s 检查，避免和首屏渲染抢资源
+const AUTO_CHECK_DELAY_MS = 300; // 启动后延迟 300ms 检查：原 1500ms 太久让用户等待；300ms 让首屏渲染先稳定再触发 IPC
 const RECHECK_COOLDOWN_MS = 5 * 60 * 1000; // 手动重检查冷却 5min，防止用户狂点
 
 export function useAppUpdater(params: {
