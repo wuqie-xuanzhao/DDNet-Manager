@@ -321,19 +321,35 @@ function renderState(
       );
     }
 
-    case 'verifying':
+    case 'verifying': {
+      const percent = Math.min(100, Math.max(0, state.progress * 100));
       return (
         <motion.div
           key="verifying"
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
-          className="w-[240px] bg-black/60 border border-white/10 backdrop-blur-md rounded-2xl p-4 flex flex-col items-center justify-center space-y-3.5 shadow-2xl z-30"
+          className="w-[240px] bg-black/60 border border-white/10 backdrop-blur-md rounded-2xl p-4 flex flex-col space-y-2.5 shadow-2xl z-30"
         >
-          <RefreshCw className="w-6 h-6 text-[var(--app-accent)] animate-spin" />
-          <span className="text-white text-xs font-bold tracking-wide block">校验中</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 text-[var(--app-accent)] animate-spin" />
+              <span className="text-white text-xs font-bold tracking-wide">校验中</span>
+            </div>
+            <span className="text-[9px] font-mono text-gray-400">{percent.toFixed(1)}%</span>
+          </div>
+          <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden">
+            <div
+              className={`h-full absolute left-0 top-0 rounded-full transition-all duration-150 ${getAccentBarColor(accentColor)}`}
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <div className="text-[9px] font-mono text-gray-400 leading-none">
+            校验文件完整性（SHA-256）
+          </div>
         </motion.div>
       );
+    }
 
     case 'failed':
       return (

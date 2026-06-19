@@ -2,6 +2,7 @@ use crate::commands::{
     app_cache_dir, DownloadManagerState, DownloadTaskContext, PreparedUpdateDownload,
     RegistryState, LOCAL_SMOKE_RESULT_PATH_ENV,
 };
+use crate::download::verify::VerifyProgressSink;
 use crate::download::DownloadManager;
 use crate::error::{IpcError, ManagerError};
 use crate::models::{
@@ -13,6 +14,38 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
+
+/// verify-progress 事件 payload。前端 useClientInstaller 监听后渲染校验进度条，
+/// ratio = bytes_read / total（total 为 0 时 ratio = 0）。
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VerifyProgressPayload {
+    /// 下载任务关联的客户端安装记录 id（和 DownloadJob.client_installation_id 一致），
+    /// 让前端 useClientInstaller 通过 client.id 判断事件归属（和 download-progress 同样模式）。
+    client_installation_id: String,
+    bytes_read: u64,
+    total: u64,
+}
+
+/// TauriVerifySink 把 verify 进度 emit 到前端的 verify-progress 事件。
+/// 与 TauriScanSink 模式一致：持有 AppHandle + 关联 id，每次 emit 调
+/// `app.emit_to("main", "verify-progress", payload)`。emit 失败静默——前端
+/// 已卸载监听时不应阻断校验。
+struct TauriVerifySink {
+    app: AppHandle,
+    client_installation_id: String,
+}
+
+impl VerifyProgressSink for TauriVerifySink {
+    fn emit(&self, bytes_read: u64, total: u64) {
+        let payload = VerifyProgressPayload {
+            client_installation_id: self.client_installation_id.clone(),
+            bytes_read,
+            total,
+        };
+        let _ = self.app.emit_to("main", "verify-progress", payload);
+    }
+}
 
 /// 创建下载任务并开始真实下载更新包。
 #[tauri::command]
@@ -210,10 +243,18 @@ async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> 
     )
     .await
     .and_then(|_| {
-        crate::download::verify_downloaded_file(
+        // C1: 校验阶段也 emit 进度，让 DownloadButton 在 verify 大文件时显示
+        // 进度条而不是 spinner。client_installation_id 让前端按当前 client.id
+        // 过滤事件归属（和 download-progress 同模式）。
+        let sink = TauriVerifySink {
+            app: runtime.app.clone(),
+            client_installation_id: runtime.job.client_installation_id.clone(),
+        };
+        crate::download::verify::verify_downloaded_file_with_progress(
             &runtime.cache_path,
             &runtime.job.sha256,
             runtime.job.size,
+            &sink,
         )
         .map_err(|error| error.to_string())
     })

@@ -36,10 +36,19 @@ export type ClientInstallState =
     }
   | { kind: "broken"; reason: string }                                                   // 已装但 health != Ok
   | { kind: "downloading"; progress: number; speedBytesPerSec: number; paused: boolean }
-  | { kind: "verifying" }
+  | { kind: "verifying"; progress: number }
   | { kind: "failed"; error: string };
 
 export type InstallDialogMode = "install" | "update";
+
+/// verify-progress 事件 payload（Rust 端 TauriVerifySink emit，#[serde(rename_all =
+/// "camelCase")] 让 client_installation_id → clientInstallationId）。
+/// 前端 useClientInstaller 按 clientInstallationId 判断事件归属。
+interface VerifyProgressPayload {
+  clientInstallationId: string;
+  bytesRead: number;
+  total: number;
+}
 
 const RELEASE_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -273,8 +282,12 @@ export function useClientInstaller(params: {
         const current = clientRef.current;
         return current !== null && job.client_installation_id === current.id;
       };
+      const isVerifyMine = (payload: { clientInstallationId: string }) => {
+        const current = clientRef.current;
+        return current !== null && payload.clientInstallationId === current.id;
+      };
 
-      const handlers: Array<[string, (e: { payload: DownloadJob | string }) => void]> = [
+      const handlers: Array<[string, (e: { payload: DownloadJob | string | VerifyProgressPayload }) => void]> = [
         [
           "download-progress",
           (e) => {
@@ -293,7 +306,19 @@ export function useClientInstaller(params: {
           (e) => {
             const job = e.payload as DownloadJob;
             if (!isMine(job)) return;
-            setState({ kind: "verifying" });
+            // 进入 verify 阶段：progress 起始为 0，verify-progress 事件会持续刷新
+            setState({ kind: "verifying", progress: 0 });
+          }
+        ],
+        [
+          "verify-progress",
+          (e) => {
+            const payload = e.payload as VerifyProgressPayload;
+            if (!isVerifyMine(payload)) return;
+            setState({
+              kind: "verifying",
+              progress: payload.total > 0 ? payload.bytesRead / payload.total : 0
+            });
           }
         ],
         [
