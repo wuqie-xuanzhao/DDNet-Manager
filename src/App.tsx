@@ -439,8 +439,8 @@ export default function App() {
                 </svg>
               </motion.button>
               <div className="absolute left-[56px] top-1/2 -translate-y-1/2 scale-90 translate-x-[-4px] opacity-0 group-hover:scale-100 group-hover:translate-x-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50 flex items-center origin-left">
-                <div className="w-2.5 h-2.5 rotate-45 bg-[#e3e5e9] relative -mr-1 rounded-[1.5px]" />
-                <div className="bg-[#e3e5e9] text-[#121319] text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-2xl whitespace-nowrap tracking-wide">全部游戏</div>
+                <div className="w-2.5 h-2.5 rotate-45 bg-[var(--app-tooltip-bg)] relative -mr-1 rounded-[1.5px]" />
+                <div className="bg-[var(--app-tooltip-bg)] text-[var(--app-tooltip-fg)] text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-2xl whitespace-nowrap tracking-wide">全部游戏</div>
               </div>
             </div>
           </div>

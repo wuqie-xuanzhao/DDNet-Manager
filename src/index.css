@@ -41,6 +41,11 @@
 
   /* Focus ring */
   --app-focus: rgba(250, 204, 21, 0.4);
+
+  /* Tooltip：反色气泡，永远浅底深字（dark/light 主题同值，米哈游风格）。
+     放在 :root 不在 .theme-light 覆盖，保证两主题下 tooltip 都保持高对比度反色。 */
+  --app-tooltip-bg: #e3e5e9;
+  --app-tooltip-fg: #121319;
 }
 
 @theme inline {
