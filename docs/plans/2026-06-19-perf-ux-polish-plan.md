@@ -122,5 +122,5 @@
 
 - **E2 扩展**：SettingsDialog / WindowControls / Dialogs 等剩余 px 类批量改 rem + 4K 缩放实测
 - **M3 重构**：useClientInstaller.ts 605 行（> 600 WARN），可抽 useScanProgress 子 hook 共享 scanEvents 逻辑
-- **N2 测试缺口**：B4 fallback 命中场景、verify-progress 前端集成行为（依赖 tauri-dev 手动测）
-- **L1 性能优化**：appendScanEventCapped 已抽 helper 但仍是 array copy，量大时改环形缓冲
+- ~~**N2 测试缺口**~~ ✅ commit b49b441 已补 verify-progress 前端集成测试（fallback 命中场景由 Rust 端 upsert_scan_hit 测试覆盖）
+- **L1 性能优化**：appendScanEventCapped 已抽 helper 但仍是 array copy，量大时改环形缓冲（50 条量级无收益，可保留现状）
