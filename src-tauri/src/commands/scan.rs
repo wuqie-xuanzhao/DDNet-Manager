@@ -21,6 +21,32 @@ const DEFAULT_SCAN_MAX_RESULTS: usize = 50;
 /// 较慢，ntfs-search 默认 60s 对 C 盘不够；放宽到 180s 给业务足够时间。
 const DEFAULT_SCAN_TIMEOUT_SECS: u64 = 180;
 
+/// 扫描阶段标签，配合 [`ScanPhaseEvent`] 通过 `scan-progress` 通道发到前端，
+/// 让 UI 在 ntfs-search 第一条 `drive_started` 到来前就能显示"扫描中"，避免黑屏。
+///
+/// 业务层事件而非 ntfs_search::ProgressEvent 变体——ntfs-search crate 关注 per-drive
+/// 细节，跨阶段的 priority/fallback 切换由 DDNet-Manager 业务层 emit 才合理。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanPhase {
+    /// `scan_clients_via_mft` 入口：扫描任务已接收，正在准备 roots（spawn_blocking 阶段）
+    Started,
+    /// Priority 阶段：扫 Steam / Program Files / 用户目录等常见安装位置
+    Priority,
+    /// Fallback 阶段：priority 未命中，扩展到全盘
+    Fallback,
+}
+
+/// 业务层扫描阶段事件包装。和 ntfs_search::ProgressEvent 共用 `scan-progress` 通道，
+/// 通过 `kind` 字段做 discriminated union，前端 ScanProgressEvent 类型对应扩展。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScanPhaseEvent {
+    /// 进入新扫描阶段。前端可按 phase 区分提示文案（"正在扫描常见位置…" /
+    /// "扩展到全盘扫描…"）。
+    PhaseStarted { phase: ScanPhase },
+}
+
 /// 扫描取消 token 的全局共享状态。
 ///
 /// `scan_clients_via_mft` 开始时存入 master token，结束时清理；
@@ -96,6 +122,11 @@ pub async fn scan_clients_via_mft(
     let master_cancel = tokio_util::sync::CancellationToken::new();
     cancel_state.set(master_cancel.clone());
 
+    // 入口立即 emit Started：collect_priority_roots 是同步 spawn_blocking，可能耗
+    // 100-300ms；这期间没有 ntfs-search 事件可发，前端会黑屏。先发 PhaseStarted
+    // { phase: Started } 让 UI 立刻显示"扫描中"。
+    emit_scan_phase(&app, ScanPhase::Started);
+
     // collect_priority_roots 含 30-50 次同步 is_dir，移到 spawn_blocking 不阻塞 executor
     let priority_roots = if options.roots.is_empty() {
         tokio::task::spawn_blocking(collect_priority_roots)
@@ -120,6 +151,7 @@ pub async fn scan_clients_via_mft(
                     max_results,
                     timeout_secs: total_timeout / 3, // priority 阶段给 1/3 时间预算
                     include_unhealthy: options.include_unhealthy,
+                    phase: ScanPhase::Priority,
                 },
                 &registry,
                 app.clone(),
@@ -164,6 +196,7 @@ pub async fn scan_clients_via_mft(
                 max_results,
                 timeout_secs: total_timeout,
                 include_unhealthy: options.include_unhealthy,
+                phase: ScanPhase::Fallback,
             },
             &registry,
             app,
@@ -193,6 +226,8 @@ struct ScanConfig {
     max_results: usize,
     timeout_secs: u64,
     include_unhealthy: bool,
+    /// 当前阶段标签，run_scan 入口 emit PhaseStarted 时透传给前端做 UI 区分。
+    phase: ScanPhase,
 }
 
 /// 单次扫描的封装：构建 opts + 调 find_files + 转 ClientInstallation。
@@ -202,6 +237,11 @@ async fn run_scan(
     app: AppHandle,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Vec<ClientInstallation>, IpcError> {
+    // 入口 emit PhaseStarted：标记进入新阶段。priority → fallback 切换时让前端
+    // 看到提示变化（"扩展到全盘扫描…"），同时填补 ntfs-search 启动到第一条
+    // drive_started 之间的静默期。
+    emit_scan_phase(&app, config.phase.clone());
+
     let opts = ntfs_search::NtfsScanOptions::new(|name| {
         ["DDNet.exe", "ddnet.exe"]
             .iter()
@@ -361,6 +401,15 @@ impl ntfs_search::ProgressSink for TauriScanSink {
         use tauri::Emitter;
         let _ = self.app.emit("scan-progress", &event);
     }
+}
+
+/// 发业务层扫描阶段事件。和 TauriScanSink 共用 `scan-progress` 通道：前端按
+/// `kind` 做 discriminated union 区分 ntfs_search 事件 vs 业务层 phase 事件。
+///
+/// 失败静默（`let _ =`）：emit 失败一般是前端已卸载监听，扫描本身不应中断。
+fn emit_scan_phase(app: &AppHandle, phase: ScanPhase) {
+    use tauri::Emitter;
+    let _ = app.emit("scan-progress", &ScanPhaseEvent::PhaseStarted { phase });
 }
 
 /// Windows 默认固定盘符 roots（C: 永远在，D-Z 按存在性添加）。

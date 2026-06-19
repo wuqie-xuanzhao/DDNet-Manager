@@ -3,11 +3,18 @@
  *
  * Rust 端用 `#[serde(tag = "kind", rename_all = "snake_case")]` 序列化，
  * 前端按 `event.kind` 做 discriminated union 处理。
+ *
+ * 另外业务层（DDNet-Manager scan.rs）会通过同一 `scan-progress` 通道发
+ * `phase_started` 变体（`ScanPhaseEvent`），不属于 ntfs-search enum，但共用
+ * 联合类型——前端按 `kind` 区分。
  */
 
 export type BackendKind = "mft" | "usn" | "walkdir";
 
 export type ScanLimitKind = "results" | "records_scanned";
+
+/** 业务层扫描阶段标签，对应 Rust 端 `ScanPhase` enum（snake_case 序列化）。 */
+export type ScanPhase = "started" | "priority" | "fallback";
 
 export type ScanProgressEvent =
   | { kind: "drive_started"; root: string; backend: BackendKind }
@@ -27,7 +34,10 @@ export type ScanProgressEvent =
     }
   | { kind: "scan_limit_hit"; limit_kind: ScanLimitKind; limit: number }
   | { kind: "drive_skipped"; root: string; reasons: string[] }
-  | { kind: "entry_error"; path: string | null; error: string };
+  | { kind: "entry_error"; path: string | null; error: string }
+  /// 业务层扫描阶段事件（DDNet-Manager scan.rs emit，非 ntfs-search）。
+  /// 让前端在 ntfs-search 第一条 drive_started 之前就能显示"扫描中"避免黑屏。
+  | { kind: "phase_started"; phase: ScanPhase };
 
 /**
  * 把 backend kind 转中文显示标签。
@@ -66,5 +76,21 @@ export function describeScanEvent(event: ScanProgressEvent): string {
       return event.path
         ? `条目错误 ${event.path}：${event.error}`
         : `条目错误：${event.error}`;
+    case "phase_started":
+      return describeScanPhase(event.phase);
+  }
+}
+
+/**
+ * 把扫描阶段标签转中文显示。phase_started 事件用。
+ */
+export function describeScanPhase(phase: ScanPhase): string {
+  switch (phase) {
+    case "started":
+      return "扫描已启动，正在准备扫描位置…";
+    case "priority":
+      return "正在扫描常见安装位置（Steam / Program Files / 用户目录）…";
+    case "fallback":
+      return "未在常见位置命中，扩展到全盘扫描…";
   }
 }
