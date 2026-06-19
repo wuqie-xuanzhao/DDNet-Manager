@@ -100,7 +100,7 @@
       "endpoints": [
         "https://github.com/wuqie-xuanzhao/DDNet-Manager/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwOEE2OEFCMEE1MkUxMDkKUldRSjRWSUtxMmlLd0RYbkZqRno5VXpjYllURk1qUDA2czVyZnBvYW5yQ2QxME9JakRrK05SNTcK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENDNEQ2RjRDMDYwOTBCMjQKUldRa0N3a0dURzlOeklvM25OQXRUUHk2SDJET0xrc2tIYk13STBsbTRyaHNGU3JCbmludUdBSE8K",
       "windows": {
         "installMode": "passive"
       }
