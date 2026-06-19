@@ -2,7 +2,7 @@ use crate::commands::download::{
     complete_download_job_snapshot, enter_installing_snapshot,
     list_download_job_recoveries_from_registry, load_download_job_snapshot,
     local_smoke_result_temp_path, request_requires_manifest_url, required_local_smoke_result_path,
-    required_manifest_url, write_local_smoke_result_report,
+    required_manifest_url, write_local_smoke_result_report, DownloadThrottle,
 };
 use crate::download::{sha256_hex, DownloadManager};
 use crate::models::{
@@ -360,4 +360,43 @@ fn complete_download_job_snapshot_persists_completed_before_history_followup() {
 
     assert_eq!(completed.status, DownloadJobStatus::Completed);
     assert_eq!(persisted.status, DownloadJobStatus::Completed);
+}
+
+/// C2 节流阈值边界测试。download callback 每 chunk 都调 should_emit，
+/// 但只在 100ms 时间窗或 1% 进度变化时返回 true。这里只验证进度百分比分支
+/// （时间分支需要 sleep，单测里跳过）。
+#[test]
+fn download_throttle_emits_when_progress_delta_exceeds_one_percent() {
+    let mut throttle = DownloadThrottle::new(10_000); // 10 KB total
+                                                      // 100 bytes = 1% of 10_000，应触发 emit
+    assert!(throttle.should_emit(100), "1% 进度变化应触发 emit");
+    // 再次调 100 bytes：delta=0（上次也是 100），progress_for_emit=false；
+    // 时间窗也未满 100ms。应返回 false。
+    assert!(!throttle.should_emit(100), "0 进度变化 + 100ms 内不应 emit");
+    // 再涨 200 bytes（累计 300，delta=200=2%）：应再次 emit。
+    assert!(throttle.should_emit(300), "2% 进度变化应触发 emit");
+}
+
+#[test]
+fn download_throttle_skips_below_one_percent_delta() {
+    let mut throttle = DownloadThrottle::new(1_000_000); // 1 MB total
+                                                         // 涨 5000 bytes（0.5% < 1%）：不应 emit（时间窗也未满 100ms）
+    assert!(
+        !throttle.should_emit(5000),
+        "0.5% 进度变化低于阈值，100ms 内不应 emit"
+    );
+    // 涨 10000 bytes（累计从 0 涨到 10000，delta=1%）：应 emit
+    assert!(throttle.should_emit(10000));
+}
+
+#[test]
+fn download_throttle_handles_zero_total_gracefully() {
+    // total=0（极端边界，content_length 缺失）：progress 分支不触发，
+    // 只靠时间分支（100ms）节流。连续 quick call 都不应 emit。
+    let mut throttle = DownloadThrottle::new(0);
+    assert!(!throttle.should_emit(0), "total=0 且时间窗未满，不应 emit");
+    assert!(
+        !throttle.should_emit(100),
+        "total=0 且时间窗未满，即使字节增长也不应 emit"
+    );
 }

@@ -220,7 +220,13 @@ struct DownloadTaskRuntime {
 }
 
 /// 执行下载 + 校验，进度回调把 downloaded_bytes 实时同步到 manager 与 registry。
+///
+/// C2: progress callback 节流到 100ms 或 1% 进度变化才 emit + persist。每个 chunk
+/// 仍同步更新 manager 内存状态（轻量），但 sqlite 持久化 + IPC emit 受节流保护。
+/// 最后一个 chunk 的 emit 由 download-completed 事件兜底（即使这里跳过，下载完成
+/// 后 handle_download_success 仍会 emit 一次最终状态）。
 async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> {
+    let mut throttle = DownloadThrottle::new(runtime.job.size);
     crate::download::download_asset_to_file(
         crate::download::DownloadFileRequest {
             asset_url: &runtime.job.asset_url,
@@ -235,9 +241,11 @@ async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> 
             }) else {
                 return false;
             };
-            persist_download_job_snapshot(&runtime.registry, &job);
             let keep_running = job.status != DownloadJobStatus::Canceled;
-            let _ = runtime.app.emit_to("main", "download-progress", job);
+            if throttle.should_emit(downloaded_bytes) {
+                persist_download_job_snapshot(&runtime.registry, &job);
+                let _ = runtime.app.emit_to("main", "download-progress", job);
+            }
             keep_running
         },
     )
@@ -258,6 +266,49 @@ async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> 
         )
         .map_err(|error| error.to_string())
     })
+}
+
+/// 下载进度节流阈值：100ms 时间窗或 1% 进度变化，任一满足才 emit + persist。
+/// 避免高频 chunk（GitHub release 几 MB/s，每 8-32KB 一个 chunk）让 sqlite 写
+/// 和 IPC emit 爆掉。
+const DOWNLOAD_EMIT_MIN_INTERVAL_MS: u64 = 100;
+const DOWNLOAD_EMIT_MIN_PROGRESS_PERCENT: u64 = 1;
+
+/// 下载进度节流状态。download callback 每次调用 ask `should_emit`，返回 true
+/// 时才做 persist + emit，并更新内部 last 时间戳和字节数。
+pub(crate) struct DownloadThrottle {
+    last_emit_at: std::time::Instant,
+    last_emit_bytes: u64,
+    total: u64,
+}
+
+impl DownloadThrottle {
+    /// 用文件总字节数构造。total=0 时只靠时间分支节流（progress 分支跳过）。
+    pub(crate) fn new(total: u64) -> Self {
+        Self {
+            last_emit_at: std::time::Instant::now(),
+            last_emit_bytes: 0,
+            total,
+        }
+    }
+
+    /// 判断当前 chunk 是否应该 emit + persist。返回 true 时内部状态已更新，
+    /// 调用方负责真做 persist_download_job_snapshot + app.emit。
+    pub(crate) fn should_emit(&mut self, downloaded_bytes: u64) -> bool {
+        let now = std::time::Instant::now();
+        let time_for_emit = now.duration_since(self.last_emit_at)
+            >= std::time::Duration::from_millis(DOWNLOAD_EMIT_MIN_INTERVAL_MS);
+        let bytes_delta = downloaded_bytes.saturating_sub(self.last_emit_bytes);
+        let progress_for_emit =
+            self.total > 0 && bytes_delta * 100 / self.total >= DOWNLOAD_EMIT_MIN_PROGRESS_PERCENT;
+        if time_for_emit || progress_for_emit {
+            self.last_emit_at = now;
+            self.last_emit_bytes = downloaded_bytes;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// 处理下载/校验结果：成功切 Verified + emit completed；失败切 Failed + emit failed。
