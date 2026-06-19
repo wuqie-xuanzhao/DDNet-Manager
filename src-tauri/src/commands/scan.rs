@@ -161,17 +161,9 @@ pub async fn scan_clients_via_mft(
             for inst in priority_installations {
                 if seen_ids.insert(inst.id.clone()) {
                     // B4: priority 命中且 health=ok 时自动 upsert 落 registry，
-                    // 让前端 triggerScan 不再需要二次 IPC 调用。跳过 broken
-                    // 客户端避免污染（用户曾装过又删了 / 残留目录等场景，
-                    // plan 风险点 #2 要求 health check 把关）。
-                    if inst.health == ClientHealth::Ok {
-                        if let Err(e) = registry.upsert_client_installation(&inst) {
-                            eprintln!(
-                                "[scan] priority upsert failed for {}: {}",
-                                inst.install_dir, e
-                            );
-                        }
-                    }
+                    // 让前端 triggerScan 不再需要二次 IPC 调用。upsert_scan_hit
+                    // 内部 health check + 保留已存 is_default（review issue M1）。
+                    upsert_scan_hit(&registry, &inst, "priority");
                     all_installations.push(inst);
                 }
             }
@@ -217,6 +209,10 @@ pub async fn scan_clients_via_mft(
         .await?;
         for inst in fallback_installations {
             if seen_ids.insert(inst.id.clone()) {
+                // fallback 命中同样落库（review issue H1）：之前只 priority 自动
+                // upsert 会让自定义路径客户端重启后状态丢失。fallback 用户主动
+                // 扫全盘的命中更应该落库，行为与 priority 一致。
+                upsert_scan_hit(&registry, &inst, "fallback");
                 all_installations.push(inst);
             }
         }
@@ -418,10 +414,38 @@ impl ntfs_search::ProgressSink for TauriScanSink {
 /// 发业务层扫描阶段事件。和 TauriScanSink 共用 `scan-progress` 通道：前端按
 /// `kind` 做 discriminated union 区分 ntfs_search 事件 vs 业务层 phase 事件。
 ///
-/// 失败静默（`let _ =`）：emit 失败一般是前端已卸载监听，扫描本身不应中断。
+/// 失败记录到 stderr（与其他 eprintln! 风格一致）：emit 失败一般是前端已卸载
+/// 监听，但也可能是序列化错误或 event bus 未初始化，记录后便于排查"黑屏回归"。
 fn emit_scan_phase(app: &AppHandle, phase: ScanPhase) {
     use tauri::Emitter;
-    let _ = app.emit("scan-progress", &ScanPhaseEvent::PhaseStarted { phase });
+    if let Err(e) = app.emit("scan-progress", &ScanPhaseEvent::PhaseStarted { phase }) {
+        eprintln!("[scan] emit scan-progress PhaseStarted failed: {e}");
+    }
+}
+
+/// 把扫描命中落 registry（health=ok 时）。priority 和 fallback 共用：
+/// - health != ok 跳过（plan B4 风险点 #2：避免残留目录污染）
+/// - 已存在的记录保留 is_default（review issue M1：validate_client_dir 总是
+///   返回 is_default=false，直接 upsert 会覆盖用户的默认客户端设置）
+/// - upsert 失败记录到 stderr 但不阻断扫描
+fn upsert_scan_hit(registry: &ClientRegistry, inst: &ClientInstallation, phase_label: &str) {
+    if inst.health != ClientHealth::Ok {
+        return;
+    }
+    let to_upsert = match registry.client_installation_by_id(&inst.id) {
+        Ok(Some(existing)) if existing.is_default => {
+            let mut cloned = inst.clone();
+            cloned.is_default = true;
+            cloned
+        }
+        _ => inst.clone(),
+    };
+    if let Err(e) = registry.upsert_client_installation(&to_upsert) {
+        eprintln!(
+            "[scan] {} upsert failed for {}: {}",
+            phase_label, inst.install_dir, e
+        );
+    }
 }
 
 /// Windows 默认固定盘符 roots（C: 永远在，D-Z 按存在性添加）。
@@ -486,5 +510,104 @@ mod tests {
                 "ProgramFiles 应在 priority roots 中"
             );
         }
+    }
+
+    /// 测试用 ClientInstallation 构造器：默认 health=ok、is_default=false。
+    fn scan_hit_client(id: &str, health: ClientHealth, is_default: bool) -> ClientInstallation {
+        use crate::models::{ClientCompatibility, ClientConfidence, ClientInstallSource};
+        ClientInstallation {
+            id: id.to_string(),
+            client_id: "qmclient".to_string(),
+            display_name: "QmClient".to_string(),
+            install_dir: format!("C:/Games/{id}"),
+            executable_path: format!("C:/Games/{id}/DDNet.exe"),
+            storage_cfg_path: format!("C:/Games/{id}/storage.cfg"),
+            data_dir: format!("C:/Games/{id}/data"),
+            user_data_dir: None,
+            version: None,
+            is_default,
+            health,
+            missing_items: Vec::new(),
+            install_source: ClientInstallSource::Manual,
+            confidence: ClientConfidence::Compatible,
+            manager_owned: false,
+            compatibility: ClientCompatibility::default(),
+            upstream_url: None,
+            pe_company_name: None,
+            pe_product_name: None,
+            pe_file_version: None,
+            exe_sha256: None,
+            last_scanned_at: None,
+        }
+    }
+
+    /// 测试用临时 ClientRegistry：用 tempfile 创建独立 sqlite db 避免污染。
+    fn temp_registry() -> ClientRegistry {
+        let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+        // temp_dir 在函数返回时 drop 会清理目录，但 sqlite 文件需保持存活到测试结束。
+        // 用 Box::leak 让 temp_dir 永久存活，单测内存开销可接受。
+        let leaked = Box::leak(Box::new(temp_dir));
+        crate::registry::ClientRegistry::open(&leaked.path().join("scan-test.sqlite"))
+            .expect("注册表应打开成功")
+    }
+
+    #[test]
+    fn upsert_scan_hit_skips_unhealthy_to_avoid_registry_pollution() {
+        let registry = temp_registry();
+        // health 非 ok 的扫描命中不应落库（plan B4 风险点 #2：残留目录污染）
+        let broken = scan_hit_client("broken-1", ClientHealth::MissingExecutable, false);
+        upsert_scan_hit(&registry, &broken, "priority");
+        let clients = registry.list_client_installations().expect("读取应成功");
+        assert!(clients.is_empty(), "health 非 ok 的命中不应落库");
+    }
+
+    #[test]
+    fn upsert_scan_hit_first_time_writes_is_default_false() {
+        let registry = temp_registry();
+        let hit = scan_hit_client("new-1", ClientHealth::Ok, false);
+        upsert_scan_hit(&registry, &hit, "priority");
+        let stored = registry
+            .client_installation_by_id("new-1")
+            .expect("查询应成功")
+            .expect("新命中应已落库");
+        assert!(!stored.is_default, "首次落库 is_default 应为 false");
+    }
+
+    #[test]
+    fn upsert_scan_hit_preserves_existing_is_default() {
+        // review issue M1：validate_client_dir 总是返回 is_default=false，
+        // upsert_scan_hit 必须先查现有记录继承 is_default，否则用户的默认
+        // 客户端设置会被 priority 扫描无声覆盖。
+        let registry = temp_registry();
+
+        // 先把 new-1 设为 default
+        let mut initial = scan_hit_client("preserved-1", ClientHealth::Ok, false);
+        registry
+            .upsert_client_installation(&initial)
+            .expect("初始写入应成功");
+        registry
+            .set_default_client("preserved-1")
+            .expect("设置默认应成功");
+        let stored = registry
+            .client_installation_by_id("preserved-1")
+            .expect("查询应成功")
+            .expect("应存在");
+        assert!(stored.is_default, "前置：设置默认应生效");
+
+        // 模拟再次扫描命中（validate_client_dir 返回 is_default=false），
+        // upsert_scan_hit 应保留 is_default=true 不覆盖。
+        initial.version = Some("1.2.3".to_string()); // 模拟扫描后字段更新
+        upsert_scan_hit(&registry, &initial, "priority");
+
+        let after = registry
+            .client_installation_by_id("preserved-1")
+            .expect("查询应成功")
+            .expect("应存在");
+        assert!(after.is_default, "is_default 应保留为 true 不被覆盖");
+        assert_eq!(
+            after.version.as_deref(),
+            Some("1.2.3"),
+            "其他字段应正常更新"
+        );
     }
 }

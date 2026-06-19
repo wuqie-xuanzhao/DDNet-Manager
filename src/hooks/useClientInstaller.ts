@@ -12,7 +12,7 @@ import {
   upsertClientInstallation
 } from "../lib/tauri";
 import { buildStartUpdateDownloadRequest, buildUpdateSourceRequest } from "../lib/updateLogic";
-import type { ScanProgressEvent } from "../lib/scanProgress";
+import { appendScanEventCapped, type ScanProgressEvent } from "../lib/scanProgress";
 import type {
   AppSettings,
   ClientCatalogEntry,
@@ -549,11 +549,7 @@ export function useClientInstaller(params: {
     let unlisten: UnlistenFn | null = null;
     let disposed = false;
     void listen<ScanProgressEvent>("scan-progress", (e) => {
-      setScanEvents((prev) => {
-        const next = [...prev, e.payload];
-        // 保留最近 50 条：长时间全盘扫描可能产生数百条事件，UI 只看尾部即可
-        return next.length > 50 ? next.slice(next.length - 50) : next;
-      });
+      setScanEvents((prev) => appendScanEventCapped(prev, e.payload));
     }).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;

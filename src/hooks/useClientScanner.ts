@@ -2,16 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ClientInstallation, ScanClientInstallationsOptions } from "../types";
-import type { ScanProgressEvent } from "../lib/scanProgress";
+import { appendScanEventCapped, type ScanProgressEvent } from "../lib/scanProgress";
 
 export interface ScanClientsViaMftParams {
   options?: ScanClientInstallationsOptions;
 }
-
-/// events 数组软上限。长时间全盘扫描会产生数百条事件（drive_started /
-/// entries_found / drive_completed 等），UI 时间线只看尾部即可，cap 后避免
-/// 内存增长 + setState 触发的 re-render 成本随事件数线性增加。
-const MAX_EVENTS = 50;
 
 export interface UseClientScannerResult {
   /** 最近一条进度事件（按 root 聚合的 Map） */
@@ -50,11 +45,7 @@ export function useClientScanner(): UseClientScannerResult {
     listen<ScanProgressEvent>("scan-progress", (e) => {
       if (cancelled) return;
       const event = e.payload;
-      setEvents((prev) => {
-        const next = [...prev, event];
-        // cap 到最近 MAX_EVENTS 条：UI 时间线只渲染尾部，过长无意义且拖慢 re-render
-        return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next;
-      });
+      setEvents((prev) => appendScanEventCapped(prev, event));
       // 仅由 entries_found 驱动 foundCount。多盘并行下，后端 GlobalizingSink 把
       // 各盘 per-drive found 累加成全局总数后 emit，覆盖式更新即正确。
       // 不再用 drive_completed.found（per-drive 语义），否则并行下会跳变回退。

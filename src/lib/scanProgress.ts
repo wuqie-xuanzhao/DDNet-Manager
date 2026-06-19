@@ -94,3 +94,26 @@ export function describeScanPhase(phase: ScanPhase): string {
       return "未在常见位置命中，扩展到全盘扫描…";
   }
 }
+
+/// ScanProgressEvent 数组软上限。useClientScanner 和 useClientInstaller 共用：
+/// 长时间全盘扫描会 emit 数百条事件，UI 时间线只看尾部即可，cap 后避免内存增长
+/// + setState 触发的 re-render 成本随事件数线性增加。
+export const MAX_SCAN_EVENTS = 50;
+
+/**
+ * 把事件追加到 prev 尾部，超过 MAX_SCAN_EVENTS 时丢弃头部。
+ *
+ * useClientScanner 和 useClientInstaller 都监听 scan-progress 累积事件，cap 逻辑
+ * 共用一份避免重复（review issue L2）。已达上限时 `slice(prev.length - max + 1)`
+ * 比 `[...prev, event].slice(...)` 省一次 array copy（review issue L1）。
+ */
+export function appendScanEventCapped(
+  prev: ScanProgressEvent[],
+  event: ScanProgressEvent,
+  max: number = MAX_SCAN_EVENTS
+): ScanProgressEvent[] {
+  if (prev.length >= max) {
+    return [...prev.slice(prev.length - max + 1), event];
+  }
+  return [...prev, event];
+}
