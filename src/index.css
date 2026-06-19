@@ -9,6 +9,11 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
+  /* E3：主题切换时让根级 background/color 平滑过渡（300ms ease），避免瞬间切换
+     造成视觉跳变。组件级颜色（bg-[var(--app-surface)] 等）仍瞬间切换，但 inherit
+     自根的颜色（如默认 color）会跟随过渡。 */
+  transition: background-color 300ms ease, color 300ms ease;
+
   /* Surfaces */
   --app-bg: #111213;
   --app-surface: #1a1c22;
