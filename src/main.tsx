@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { Toaster } from "./components/ui/sonner";
 import "./index.css";
 
 const root = document.getElementById("root");
@@ -16,6 +17,7 @@ createRoot(root).render(
     <ErrorBoundary>
       <TooltipProvider delayDuration={200}>
         <App />
+        <Toaster />
       </TooltipProvider>
     </ErrorBoundary>
   </StrictMode>
