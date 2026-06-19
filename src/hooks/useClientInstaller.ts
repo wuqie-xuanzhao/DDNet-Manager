@@ -116,6 +116,10 @@ export function useClientInstaller(params: {
   const [installDialogOpen, setInstallDialogOpen] = useState(false);
   const [installDialogMode, setInstallDialogMode] = useState<InstallDialogMode>("install");
   const [scanning, setScanning] = useState(false);
+  /// 最近一次扫描的事件流（cap 50，B3 防止长时间扫描后内存爆）。
+  /// triggerScan 开始时清空，scan-progress 事件到来时累积。InstallDialog
+  /// 在 scanning 时渲染最近几条 describeScanEvent 给用户实时反馈。
+  const [scanEvents, setScanEvents] = useState<ScanProgressEvent[]>([]);
 
   // 当前 tab 的 requestId：切 tab 时让旧 tab 的异步操作作废。
   const requestIdRef = useRef(0);
@@ -362,6 +366,7 @@ export function useClientInstaller(params: {
   const triggerScan = useCallback(async () => {
     if (!tauriRuntime || scanning) return;
     setScanning(true);
+    setScanEvents([]);
     try {
       const results = await scanClientsViaMft({
         include_saved_paths: true,
@@ -535,13 +540,18 @@ export function useClientInstaller(params: {
     [client, clients, fetchRelease]
   );
 
-  /// 监听 scan-progress 事件，仅用于潜在的进度反馈（不阻塞 triggerScan）。
+  /// 监听 scan-progress 事件，累积到 scanEvents 给 InstallDialog 渲染时间线。
+  /// 只在 scanning 时挂监听，避免平时占用 IPC 通道。事件 cap 50（B3 策略）。
   useEffect(() => {
     if (!tauriRuntime || !scanning) return;
     let unlisten: UnlistenFn | null = null;
     let disposed = false;
-    void listen<ScanProgressEvent>("scan-progress", () => {
-      // 进度事件目前只用于日志，主流程靠 triggerScan await
+    void listen<ScanProgressEvent>("scan-progress", (e) => {
+      setScanEvents((prev) => {
+        const next = [...prev, e.payload];
+        // 保留最近 50 条：长时间全盘扫描可能产生数百条事件，UI 只看尾部即可
+        return next.length > 50 ? next.slice(next.length - 50) : next;
+      });
     }).then((fn) => {
       if (disposed) fn();
       else unlisten = fn;
@@ -576,6 +586,7 @@ export function useClientInstaller(params: {
     clients,
     catalogEntry,
     scanning,
+    scanEvents,
     installDialogOpen,
     installDialogMode,
     buttonProps,

@@ -114,6 +114,7 @@ function makeInstaller(overrides: Partial<ReturnType<typeof useClientInstaller>>
     clients: [makeClient()],
     catalogEntry: githubCatalogEntry,
     scanning: false,
+    scanEvents: [],
     installDialogOpen: true,
     installDialogMode: "install" as const,
     buttonProps: { canLaunch: true, disabled: false, hasUpdate: false, latestVersion: "1.2.3", downloading: false, progress: 0, broken: false },
@@ -196,5 +197,39 @@ describe("InstallDialog", () => {
     expect(screen.getByText("更新 QmClient")).toBeInTheDocument();
     // update 模式不渲染快捷方式 checkbox
     expect(screen.queryByText("创建桌面快捷方式")).not.toBeInTheDocument();
+  });
+
+  it("scanning=true 渲染扫描进度时间线标题", () => {
+    const installer = makeInstaller({ scanning: true, scanEvents: [] });
+    render(<InstallDialog installer={installer} displayName="QmClient" gameId="qmclient" />);
+    expect(screen.getByText("扫描进度")).toBeInTheDocument();
+    // scanEvents 为空时显示"准备扫描…"
+    expect(screen.getByText("准备扫描…")).toBeInTheDocument();
+  });
+
+  it("scanning=true 且 scanEvents 非空时渲染 describeScanEvent 文本", () => {
+    const installer = makeInstaller({
+      scanning: true,
+      scanEvents: [
+        { kind: "phase_started", phase: "started" },
+        { kind: "phase_started", phase: "priority" },
+        { kind: "drive_started", root: "C:\\Steam", backend: "mft" },
+        { kind: "entries_found", found: 2 }
+      ]
+    });
+    render(<InstallDialog installer={installer} displayName="QmClient" gameId="qmclient" />);
+    expect(screen.getByText(/扫描已启动/)).toBeInTheDocument();
+    expect(screen.getByText(/常见安装位置/)).toBeInTheDocument();
+    expect(screen.getByText(/扫描 C:\\Steam/)).toBeInTheDocument();
+    expect(screen.getByText("已找到 2 个候选")).toBeInTheDocument();
+  });
+
+  it("scanning=false 时不渲染扫描进度区域", () => {
+    const installer = makeInstaller({
+      scanning: false,
+      scanEvents: [{ kind: "entries_found", found: 5 }]
+    });
+    render(<InstallDialog installer={installer} displayName="QmClient" gameId="qmclient" />);
+    expect(screen.queryByText("扫描进度")).not.toBeInTheDocument();
   });
 });

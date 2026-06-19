@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Button } from "@/components/ui/button";
 import { probeDisk } from "@/lib/tauri";
+import { describeScanEvent } from "@/lib/scanProgress";
 import type { DiskProbe } from "@/types";
 import type { useClientInstaller } from "@/hooks/useClientInstaller";
 
@@ -49,7 +50,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function InstallDialog({ installer, displayName, gameId }: InstallDialogProps) {
-  const { state, installDialogOpen, installDialogMode, closeInstallDialog, beginInstall, triggerScan, scanning, catalogEntry } = installer;
+  const { state, installDialogOpen, installDialogMode, closeInstallDialog, beginInstall, triggerScan, scanning, scanEvents, catalogEntry } = installer;
 
   // 从 state 提取 release 元数据（installed 状态时 latest/assetSize/releaseUrl 可用）。
   // 否则 release 尚未拉到，弹窗显示加载状态。
@@ -319,6 +320,30 @@ export function InstallDialog({ installer, displayName, gameId }: InstallDialogP
                   </div>
                 </label>
               </RadioGroup>
+            </div>
+          )}
+
+          {/* 扫描进度时间线：triggerScan 进行中时显示最近事件，让用户看到"在扫哪里 / 找到几个" */}
+          {scanning && (
+            <div className="rounded-lg border border-[var(--app-border-subtle)] bg-[var(--app-sunken)] p-2.5 space-y-1 max-h-32 overflow-y-auto">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-text-muted)] flex items-center gap-1.5">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                扫描进度
+              </div>
+              {scanEvents.length === 0 ? (
+                <div className="text-[10px] text-[var(--app-text-dim)] font-mono">准备扫描…</div>
+              ) : (
+                <div className="space-y-0.5">
+                  {scanEvents.slice(-6).map((event, idx) => (
+                    <div
+                      key={`${idx}-${event.kind}`}
+                      className="text-[10px] font-mono text-[var(--app-text-secondary)] leading-relaxed"
+                    >
+                      {describeScanEvent(event)}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
