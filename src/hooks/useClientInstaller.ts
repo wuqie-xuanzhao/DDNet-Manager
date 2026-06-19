@@ -371,7 +371,13 @@ export function useClientInstaller(params: {
               }
               pendingShortcutOptionsRef.current = null;
             }
-            await refreshFromRegistry();
+            // review issue L3：refreshFromRegistry 抛错不应导致 listen 回调内
+            // promise rejection 未捕获。C3 已有 setFailedState，包一下统一入口。
+            try {
+              await refreshFromRegistry();
+            } catch (err) {
+              setFailedState(err, { toast: true });
+            }
             void fetchRelease();
           }
         ],

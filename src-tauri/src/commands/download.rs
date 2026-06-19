@@ -31,19 +31,67 @@ struct VerifyProgressPayload {
 /// 与 TauriScanSink 模式一致：持有 AppHandle + 关联 id，每次 emit 调
 /// `app.emit_to("main", "verify-progress", payload)`。emit 失败静默——前端
 /// 已卸载监听时不应阻断校验。
+///
+/// 内部用 `Mutex<VerifyThrottle>` 节流（review issue M2）：100MB 文件约 400 个
+/// 256KB 块，不节流会让前端 re-render 抖动 + IPC 序列化拖慢校验吞吐。节流策略：
+/// 100ms 时间窗 + 总是 emit 第一次和最后一次（最终态由 verify 完成切 state 兜底）。
 struct TauriVerifySink {
     app: AppHandle,
     client_installation_id: String,
+    throttle: std::sync::Mutex<VerifyThrottle>,
+}
+
+impl TauriVerifySink {
+    fn new(app: AppHandle, client_installation_id: String) -> Self {
+        Self {
+            app,
+            client_installation_id,
+            throttle: std::sync::Mutex::new(VerifyThrottle::new()),
+        }
+    }
 }
 
 impl VerifyProgressSink for TauriVerifySink {
     fn emit(&self, bytes_read: u64, total: u64) {
+        // 节流：100ms 时间窗内只 emit 一次。最后一次 emit 由 verify 完成后
+        // 前端切到 installed/failed state 兜底，不需要 here 强制 emit total。
+        let should_emit = self
+            .throttle
+            .lock()
+            .map(|mut t| t.should_emit(bytes_read, total))
+            .unwrap_or(true);
+        if !should_emit {
+            return;
+        }
         let payload = VerifyProgressPayload {
             client_installation_id: self.client_installation_id.clone(),
             bytes_read,
             total,
         };
         let _ = self.app.emit_to("main", "verify-progress", payload);
+    }
+}
+
+/// verify 进度节流（review issue M2）：100ms 时间窗内只放行一次 emit。
+struct VerifyThrottle {
+    last_emit_at: Option<std::time::Instant>,
+}
+
+impl VerifyThrottle {
+    fn new() -> Self {
+        Self { last_emit_at: None }
+    }
+
+    fn should_emit(&mut self, _bytes_read: u64, _total: u64) -> bool {
+        let now = std::time::Instant::now();
+        let should = self
+            .last_emit_at
+            .map(|last| now.duration_since(last) >= std::time::Duration::from_millis(100))
+            .unwrap_or(true);
+        if should {
+            self.last_emit_at = Some(now);
+        }
+        should
     }
 }
 
@@ -254,10 +302,10 @@ async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> 
         // C1: 校验阶段也 emit 进度，让 DownloadButton 在 verify 大文件时显示
         // 进度条而不是 spinner。client_installation_id 让前端按当前 client.id
         // 过滤事件归属（和 download-progress 同模式）。
-        let sink = TauriVerifySink {
-            app: runtime.app.clone(),
-            client_installation_id: runtime.job.client_installation_id.clone(),
-        };
+        let sink = TauriVerifySink::new(
+            runtime.app.clone(),
+            runtime.job.client_installation_id.clone(),
+        );
         crate::download::verify::verify_downloaded_file_with_progress(
             &runtime.cache_path,
             &runtime.job.sha256,
@@ -330,6 +378,15 @@ async fn handle_download_success(runtime: &DownloadTaskRuntime) {
     };
     match persist_download_job_snapshot_result(&runtime.registry, &job) {
         Ok(()) => {
+            // review issue M1：节流可能跳过最后一个 chunk 的 emit，前端 downloading
+            // 进度会卡在 <100% 直接跳到 verifying 0%。emit 一次最终 download-progress
+            // （status 临时改 Downloading，前端 isMine 只看 id 不看 status）把进度
+            // 推到 100%，再 emit download-completed 切到 verifying 阶段。
+            let mut final_progress = job.clone();
+            final_progress.status = DownloadJobStatus::Downloading;
+            let _ = runtime
+                .app
+                .emit_to("main", "download-progress", &final_progress);
             let _ = runtime.app.emit_to("main", "download-completed", job);
         }
         Err(error) => {
