@@ -19,6 +19,7 @@ import { useAutoUpdate } from "./hooks/useAutoUpdate";
 import { useClientLauncher } from "./hooks/useClientLauncher";
 import { useClientInstaller } from "./hooks/useClientInstaller";
 import { useAppUpdater } from "./hooks/useAppUpdater";
+import { useHotkey } from "./hooks/useHotkey";
 import { isTauriRuntime, convertFileSrc, getClientCatalog } from "./lib/tauri";
 import type { LocalSmokeAutomationConfig } from "./types";
 
@@ -173,6 +174,18 @@ export default function App() {
     tauriRuntime,
     appSettings
   });
+
+  // E1: 全局快捷键。Ctrl+, 打开设置（业界惯例，VS Code / GitHub Desktop 等都用此键）。
+  // macOS 上 Cmd+, 也匹配（useHotkey ctrl 修饰符同时接受 metaKey）。
+  // setIsSettingsOpen 来自 useState 是稳定引用，bindings 数组即使每次 render 重建，
+  // effect 重新绑定 listener 的开销可接受。
+  useHotkey([
+    {
+      key: ",",
+      ctrl: true,
+      handler: () => setIsSettingsOpen(true)
+    }
+  ]);
 
   const [gamesData, setGamesData] = useState(GAMES_DATA);
 
