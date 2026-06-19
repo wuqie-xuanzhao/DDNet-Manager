@@ -1,9 +1,8 @@
 import { Download, Pause, RefreshCw, AlertCircle, Wrench, Loader2, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { useState } from 'react';
 import type { ClientInstallation } from '@/types';
 import type { useClientInstaller, ClientInstallState } from '@/hooks/useClientInstaller';
-import { useEscToClose } from '@/hooks/useEscToClose';
+import { usePopoverState } from '@/hooks/usePopoverState';
 
 interface DownloadButtonProps {
   installer: ReturnType<typeof useClientInstaller>;
@@ -69,8 +68,7 @@ function InstanceSwitcher(props: {
   currentIndex: number;
   onSelect: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  useEscToClose(open, () => setOpen(false));
+  const { open, setOpen, backdropProps } = usePopoverState();
   return (
     <div className="relative">
       <button
@@ -84,7 +82,7 @@ function InstanceSwitcher(props: {
       <AnimatePresence>
         {open && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+            <div className="fixed inset-0 z-40" {...backdropProps} />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: -6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}

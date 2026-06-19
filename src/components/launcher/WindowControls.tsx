@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Download, Loader2, AlertCircle, X, ExternalLink, RefreshCw, CheckCircle2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { useAppUpdater } from "@/hooks/useAppUpdater";
-import { useEscToClose } from "@/hooks/useEscToClose";
+import { usePopoverState } from "@/hooks/usePopoverState";
 
 interface WindowControlsProps {
   onOpenSettings: () => void;
@@ -145,8 +145,7 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
     cancelDownload,
     restartNow
   } = updater;
-  const [open, setOpen] = useState(false);
-  useEscToClose(open, () => setOpen(false));
+  const { open, setOpen, backdropProps } = usePopoverState();
 
   // 进入 downloading / installing / ready-to-restart 时自动展开 popup（用户点了"立即更新"后）
   // 显示进度反馈。退出这些状态时（cancel / failed）不强制收起，让用户看清楚结果。
@@ -154,7 +153,7 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
     if (state === "downloading" || state === "installing" || state === "ready-to-restart") {
       setOpen(true);
     }
-  }, [state]);
+  }, [state, setOpen]);
 
   if (!updater.visible) return null;
 
@@ -243,7 +242,7 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
       <AnimatePresence>
         {open && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+            <div className="fixed inset-0 z-40" {...backdropProps} />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: -8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
