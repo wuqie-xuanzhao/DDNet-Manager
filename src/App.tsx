@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AnimatePresence, motion } from "framer-motion";
-import { Gamepad, Loader2 } from "lucide-react";
+import { Gamepad } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import logoMark from "./assets/logo.svg";
 import { GAMES_DATA, GAME_ICON_MAP, buildGamesData, type LauncherGameId } from "./components/launcher/data";
@@ -95,10 +95,6 @@ export default function App() {
   const [selectedPost, setSelectedPost] = useState<GameNewsItem | null>(null);
   const [isPostOpen, setIsPostOpen] = useState(false);
   const [isAudioOn, setIsAudioOn] = useState(false);
-  // isLaunching / launchProgress 当前没有 setter 调用方（handleLaunchGame 已删除，
-  // 原启动动画功能待 #XXX 重新接入）。状态值固定为 false / 0，UI 渲染走"未启动"分支。
-  const [isLaunching] = useState(false);
-  const [launchProgress] = useState(0);
 
   const [customBgs, setCustomBgs] = useState<Record<string, { type: "default" | "image" | "video"; path: string }>>(() => {
     try {
@@ -704,25 +700,6 @@ export default function App() {
           onBrowse={handleBrowse}
           onValidate={handlePrimaryAction}
         />
-
-        <AnimatePresence>
-          {isLaunching ? (
-            <motion.div id="game-launch-curtain" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-[#000] z-50 flex flex-col items-center justify-center p-6">
-              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="flex flex-col items-center space-y-7 max-w-md text-center">
-                <Loader2 className="w-10 h-10 text-yellow-400 animate-spin opacity-80" />
-                <div className="space-y-2">
-                  <h2 className="text-3xl font-extrabold tracking-widest text-[#fff]">{activeGame.name}</h2>
-                  <p className="text-[11px] uppercase tracking-[0.25em] text-gray-500 font-mono">{activeGame.enName}</p>
-                </div>
-                <div className="w-[280px] h-1.5 bg-neutral-900 rounded-full overflow-hidden border border-white/5 relative">
-                  <motion.div className="h-full bg-gradient-to-r from-yellow-400 via-amber-300 to-yellow-500 rounded-full" style={{ width: `${launchProgress}%` }} transition={{ ease: "easeOut" }} />
-                </div>
-                <span className="text-[13px] text-gray-400 block h-6 font-medium">正在启动...</span>
-                <span className="text-[11px] text-gray-600 block mt-4 font-mono">{launchProgress}%</span>
-              </motion.div>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
       </motion.div>
     </div>
   );

@@ -14,6 +14,13 @@ interface WindowControlsProps {
   appUpdater?: ReturnType<typeof useAppUpdater>;
 }
 
+/// 把字节数格式化为 B / KB / MB（更新进度展示用）。模块顶层避免每次 render 重建。
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 /// 通用右上角控制按钮：motion.button + 白底 tooltip 结构。
 /// WindowControls 5 个按钮（声音/设置/最小化/关闭/更新）共用此结构，
 /// review issue #16 抽公共组件消除 60+ 行 DOM 重复。
@@ -192,12 +199,6 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
       // idle / up-to-date / checking
       void checkForUpdate({ force: true });
     }
-  };
-
-  const formatBytes = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
   return (

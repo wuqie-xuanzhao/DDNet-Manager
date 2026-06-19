@@ -92,6 +92,11 @@ export function useAppUpdater(params: {
     setProgress({ downloaded: 0, total: 0, ratio: 0 });
     setState("downloading");
 
+    // 捕获本地引用。cancel/unmount 时 activeUpdateRef 会被置 null，
+    // 后续 callback / await 后通过 myUpdate !== activeUpdateRef.current 检测"已放弃"，
+    // 不再覆盖 UI 状态（plugin 2.x 没暴露真实 cancel，下载会继续到完成，但 UI 不再受影响）。
+    let myUpdate: Update | null = null;
+
     try {
       const update = await checkUpdater();
       if (!update) {
@@ -101,16 +106,24 @@ export function useAppUpdater(params: {
         return;
       }
       activeUpdateRef.current = update;
+      myUpdate = update;
 
       await update.downloadAndInstall((event: DownloadEvent) => {
+        // 已被 cancel 或组件已卸载：丢弃后续 progress 回调
+        if (activeUpdateRef.current !== myUpdate) return;
         switch (event.event) {
           case "Started":
-            setProgress({ downloaded: 0, total: event.data.contentLength ?? 0, ratio: 0 });
+            setProgress({
+              downloaded: 0,
+              total: Number(event.data.contentLength) || 0,
+              ratio: 0,
+            });
             break;
           case "Progress":
             setProgress((prev) => {
               const total = prev?.total ?? 0;
-              const downloaded = (prev?.downloaded ?? 0) + event.data.chunkLength;
+              const chunk = Number(event.data.chunkLength) || 0;
+              const downloaded = (prev?.downloaded ?? 0) + chunk;
               return {
                 downloaded,
                 total,
@@ -125,11 +138,16 @@ export function useAppUpdater(params: {
         }
       });
 
+      // 已被 cancel：不覆盖 UI（用户已经回到 has-update），后台下载继续无害
+      if (activeUpdateRef.current !== myUpdate) return;
       // downloadAndInstall Promise resolve = installer 执行完毕，等待重启
       activeUpdateRef.current = null;
       setProgress(null);
       setState("ready-to-restart");
     } catch (err) {
+      // cancel 不会触发 plugin 抛错（下载继续），但如果 ref 已被置 null（unmount/cancel），
+      // 直接吞掉错误避免把"卸载中的瞬时错误"误报为 install 失败
+      if (myUpdate && activeUpdateRef.current !== myUpdate) return;
       activeUpdateRef.current = null;
       setInstallError(getErrorMessage(err));
       setProgress(null);
@@ -171,6 +189,15 @@ export function useAppUpdater(params: {
     // 只在启动时跑一次；用户切换 allow_silent_update 不自动重检查（避免抖动）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tauriRuntime]);
+
+  // 卸载时丢弃 in-flight update 引用：进行中的 downloadAndInstall Promise 回调
+  // 通过 myUpdate !== activeUpdateRef.current 守卫跳过 setState，避免操作已卸载组件。
+  useEffect(() => {
+    return () => {
+      activeUpdateRef.current = null;
+      inflightRef.current = false;
+    };
+  }, []);
 
   return {
     state,

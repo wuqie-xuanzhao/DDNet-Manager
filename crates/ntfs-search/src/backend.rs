@@ -134,7 +134,13 @@ fn probe_windows_backend_kind(_root: &Path) -> BackendKind {
     }
 }
 
+/// 非 Windows 平台的 stub。`probe_windows_backend_kind` 的唯一调用者位于
+/// `#[cfg(windows)]` 块内（`select_backend_kind`），所以这个分支在 macOS/Linux
+/// 上理论不可达；保留它是为了让 `select_backend_kind` 在所有平台上都能编译通过
+/// （Rust 仍要求函数符号存在）。如未来重构 select_backend_kind 走 trait object，
+/// 可以删掉。
 #[cfg(not(windows))]
+#[allow(dead_code)]
 fn probe_windows_backend_kind(_root: &Path) -> BackendKind {
     BackendKind::Walkdir
 }
