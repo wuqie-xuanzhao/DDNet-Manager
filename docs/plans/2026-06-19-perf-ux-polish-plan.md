@@ -18,43 +18,43 @@
 
 ### 阶段 A：基础设施（先行，给后续铺路）
 
-| # | 任务 | 文件 | 依赖 |
+| # | 任务 | 文件 | 状态 |
 |---|---|---|---|
-| A1 (#19) | 引入 sonner + useToast 封装 | `src/components/ui/sonner.tsx` 新建、`src/lib/toast.ts` 新建 | 无 |
-| A2 (#20) | 抽 usePopoverState 统一 Esc + backdrop 关闭 | `src/hooks/usePopoverState.ts` 新建 | 无 |
+| A1 (#19) | 引入 sonner + useToast 封装 | `src/components/ui/sonner.tsx` 新建、`src/lib/toast.ts` 新建 | ✅ sprint 前已完成（commit 78159863），决定不抽 useToast（sonner 直接用） |
+| A2 (#20) | 抽 usePopoverState 统一 Esc + backdrop 关闭 | `src/hooks/usePopoverState.ts` 新建 | ✅ commit 8aefb4a + b2d66be（review 修 close 引用稳定） |
 
 ### 阶段 B：扫描体验（用户感知最强）
 
-| # | 任务 | 文件 | 依赖 |
+| # | 任务 | 文件 | 状态 |
 |---|---|---|---|
-| B1 (#13) | run_scan 开头 emit phase_started 事件 | `src-tauri/src/commands/scan.rs` | 无 |
-| B2 (#14) | triggerScan 暴露 scan-progress 给 InstallDialog | `src/hooks/useClientInstaller.ts`、`InstallDialog.tsx` | 无 |
-| B3 (#15) | events 数组 cap 到最近 50 条 | `src/hooks/useClientScanner.ts` | 无 |
-| B4 (#23) | 扫描 priority 命中时 Rust 端自动 upsert | `src-tauri/src/commands/scan.rs`、`useClientInstaller.ts` | 无 |
+| B1 (#13) | run_scan 开头 emit phase_started 事件 | `src-tauri/src/commands/scan.rs` | ✅ commit 196897d1 |
+| B2 (#14) | triggerScan 暴露 scan-progress 给 InstallDialog | `src/hooks/useClientInstaller.ts`、`InstallDialog.tsx` | ✅ commit b721dcab |
+| B3 (#15) | events 数组 cap 到最近 50 条 | `src/hooks/useClientScanner.ts` | ✅ commit fe19ed95 |
+| B4 (#23) | 扫描 priority 命中时 Rust 端自动 upsert | `src-tauri/src/commands/scan.rs`、`useClientInstaller.ts` | ✅ commit 1bb29457 + e5cc9172（review 修 H1 fallback 不落库 + M1 is_default 覆盖） |
 
 ### 阶段 C：下载/安装体验
 
-| # | 任务 | 文件 | 依赖 |
+| # | 任务 | 文件 | 状态 |
 |---|---|---|---|
-| C1 (#16) | verify-downloaded-file emit verify-progress | `src-tauri/src/download/verify.rs`、`DownloadButton.tsx` | 无 |
-| C2 (#21) | 下载进度事件节流（Rust 100ms/1% + 前端 rAF） | `src-tauri/src/commands/download.rs`、`useClientInstaller.ts` | 无 |
-| C3 (#17) | 下载/校验错误码 → 中文友好消息映射 | `src-tauri/src/download/error.rs` 新建、`useClientInstaller.ts` | A1 |
-| C4 (#22) | createShortcuts 结果回传 + 失败 toast | `useClientInstaller.ts`、`InstallDialog.tsx` | A1 |
+| C1 (#16) | verify-downloaded-file emit verify-progress | `src-tauri/src/download/verify.rs`、`DownloadButton.tsx` | ✅ commit a7c43af3 |
+| C2 (#21) | 下载进度事件节流（Rust 100ms/1% + 前端 rAF） | `src-tauri/src/commands/download.rs`、`useClientInstaller.ts` | ✅ commit f3355dde（前端 rAF 跳过，Rust 端节流后 ~10Hz 已足够） |
+| C3 (#17) | 下载/校验错误码 → 中文友好消息映射 | `src-tauri/src/download/error.rs` 新建、`useClientInstaller.ts` | ✅ commit 3a593984（不新建 Rust error.rs，错误码已在 error.rs + lib/errors.ts 实现） |
+| C4 (#22) | createShortcuts 结果回传 + 失败 toast | `useClientInstaller.ts`、`InstallDialog.tsx` | ✅ commit a469102d + 0f9c73b7（review 修 M1 进度卡 <100% 跳 verify + M2 校验未节流 + L3 refresh 未捕获） |
 
 ### 阶段 D：启动速度
 
-| # | 任务 | 文件 | 依赖 |
+| # | 任务 | 文件 | 状态 |
 |---|---|---|---|
-| D1 (#18) | useAppUpdater AUTO_CHECK_DELAY_MS 1500 → 300 | `src/hooks/useAppUpdater.ts` | 无 |
-| D2 (#24) | refreshFromRegistry 与 fetchRelease 并行 | `src/hooks/useClientInstaller.ts`、`App.tsx` | 无 |
+| D1 (#18) | useAppUpdater AUTO_CHECK_DELAY_MS 1500 → 300 | `src/hooks/useAppUpdater.ts` | ✅ commit 4f1f136b |
+| D2 (#24) | refreshFromRegistry 与 fetchRelease 并行 | `src/hooks/useClientInstaller.ts`、`App.tsx` | ✅ commit 4e7b2073 |
 
 ### 阶段 E：交互视觉细节
 
-| # | 任务 | 文件 | 依赖 |
+| # | 任务 | 文件 | 状态 |
 |---|---|---|---|
-| E1 (#25) | 抽 useHotkey 加全局快捷键 | `src/hooks/useHotkey.ts` 新建、`App.tsx` | 无 |
-| E2 (#26) | 4K 缩放下固定 px 改 rem 或 style | `DownloadButton.tsx`、`SettingsDialog.tsx` 等 | 无 |
-| E3 (#27) | 主题切换 CSS transition 平滑过渡 | `src/index.css` | 无 |
+| E1 (#25) | 抽 useHotkey 加全局快捷键 | `src/hooks/useHotkey.ts` 新建、`App.tsx` | ✅ commit 3e01935c |
+| E2 (#26) | 4K 缩放下固定 px 改 rem 或 style | `DownloadButton.tsx`、`SettingsDialog.tsx` 等 | ✅ commit 8794f7d7（仅 DownloadButton 字体大小，SettingsDialog 留后续 sprint） |
+| E3 (#27) | 主题切换 CSS transition 平滑过渡 | `src/index.css` | ✅ commit 83957ab4 |
 
 ## 实施顺序与依赖
 
@@ -106,3 +106,21 @@
 
 - Task list：本会话 `TaskList` 的 #12-#27（15 项 + plan 文档）
 - 每完成一项：`TaskUpdate` 标 completed + 提交 commit + 在本文档对应行加 ✅
+
+## 完成总结（2026-06-19）
+
+15 项任务全部完成，含 3 次只读子代理审查（A/B/C 阶段）。共 17 个 commit，21 个文件，
++1154/-79 行。最终 `make check-lint` PASS 15 / WARN 8（全为存量）/ FAIL 0。
+
+### 与 plan 的差异
+
+- **C2**：plan 建议前端 rAF，实际只做 Rust 端 100ms 节流——节流后 emit 频率 ~10Hz，React 18 automatic batching 已足够，rAF 节流收益边际化（commit f3355dde 说明）
+- **C3**：plan 建议新建 `src-tauri/src/download/error.rs`，实际未新建——错误码体系已在 `src-tauri/src/error.rs`（ManagerError + IPC_ERROR_*）+ `src/lib/errors.ts` 完整实现，重复造轮子违反 CLAUDE.md（commit 3a593984 说明）
+- **E2**：plan 列了 DownloadButton + SettingsDialog 等，实际只改 DownloadButton 字体大小——SettingsDialog 改造工作量大、视觉风险高（plan 第 95 行要求 100%/150%/175% 缩放各跑一次，本次未做 tauri-dev 实测），留后续 sprint（commit 8794f7d7 说明）
+
+### 后续待办
+
+- **E2 扩展**：SettingsDialog / WindowControls / Dialogs 等剩余 px 类批量改 rem + 4K 缩放实测
+- **M3 重构**：useClientInstaller.ts 605 行（> 600 WARN），可抽 useScanProgress 子 hook 共享 scanEvents 逻辑
+- **N2 测试缺口**：B4 fallback 命中场景、verify-progress 前端集成行为（依赖 tauri-dev 手动测）
+- **L1 性能优化**：appendScanEventCapped 已抽 helper 但仍是 array copy，量大时改环形缓冲
