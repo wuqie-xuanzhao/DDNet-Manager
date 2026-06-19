@@ -4,10 +4,22 @@ tmp/
 src-tauri/target/
 .claude/worktrees/
 .playwright-mcp
-.superpowers/brainstorm/
+.superpowers/brain/
 .codegraph/
 .DS_Store
 *.log
 src-tauri target
 crates target
 target/
+
+# Tauri updater 签名密钥（私钥外泄过一次，f51a225c 已轮换；这里防止未来再次误提交）
+.env
+.env.*
+*.pem
+*.key
+*.asc
+signing-key-*
+tauri-signer-*
+*.sig.key
+tmp-test.txt
+tmp-test.txt.sig

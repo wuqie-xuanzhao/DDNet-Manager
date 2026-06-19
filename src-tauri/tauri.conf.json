@@ -72,7 +72,7 @@
             "core:window:allow-hide",
             "dialog:allow-open",
             "updater:default",
-            "process:default"
+            "process:allow-restart"
           ]
         }
       ]
