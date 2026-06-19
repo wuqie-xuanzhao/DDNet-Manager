@@ -64,6 +64,13 @@ describe("usePopoverState", () => {
     expect(result.current.backdropProps.onClick).toBe(firstOnClick);
   });
 
+  it("backdropProps 整体对象引用稳定（useMemo 包装，不随 re-render 重建）", () => {
+    const { result, rerender } = renderHook(() => usePopoverState(true));
+    const firstBackdropProps = result.current.backdropProps;
+    rerender();
+    expect(result.current.backdropProps).toBe(firstBackdropProps);
+  });
+
   it("close 引用稳定", () => {
     const { result, rerender } = renderHook(() => usePopoverState(true));
     const firstClose = result.current.close;
@@ -71,7 +78,7 @@ describe("usePopoverState", () => {
     expect(result.current.close).toBe(firstClose);
   });
 
-  it("多个 usePopoverState 实例互不影响", () => {
+  it("多实例状态独立、Escape 同时关闭所有监听中的 popover", () => {
     const { result: a } = renderHook(() => usePopoverState(false));
     const { result: b } = renderHook(() => usePopoverState(false));
     act(() => a.current.setOpen(true));

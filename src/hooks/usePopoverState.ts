@@ -43,9 +43,12 @@ export interface PopoverState {
 
 export function usePopoverState(initialOpen = false): PopoverState {
   const [open, setOpen] = useState<boolean>(initialOpen);
-  useEscToClose(open, () => setOpen(false));
 
+  // review issue M1：close 用 useCallback 包装保证引用稳定。useEscToClose 内部
+  // useEffect 依赖 [open, onClose]，传入 stable close 后只在 open 变化时重挂
+  // listener，避免每次父组件 re-render 都 remove/addEventListener 一轮。
   const close = useCallback(() => setOpen(false), []);
+  useEscToClose(open, close);
 
   const backdropProps = useMemo<PopoverState["backdropProps"]>(
     () => ({
