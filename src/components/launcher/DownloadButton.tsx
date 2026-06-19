@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
 import type { ClientInstallation } from '@/types';
 import type { useClientInstaller, ClientInstallState } from '@/hooks/useClientInstaller';
+import { useEscToClose } from '@/hooks/useEscToClose';
 
 interface DownloadButtonProps {
   installer: ReturnType<typeof useClientInstaller>;
@@ -69,6 +70,7 @@ function InstanceSwitcher(props: {
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  useEscToClose(open, () => setOpen(false));
   return (
     <div className="relative">
       <button

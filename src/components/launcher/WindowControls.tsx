@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Download, Loader2, AlertCircle, X, ExternalLink, RefreshCw, CheckCircle2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { useAppUpdater } from "@/hooks/useAppUpdater";
+import { useEscToClose } from "@/hooks/useEscToClose";
 
 interface WindowControlsProps {
   onOpenSettings: () => void;
@@ -145,6 +146,7 @@ function UpdateControlButton({ updater }: { updater: ReturnType<typeof useAppUpd
     restartNow
   } = updater;
   const [open, setOpen] = useState(false);
+  useEscToClose(open, () => setOpen(false));
 
   // 进入 downloading / installing / ready-to-restart 时自动展开 popup（用户点了"立即更新"后）
   // 显示进度反馈。退出这些状态时（cancel / failed）不强制收起，让用户看清楚结果。
