@@ -364,7 +364,10 @@ export function useClientInstaller(params: {
                   start_menu: shortcutOpts.startMenu
                 });
               } catch (err) {
+                // C4: 快捷方式失败不再被吞——客户端已成功安装但快捷方式没创建，
+                // 用户不知道为什么桌面/开始菜单没图标。toast 显式提示+保留日志便于排查。
                 console.warn(`[useClientInstaller] create_shortcuts failed:`, err);
+                toast.error(`快捷方式创建失败：${getUpdateErrorMessage(err)}`);
               }
               pendingShortcutOptionsRef.current = null;
             }
