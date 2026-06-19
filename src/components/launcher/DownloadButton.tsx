@@ -11,6 +11,10 @@ interface DownloadButtonProps {
 
 /// 主按钮（圆角胶囊 + 圆形图标容器 + amber 配色）。
 /// 保留原米哈游风格视觉，仅图标和文案随 state 切换。
+///
+/// E2：字体大小用 rem（如 text-[0.75rem]）而非 px，让代码层面响应式友好。
+/// 当前 Tauri 默认 DPI awareness 让 px 在系统缩放下视觉等价，但 rem 在用户
+/// 调整根 font-size（如浏览器/Tauri webview 支持时）会跟随缩放，是更稳健的选择。
 function PrimaryButton(props: {
   onClick: () => void;
   disabled?: boolean;
@@ -33,7 +37,7 @@ function PrimaryButton(props: {
       <div className="w-8 h-8 rounded-full bg-[#121319] group-hover/btn:bg-[var(--app-accent)] flex items-center justify-center mr-2.5 shrink-0 relative transition-colors duration-200">
         {props.icon}
       </div>
-      <span className="font-extrabold text-[16px] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1.5">
+      <span className="font-extrabold text-[1rem] tracking-wide leading-none select-none no-underline flex-1 text-center pr-1.5">
         {props.label}
       </span>
     </motion.button>
@@ -43,7 +47,7 @@ function PrimaryButton(props: {
 /// 主按钮下方的小链接（米哈游"已安装？定位游戏"风格）。
 function SmallLink(props: { prefix?: string; text: string; onClick?: () => void }) {
   return (
-    <div className="text-[12px] text-white/60 flex items-center space-x-1 font-sans justify-center mt-1">
+    <div className="text-[0.75rem] text-white/60 flex items-center space-x-1 font-sans justify-center mt-1">
       {props.prefix ? <span>{props.prefix}</span> : null}
       {props.onClick ? (
         <button
@@ -74,7 +78,7 @@ function InstanceSwitcher(props: {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 text-[11px] text-white/55 hover:text-white font-mono transition-colors cursor-pointer focus:outline-none bg-transparent border-none"
+        className="inline-flex items-center gap-1 text-[0.6875rem] text-white/55 hover:text-white font-mono transition-colors cursor-pointer focus:outline-none bg-transparent border-none"
       >
         副本 {props.currentIndex}/{props.clients.length}
         <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
@@ -90,7 +94,7 @@ function InstanceSwitcher(props: {
               transition={{ duration: 0.15 }}
               className="absolute top-[120%] left-1/2 -translate-x-1/2 z-50 w-72 bg-[var(--app-surface)] border border-[var(--app-border)] rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.6)] overflow-hidden"
             >
-              <div className="px-3 py-2 border-b border-[var(--app-border-subtle)] text-[10px] font-bold uppercase tracking-wider text-[var(--app-text-muted)]">
+              <div className="px-3 py-2 border-b border-[var(--app-border-subtle)] text-[0.625rem] font-bold uppercase tracking-wider text-[var(--app-text-muted)]">
                 选择客户端副本
               </div>
               <ul className="max-h-60 overflow-y-auto">
@@ -112,12 +116,12 @@ function InstanceSwitcher(props: {
                       >
                         <div className="min-w-0 flex-1">
                           <div className="truncate font-mono">{c.install_dir}</div>
-                          <div className="text-[10px] text-[var(--app-text-dim)] mt-0.5">
+                          <div className="text-[0.625rem] text-[var(--app-text-dim)] mt-0.5">
                             v{c.version ?? '未知'} · #{idx + 1}
                             {c.is_default && ' · 默认'}
                           </div>
                         </div>
-                        {isSelected && <span className="text-[10px] shrink-0">✓</span>}
+                        {isSelected && <span className="text-[0.625rem] shrink-0">✓</span>}
                       </button>
                     </li>
                   );
@@ -282,7 +286,7 @@ function renderState(
               <span className="text-white text-xs font-bold tracking-wide">
                 {state.paused ? '暂停' : '下载中'}
               </span>
-              <p className="text-[10px] text-gray-400 font-mono leading-none mt-0.5">
+              <p className="text-[0.625rem] text-gray-400 font-mono leading-none mt-0.5">
                 {/* DownloadJob 当前无 rate 字段，speedBytesPerSec 是占位 0；
                     暂不显示具体速率，避免死值（review issue #3） */}
                 {state.paused ? '已暂停' : '正在下载…'}
@@ -314,7 +318,7 @@ function renderState(
               style={{ width: `${percent}%` }}
             />
           </div>
-          <div className="flex items-center justify-between text-[9px] font-mono text-gray-400">
+          <div className="flex items-center justify-between text-[0.5625rem] font-mono text-gray-400">
             <span>{percent.toFixed(1)}%</span>
           </div>
         </motion.div>
@@ -336,7 +340,7 @@ function renderState(
               <RefreshCw className="w-4 h-4 text-[var(--app-accent)] animate-spin" />
               <span className="text-white text-xs font-bold tracking-wide">校验中</span>
             </div>
-            <span className="text-[9px] font-mono text-gray-400">{percent.toFixed(1)}%</span>
+            <span className="text-[0.5625rem] font-mono text-gray-400">{percent.toFixed(1)}%</span>
           </div>
           <div className="relative w-full h-2 bg-white/10 rounded-full overflow-hidden">
             <div
@@ -344,7 +348,7 @@ function renderState(
               style={{ width: `${percent}%` }}
             />
           </div>
-          <div className="text-[9px] font-mono text-gray-400 leading-none">
+          <div className="text-[0.5625rem] font-mono text-gray-400 leading-none">
             校验文件完整性（SHA-256）
           </div>
         </motion.div>
@@ -366,7 +370,7 @@ function renderState(
             icon={<AlertCircle className="w-4 h-4 text-[var(--app-accent)] group-hover/btn:text-[#121319] transition-colors duration-200" />}
             label="重试"
           />
-          <div className="text-[11px] text-red-400/80 max-w-[200px] text-center leading-relaxed">
+          <div className="text-[0.6875rem] text-red-400/80 max-w-[200px] text-center leading-relaxed">
             {state.error}
           </div>
         </motion.div>
