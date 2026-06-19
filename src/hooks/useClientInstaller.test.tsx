@@ -233,6 +233,63 @@ describe("useClientInstaller", () => {
     expect(result.current.state.kind).toBe("installed");
   });
 
+  it("verify-progress 事件按 clientInstallationId 过滤归属并切到 verifying", async () => {
+    // review issue N2：补 verify-progress handler 前端集成测试。
+    // listenMock 收集所有 listen 调用，测试内 find verify-progress handler 手动触发。
+    listClientInstallations.mockResolvedValue([makeClient()]);
+
+    const { result } = renderHook(() =>
+      useClientInstaller({ gameId: "qmclient", appSettings: baseSettings as never, tauriRuntime: true })
+    );
+
+    await waitFor(() => expect(result.current.state.kind).toBe("installed"));
+    expect(result.current.client?.id).toBe("client-1");
+
+    // 等 listen 被调用（setup 内 Promise.all 异步注册）
+    await waitFor(() => {
+      expect(listenMock.mock.calls.some(([event]) => event === "verify-progress")).toBe(true);
+    });
+
+    const verifyCall = listenMock.mock.calls.find(([event]) => event === "verify-progress");
+    if (!verifyCall) throw new Error("verify-progress handler 未注册");
+    const handler = verifyCall[1] as (e: { payload: unknown }) => void;
+
+    // 异 clientInstallationId 应被忽略
+    act(() => {
+      handler({ payload: { clientInstallationId: "other-client", bytesRead: 100, total: 200 } });
+    });
+    expect(result.current.state.kind).toBe("installed");
+
+    // 同 clientInstallationId 切到 verifying，progress = 0.5
+    act(() => {
+      handler({ payload: { clientInstallationId: "client-1", bytesRead: 500, total: 1000 } });
+    });
+    expect(result.current.state.kind).toBe("verifying");
+    expect(result.current.state).toMatchObject({ kind: "verifying", progress: 0.5 });
+  });
+
+  it("verify-progress total=0 时不计算 progress（防 NaN）", async () => {
+    listClientInstallations.mockResolvedValue([makeClient()]);
+
+    const { result } = renderHook(() =>
+      useClientInstaller({ gameId: "qmclient", appSettings: baseSettings as never, tauriRuntime: true })
+    );
+
+    await waitFor(() => expect(result.current.state.kind).toBe("installed"));
+    await waitFor(() => {
+      expect(listenMock.mock.calls.some(([event]) => event === "verify-progress")).toBe(true);
+    });
+
+    const verifyCall = listenMock.mock.calls.find(([event]) => event === "verify-progress");
+    if (!verifyCall) throw new Error("verify-progress handler 未注册");
+    const handler = verifyCall[1] as (e: { payload: unknown }) => void;
+
+    act(() => {
+      handler({ payload: { clientInstallationId: "client-1", bytesRead: 100, total: 0 } });
+    });
+    expect(result.current.state).toMatchObject({ kind: "verifying", progress: 0 });
+  });
+
   it("triggerScan 未命中 → not_installed 状态", async () => {
     listClientInstallations.mockResolvedValue([]);
     scanClientsViaMft.mockResolvedValue([]);
