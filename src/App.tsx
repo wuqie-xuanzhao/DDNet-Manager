@@ -20,7 +20,7 @@ import { useClientLauncher } from "./hooks/useClientLauncher";
 import { useClientInstaller } from "./hooks/useClientInstaller";
 import { useAppUpdater } from "./hooks/useAppUpdater";
 import { useHotkey } from "./hooks/useHotkey";
-import { isTauriRuntime, convertFileSrc, getClientCatalog } from "./lib/tauri";
+import { isTauriRuntime, convertFileSrc, getClientCatalog, scanClientsViaMft, upsertClientInstallation } from "./lib/tauri";
 import type { LocalSmokeAutomationConfig } from "./types";
 
 function localSmokeEnvEnabled(value: string | undefined) {
@@ -108,6 +108,8 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<"dark" | "light">(() => {
     return (localStorage.getItem("ddnet_manager_theme") as "dark" | "light") || "dark";
   });
+
+  const hasAutoScannedRef = useRef(false);
 
   useEffect(() => {
     if (themeMode === "light") {
@@ -211,6 +213,40 @@ export default function App() {
       alive = false;
     };
   }, [tauriRuntime]);
+
+  // 首次启动自动扫描客户端：当设置加载完成且未扫描过时自动触发全盘扫描，
+  // 并将发现的客户端自动添加到注册表。
+  useEffect(() => {
+    if (!tauriRuntime || !savedAppSettings || savedAppSettings.has_scanned_clients || hasAutoScannedRef.current) {
+      return;
+    }
+    hasAutoScannedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const found = await scanClientsViaMft();
+        if (cancelled) return;
+        for (const client of found) {
+          await upsertClientInstallation({
+            install_dir: client.install_dir,
+            is_default: client.is_default,
+          });
+        }
+        if (!cancelled) {
+          await updateAndSave({
+            ...appSettings,
+            has_scanned_clients: true,
+          });
+        }
+      } catch (err) {
+        console.error("Auto scan failed:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tauriRuntime, settingsState, savedAppSettings?.has_scanned_clients]);
 
   const activeGame = gamesData.find((game) => game.id === activeGameId) ?? gamesData[0];
   const displayedGame = gamesData.find((game) => game.id === displayedGameId) ?? activeGame;

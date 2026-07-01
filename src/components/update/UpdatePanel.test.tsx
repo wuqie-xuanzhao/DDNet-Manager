@@ -116,7 +116,8 @@ const mockSettings = {
   close_behavior: "minimize_to_tray",
   allow_silent_update: true,
   extra_trusted_hosts: [],
-  mirror_prefixes: []
+  mirror_prefixes: [],
+  has_scanned_clients: true
 };
 const mockOnUpdateSettings = vi.fn().mockResolvedValue(undefined);
 

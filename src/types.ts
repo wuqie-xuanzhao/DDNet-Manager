@@ -159,6 +159,8 @@ export type AppSettings = {
   extra_trusted_hosts: string[];
   /** 反代前缀列表；空时后端用 DEFAULT_MIRROR_PREFIXES 兜底。 */
   mirror_prefixes: string[];
+  /** 是否已经执行过首次客户端扫描。 */
+  has_scanned_clients: boolean;
 };
 
 export type LocalSmokeResultStatus = "succeeded" | "failed";

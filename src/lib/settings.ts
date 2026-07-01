@@ -12,7 +12,8 @@ export const defaultAppSettings: AppSettings = {
   close_behavior: "ask",
   allow_silent_update: true,
   extra_trusted_hosts: [],
-  mirror_prefixes: []
+  mirror_prefixes: [],
+  has_scanned_clients: false
 };
 
 export function networkRouteUrl(settings: AppSettings) {

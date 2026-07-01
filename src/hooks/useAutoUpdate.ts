@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { getErrorMessage } from "../lib/errors";
 import { deriveAutoUpdateView, type AutoUpdateMode, type AutoUpdateSnapshot, type AutoUpdateViewState } from "../lib/updateLogic";
 import { checkClientUpdate } from "../lib/tauri";
@@ -46,36 +47,48 @@ export function useAutoUpdate(params: {
       return;
     }
 
-    if (autoUpdateRequestKey.current === requestKey) {
-      return;
-    }
-
-    autoUpdateRequestKey.current = requestKey;
     let alive = true;
 
-    void checkClientUpdate({
-      client_id: selectedClient.client_id,
-      channel: "stable",
-      manifest_url: null,
-      network_route: savedAppSettings.network_route,
-      use_manifest_source: false
-    })
-      .then((result) => {
-        if (!alive) {
-          return;
-        }
-
-        setAutoUpdateSnapshot({ requestKey, update: result, error: null });
+    const performCheck = () => {
+      if (!alive) return;
+      void checkClientUpdate({
+        client_id: selectedClient.client_id,
+        channel: "stable",
+        manifest_url: null,
+        network_route: savedAppSettings.network_route,
+        use_manifest_source: false
       })
-      .catch((error) => {
-        if (!alive) {
-          return;
-        }
-        setAutoUpdateSnapshot({ requestKey, update: null, error: getErrorMessage(error) });
-      });
+        .then((result) => {
+          if (!alive) return;
+          setAutoUpdateSnapshot({ requestKey, update: result, error: null });
+          // 后台定时检查发现新版本时弹出 toast 通知
+          if (result.reason === "none" && result.action === "download") {
+            toast.info(`${selectedClient.display_name} 有新版本可用`, {
+              description: `最新版本: ${result.latest_version ?? "未知"}`,
+              duration: 5000,
+            });
+          }
+        })
+        .catch((error) => {
+          if (!alive) return;
+          setAutoUpdateSnapshot({ requestKey, update: null, error: getErrorMessage(error) });
+        });
+    };
+
+    // 首次检查（requestKey 变化时）
+    if (autoUpdateRequestKey.current !== requestKey) {
+      autoUpdateRequestKey.current = requestKey;
+      performCheck();
+    }
+
+    // 定时后台检查：每小时一次
+    const interval = setInterval(() => {
+      performCheck();
+    }, 60 * 60 * 1000);
 
     return () => {
       alive = false;
+      clearInterval(interval);
     };
   }, [mode, requestKey, savedAppSettings.network_route, selectedClient]);
 
