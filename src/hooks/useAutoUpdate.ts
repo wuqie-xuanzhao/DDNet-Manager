@@ -17,6 +17,7 @@ export function useAutoUpdate(params: {
   const { savedAppSettings, selectedClient, settingsState, tauriRuntime } = params;
   const [autoUpdateSnapshot, setAutoUpdateSnapshot] = useState<AutoUpdateSnapshot | null>(null);
   const autoUpdateRequestKey = useRef<string | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const requestKey = useMemo(() => {
     if (!selectedClient || selectedClient.health !== "ok") {
@@ -75,6 +76,22 @@ export function useAutoUpdate(params: {
         });
     };
 
+    const startInterval = () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      intervalRef.current = setInterval(() => {
+        performCheck();
+      }, 60 * 60 * 1000);
+    };
+
+    const stopInterval = () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+
     // 首次检查（requestKey 变化时）
     if (autoUpdateRequestKey.current !== requestKey) {
       autoUpdateRequestKey.current = requestKey;
@@ -82,13 +99,25 @@ export function useAutoUpdate(params: {
     }
 
     // 定时后台检查：每小时一次
-    const interval = setInterval(() => {
-      performCheck();
-    }, 60 * 60 * 1000);
+    startInterval();
+
+    const handleVisibilityChange = () => {
+      if (!alive) return;
+      if (document.hidden) {
+        stopInterval();
+      } else {
+        // 恢复可见时补检一次，然后重启 interval
+        performCheck();
+        startInterval();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       alive = false;
-      clearInterval(interval);
+      stopInterval();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [mode, requestKey, savedAppSettings.network_route, selectedClient]);
 
