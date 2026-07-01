@@ -169,8 +169,7 @@ async fn prepare_update_download_job(
         client.version,
         cache_dir.as_deref(),
     )
-    .await
-    .map_err(ManagerError::Internal)?;
+    .await?;
     // update_source 现在始终返回 ClientUpdateCheck，无可用下载时 action != Download。
     // 用 reason 不可用时附带的 message 直接报错。
     if update.action != UpdateAction::Download {

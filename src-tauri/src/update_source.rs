@@ -35,7 +35,7 @@ pub async fn check_client_update(
     request: &CheckClientUpdateRequest,
     current_version: Option<String>,
     cache_dir: Option<&std::path::Path>,
-) -> Result<ClientUpdateCheck, String> {
+) -> Result<ClientUpdateCheck, crate::error::ManagerError> {
     // 若用户未配置路由，自动探测并选择最佳网络路径。
     let mut request = request.clone();
     if request.network_route.is_none() {
@@ -51,7 +51,8 @@ pub async fn check_client_update(
             platform: request.platform.clone().unwrap_or_else(current_platform),
             cache_dir,
         })
-        .await;
+        .await
+        .map_err(Into::into);
     }
 
     let client_id = crate::client_catalog::normalize_client_id(&request.client_id);
@@ -76,6 +77,7 @@ pub async fn check_client_update(
         platform,
     })
     .await
+    .map_err(Into::into)
 }
 
 async fn check_catalog_update(input: CatalogUpdateInput<'_>) -> Result<ClientUpdateCheck, String> {

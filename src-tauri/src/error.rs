@@ -106,6 +106,12 @@ impl From<String> for IpcError {
 ///
 /// ntfs-search 是独立 crate，不感知 ManagerError 存在；这里集中映射，避免业务
 /// 层每个调用点都重复 match。取消、根无效等语义错误映射到对应变体，其余转 Internal。
+impl From<String> for ManagerError {
+    fn from(message: String) -> Self {
+        Self::Internal(message)
+    }
+}
+
 impl From<ntfs_search::ScanError> for ManagerError {
     fn from(e: ntfs_search::ScanError) -> Self {
         use ntfs_search::ScanError;
