@@ -1,6 +1,7 @@
 use crate::error::ManagerError;
 use crate::models::{
     ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource, ClientInstallation,
+    CompatibilityReason, CompatibilityStatus,
 };
 use std::path::{Path, PathBuf};
 use time::format_description::well_known::Rfc3339;
@@ -48,7 +49,6 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerErr
     let health = detect_client_health(&executable_path, &storage_cfg_path, &data_dir);
     let missing_items = missing_items_for_health(&health);
     let confidence = confidence_for_identity(&identity, &health);
-    let can_launch = health == ClientHealth::Ok;
 
     Ok(ClientInstallation {
         id: stable_installation_id(&identity.client_id, &id_seed),
@@ -66,10 +66,7 @@ pub fn validate_client_dir(path: &Path) -> Result<ClientInstallation, ManagerErr
         install_source: identity.install_source,
         confidence,
         manager_owned: false,
-        compatibility: ClientCompatibility {
-            can_launch,
-            ..ClientCompatibility::default()
-        },
+        compatibility: detect_client_compatibility(&executable_path),
         upstream_url: identity.upstream_url,
         pe_company_name: pe_info.as_ref().and_then(|v| v.company_name.clone()),
         pe_product_name: pe_info.as_ref().and_then(|v| v.product_name.clone()),
@@ -119,6 +116,141 @@ fn detect_client_health(
     }
 
     ClientHealth::Ok
+}
+
+/// 检测客户端在当前机器上的启动兼容性。
+///
+/// 执行以下静态检查（不实际启动进程，避免扫描时弹出游戏窗口）：
+/// 1. Windows 系统版本（需 Windows 7+，即 major >= 6）。
+/// 2. 可执行文件架构与当前系统是否匹配（64 位 exe 不能在 32 位 Windows 运行）。
+///
+/// 动态验证（`launch_verified`）不在扫描时执行，由 `process.rs` 的受控启动
+/// 探测在需要时填充。
+fn detect_client_compatibility(executable_path: &Path) -> ClientCompatibility {
+    let mut reasons = Vec::new();
+    let mut can_launch = true;
+
+    // 1. 系统版本检查（Windows only）
+    #[cfg(windows)]
+    if let Some((major, minor)) = windows_version() {
+        if major < 6 {
+            can_launch = false;
+            reasons.push(CompatibilityReason {
+                code: "windows_version_too_old".to_string(),
+                message: format!(
+                    "Windows 版本过低（{major}.{minor}），需要 Windows 7 或更高版本。"
+                ),
+            });
+        }
+    }
+
+    // 2. PE 架构检查
+    if let Some(arch) = pe_architecture(executable_path) {
+        #[cfg(windows)]
+        if arch == "x86_64" && !is_64bit_windows() {
+            can_launch = false;
+            reasons.push(CompatibilityReason {
+                code: "architecture_mismatch".to_string(),
+                message: "64 位客户端无法在 32 位 Windows 上运行。".to_string(),
+            });
+        }
+    }
+
+    let status = if can_launch {
+        CompatibilityStatus::Supported
+    } else {
+        CompatibilityStatus::Unsupported
+    };
+
+    ClientCompatibility {
+        status,
+        can_launch,
+        launch_verified: false,
+        reasons,
+        last_launch_result: None,
+    }
+}
+
+/// 读取当前 Windows 版本（major, minor）。非 Windows 平台返回 `None`。
+#[cfg(windows)]
+fn windows_version() -> Option<(u32, u32)> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let settings = hklm
+        .open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion")
+        .ok()?;
+    let major: u32 = settings.get_value("CurrentMajorVersionNumber").ok()?;
+    let minor: u32 = settings.get_value("CurrentMinorVersionNumber").ok()?;
+    Some((major, minor))
+}
+
+#[cfg(not(windows))]
+fn windows_version() -> Option<(u32, u32)> {
+    None
+}
+
+/// 判断当前系统是否为 64 位 Windows。非 Windows 平台按编译目标指针宽度判断。
+#[cfg(windows)]
+fn is_64bit_windows() -> bool {
+    std::env::var("PROCESSOR_ARCHITECTURE")
+        .map(|v| v.eq_ignore_ascii_case("AMD64") || v.eq_ignore_ascii_case("IA64"))
+        .unwrap_or(false)
+        || std::env::var("PROCESSOR_ARCHITEW6432")
+            .map(|v| v.eq_ignore_ascii_case("AMD64"))
+            .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn is_64bit_windows() -> bool {
+    cfg!(target_pointer_width = "64")
+}
+
+/// 解析 PE 文件的 COFF Machine 字段，返回架构标识。
+///
+/// 读取 PE header：
+/// - `0x014c` = x86 (Intel 386)
+/// - `0x8664` = x86_64 (AMD64)
+///
+/// 非 PE 文件或解析失败返回 `None`。
+fn pe_architecture(path: &Path) -> Option<&'static str> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+
+    // DOS header magic
+    let mut dos_magic = [0u8; 2];
+    reader.read_exact(&mut dos_magic).ok()?;
+    if dos_magic != [b'M', b'Z'] {
+        return None;
+    }
+
+    // PE header offset at 0x3C
+    reader.seek(SeekFrom::Start(0x3C)).ok()?;
+    let mut pe_offset_buf = [0u8; 4];
+    reader.read_exact(&mut pe_offset_buf).ok()?;
+    let pe_offset = u32::from_le_bytes(pe_offset_buf) as u64;
+
+    // PE signature
+    reader.seek(SeekFrom::Start(pe_offset)).ok()?;
+    let mut pe_sig = [0u8; 4];
+    reader.read_exact(&mut pe_sig).ok()?;
+    if &pe_sig != b"PE\0\0" {
+        return None;
+    }
+
+    // COFF header machine field (2 bytes after PE signature)
+    let mut machine_buf = [0u8; 2];
+    reader.read_exact(&mut machine_buf).ok()?;
+    let machine = u16::from_le_bytes(machine_buf);
+
+    match machine {
+        0x014c => Some("x86"),
+        0x8664 => Some("x86_64"),
+        _ => None,
+    }
 }
 
 fn missing_items_for_health(health: &ClientHealth) -> Vec<String> {

@@ -347,3 +347,85 @@ fn infer_client_identity_steam_path_overrides_pe_match() {
     assert_eq!(identity.client_id, "ddnet");
     assert_eq!(identity.install_source, ClientInstallSource::Steam);
 }
+
+// ===== 兼容性检测测试 =====
+
+/// 构造一个最小有效 PE 文件，仅包含 DOS header + PE signature + COFF Machine 字段。
+fn make_test_pe(machine: u16) -> Vec<u8> {
+    let mut data = vec![0u8; 128];
+
+    // DOS header magic
+    data[0] = b'M';
+    data[1] = b'Z';
+
+    // PE offset at 0x3C
+    let pe_offset = 0x40u32;
+    data[0x3C..0x40].copy_from_slice(&pe_offset.to_le_bytes());
+
+    // PE signature
+    data[0x40] = b'P';
+    data[0x41] = b'E';
+    data[0x42] = 0;
+    data[0x43] = 0;
+
+    // COFF header machine field
+    data[0x44..0x46].copy_from_slice(&machine.to_le_bytes());
+
+    data
+}
+
+#[test]
+fn pe_architecture_parses_x86_pe() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let path = temp_dir.path().join("test_x86.exe");
+    std::fs::write(&path, make_test_pe(0x014c)).expect("测试 PE 应写入成功");
+    assert_eq!(scan::pe_architecture(&path), Some("x86"));
+}
+
+#[test]
+fn pe_architecture_parses_x64_pe() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let path = temp_dir.path().join("test_x64.exe");
+    std::fs::write(&path, make_test_pe(0x8664)).expect("测试 PE 应写入成功");
+    assert_eq!(scan::pe_architecture(&path), Some("x86_64"));
+}
+
+#[test]
+fn pe_architecture_returns_none_for_non_pe() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let path = temp_dir.path().join("not_pe.txt");
+    std::fs::write(&path, b"hello world").expect("测试文件应写入成功");
+    assert_eq!(scan::pe_architecture(&path), None);
+}
+
+#[test]
+fn pe_architecture_returns_none_for_mz_without_valid_pe() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let path = temp_dir.path().join("broken.exe");
+    let mut data = vec![0u8; 128];
+    data[0] = b'M';
+    data[1] = b'Z';
+    // 不写入有效的 PE offset，导致解析失败
+    std::fs::write(&path, data).expect("测试文件应写入成功");
+    assert_eq!(scan::pe_architecture(&path), None);
+}
+
+#[test]
+fn detect_client_compatibility_returns_supported_for_valid_directory() {
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let install_dir = temp_dir.path();
+    std::fs::write(install_dir.join("DDNet.exe"), make_test_pe(0x8664))
+        .expect("测试可执行文件应写入成功");
+    std::fs::write(install_dir.join("storage.cfg"), b"").expect("测试 storage.cfg 应写入成功");
+    std::fs::create_dir(install_dir.join("data")).expect("测试 data 目录应创建成功");
+
+    let installation = scan::validate_client_dir(install_dir).expect("完整目录应验证成功");
+
+    assert_eq!(
+        installation.compatibility.status,
+        crate::models::CompatibilityStatus::Supported
+    );
+    assert!(installation.compatibility.can_launch);
+    assert!(!installation.compatibility.launch_verified);
+    assert!(installation.compatibility.reasons.is_empty());
+}
