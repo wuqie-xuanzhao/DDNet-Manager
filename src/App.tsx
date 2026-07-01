@@ -139,7 +139,7 @@ export default function App() {
   const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { appSettings, savedAppSettings, settingsState, settingsError, updateAndSave } = useAppSettings(tauriRuntime);
+  const { appSettings, savedAppSettings, settingsState, settingsError, updateAndSave, updateAndSaveSilently } = useAppSettings(tauriRuntime);
   const {
     errorMessage,
     handleBrowse,
@@ -233,8 +233,8 @@ export default function App() {
           });
         }
         if (!cancelled) {
-          await updateAndSave({
-            ...appSettings,
+          await updateAndSaveSilently({
+            ...savedAppSettings,
             has_scanned_clients: true,
           });
         }

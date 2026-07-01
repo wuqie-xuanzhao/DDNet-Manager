@@ -76,6 +76,23 @@ export function useAppSettings(tauriRuntime: boolean) {
     await saveSettings(settings);
   };
 
+  /**
+   * 静默更新并保存设置：不修改 settingsState / settingsError，
+   * 避免后台自动操作（如首次扫描标记）触发 UI 保存提示。
+   */
+  const updateAndSaveSilently = async (settings: AppSettings) => {
+    draftVersionRef.current += 1;
+    setDraftAppSettings(settings);
+    try {
+      const savedSettings = await saveAppSettings(settings);
+      setLoadedAppSettings(savedSettings);
+      setDraftAppSettings(savedSettings);
+    } catch (error) {
+      // 静默失败，仅控制台记录，不打扰用户
+      console.error("Silent save failed:", error);
+    }
+  };
+
   const appSettings = tauriRuntime ? (draftAppSettings ?? defaultAppSettings) : defaultAppSettings;
   const savedAppSettings = tauriRuntime ? (loadedAppSettings ?? defaultAppSettings) : defaultAppSettings;
   const settingsState: SettingsSaveState = tauriRuntime ? runtimeSettingsState : "idle";
@@ -90,6 +107,7 @@ export function useAppSettings(tauriRuntime: boolean) {
     settingsError,
     changeSettings,
     saveSettings,
-    updateAndSave
+    updateAndSave,
+    updateAndSaveSilently
   };
 }
