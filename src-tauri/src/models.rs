@@ -288,6 +288,9 @@ pub struct AppSettings {
     /// P0 仅作为可覆盖配置；P1 将增加外部化热更新。
     #[serde(default)]
     pub mirror_prefixes: Vec<String>,
+    /// 是否已经执行过首次客户端扫描。false 时 App 启动会自动触发扫描。
+    #[serde(default)]
+    pub has_scanned_clients: bool,
 }
 
 /// 表示本地 smoke 自动验收最终结果。
@@ -327,6 +330,7 @@ impl Default for AppSettings {
             allow_silent_update: default_allow_silent_update(),
             extra_trusted_hosts: Vec::new(),
             mirror_prefixes: Vec::new(),
+            has_scanned_clients: false,
         }
     }
 }

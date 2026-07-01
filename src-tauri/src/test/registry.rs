@@ -243,6 +243,7 @@ fn registry_persists_app_settings() {
         allow_silent_update: true,
         extra_trusted_hosts: Vec::new(),
         mirror_prefixes: Vec::new(),
+        has_scanned_clients: false,
     };
 
     registry
@@ -274,6 +275,7 @@ fn registry_does_not_persist_github_token_in_app_settings_json() {
         allow_silent_update: true,
         extra_trusted_hosts: Vec::new(),
         mirror_prefixes: Vec::new(),
+        has_scanned_clients: false,
     };
 
     registry

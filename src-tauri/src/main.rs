@@ -140,6 +140,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(error) = download::install::cleanup_stale_staging(&cache_dir.join("staging")) {
             eprintln!("failed to cleanup stale staging: {error}");
         }
+        // 启动时清理超过默认 TTL（30 天）的下载缓存文件，避免临时文件长期堆积。
+        let downloads_dir = cache_dir.join("downloads");
+        if downloads_dir.exists() {
+            if let Err(error) = download::cleanup_expired_cache_files(&downloads_dir, None) {
+                eprintln!("failed to cleanup expired download cache: {error}");
+            }
+        }
     }
 
     // 启动时清理安装事务崩溃残留的 rollback/replacement/restore-failed 目录。

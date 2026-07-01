@@ -140,7 +140,19 @@ async fn prepare_update_download_job(
     request: StartUpdateDownloadRequest,
 ) -> Result<PreparedUpdateDownload, ManagerError> {
     let client_installation_id = request.client_installation_id.clone();
-    let network_route = request.network_route.clone();
+    // 若用户未配置路由，自动探测并选择最佳网络路径（direct → auto_detect → local_proxy）。
+    let network_route = match request.network_route.clone() {
+        Some(route) => Some(route),
+        None => {
+            crate::network_route::auto_select_route(
+                request
+                    .network_route
+                    .as_ref()
+                    .and_then(|r| r.local_proxy_url.as_deref()),
+            )
+            .await
+        }
+    };
     let client = registry
         .list_client_installations()?
         .into_iter()

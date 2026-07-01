@@ -33,9 +33,17 @@ pub async fn check_client_update(
     request: &CheckClientUpdateRequest,
     current_version: Option<String>,
 ) -> Result<ClientUpdateCheck, String> {
+    // 若用户未配置路由，自动探测并选择最佳网络路径。
+    let mut request = request.clone();
+    if request.network_route.is_none() {
+        if let Some(route) = crate::network_route::auto_select_route(None).await {
+            request.network_route = Some(route);
+        }
+    }
+
     if request.use_manifest_source {
         return check_manifest_update(ManifestUpdateInput {
-            request,
+            request: &request,
             current_version,
             platform: request.platform.clone().unwrap_or_else(current_platform),
         })
@@ -59,7 +67,7 @@ pub async fn check_client_update(
 
     check_catalog_update(CatalogUpdateInput {
         entry,
-        request,
+        request: &request,
         current_version,
         platform,
     })

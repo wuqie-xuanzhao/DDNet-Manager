@@ -183,6 +183,74 @@ fn detect_windows_registry_proxy() -> Option<String> {
     Some(normalize_proxy_url(&host_port))
 }
 
+/// 对指定路由做真实 HTTP 连通性探测，返回请求耗时（毫秒级精度）。
+///
+/// 探测目标为 `https://github.com`（HEAD 请求），超时 5 秒。该端点稳定且
+/// 与下载/更新检查的实际目标一致，能真实反映路由可用性。
+///
+/// 返回 `Ok(Duration)` 表示可达，`Err(String)` 表示不可达或超时。
+pub async fn probe_route_connectivity(
+    route: Option<&NetworkRouteConfig>,
+) -> Result<std::time::Duration, String> {
+    let client = build_routed_client(route, Some(Duration::from_secs(5)), None, true)?;
+    let start = std::time::Instant::now();
+    let response = client
+        .head("https://github.com")
+        .send()
+        .await
+        .map_err(|error| format!("route probe request failed: {error}"))?;
+    if !response.status().is_success() && !response.status().is_redirection() {
+        return Err(format!("route probe returned status {}", response.status()));
+    }
+    Ok(start.elapsed())
+}
+
+/// 自动选择最佳网络路由：依次探测 direct、auto_detect、local_proxy，
+/// 返回第一个可达的路由配置。
+///
+/// 探测顺序：
+/// 1. `Direct`（无代理）—— 挂代理/VPN 的用户直连 GitHub 往往最快。
+/// 2. `AutoDetect`（系统代理）—— 已配置系统代理的用户。
+/// 3. `LocalProxy`（用户手动代理）—— 显式配置了本地代理的用户。
+///
+/// 若全部不可达，返回 `None`（调用方应降级提示用户检查网络）。
+/// `local_proxy_url` 为空或无效时跳过 local_proxy 探测。
+pub async fn auto_select_route(local_proxy_url: Option<&str>) -> Option<NetworkRouteConfig> {
+    // 1. 探测 direct
+    let direct = NetworkRouteConfig {
+        mode: NetworkRouteMode::Direct,
+        local_proxy_url: None,
+    };
+    if probe_route_connectivity(Some(&direct)).await.is_ok() {
+        return Some(direct);
+    }
+
+    // 2. 探测 auto_detect
+    let auto = NetworkRouteConfig {
+        mode: NetworkRouteMode::AutoDetect,
+        local_proxy_url: None,
+    };
+    if probe_route_connectivity(Some(&auto)).await.is_ok() {
+        return Some(auto);
+    }
+
+    // 3. 探测 local_proxy（需用户已填写地址）
+    if let Some(url) = local_proxy_url {
+        let trimmed = url.trim();
+        if !trimmed.is_empty() {
+            let local = NetworkRouteConfig {
+                mode: NetworkRouteMode::LocalProxy,
+                local_proxy_url: Some(trimmed.to_string()),
+            };
+            if probe_route_connectivity(Some(&local)).await.is_ok() {
+                return Some(local);
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 #[path = "test/network_route.rs"]
 mod tests;
