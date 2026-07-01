@@ -27,7 +27,7 @@ DDNet Manager 是面向 DDNet / QmClient 玩家的第三方游戏启动器与管
 - **后端**：Tauri v2 + Rust 2021 + tokio + reqwest + serde
 - **包管理**：Bun（JS/TS）、Cargo（Rust）
 - **命令编排**：Makefile
-- **目标平台**：Windows 为主（生产级），macOS 编译级支持（CI 产出 `.dmg`/`.app`，端到端运行验证待补）。窗口使用 `windows_subsystem = "windows"`
+- **目标平台**：Windows 优先，窗口使用 `windows_subsystem = "windows"`
 
 ## 命令规则
 
@@ -65,8 +65,6 @@ make check-lint
 `make check-lint` 底层调用 `bash scripts/check_lint.sh`。Windows 环境需要可用的 Bash，例如 Git Bash、WSL Bash 或系统可发现的 `bash.exe`。
 
 当前 `Makefile` 使用 `powershell.exe` 作为 shell，这是 Windows 优先项目的明确约束。非 Windows CI 或开发环境需要先提供 PowerShell，或新增独立的 POSIX Makefile / CI 脚本后再运行 make 目标。
-
-`release.yml` 的 macOS matrix 不依赖 Makefile，直接调 `bun install --frozen-lockfile` + `tauri-apps/tauri-action`，绕过 PowerShell 约束。`make check-lint` 只在 Windows runner 上跑。
 
 ## 架构概览
 
@@ -125,11 +123,13 @@ useEffect(() => {
 
 | 分组 | 命令 | 当前状态 |
 | --- | --- | --- |
-| 客户端目录与注册表 | `validate_client_dir`、`scan_clients_via_mft`、`upsert_client_installation`、`remove_client_installation`、`set_default_client`、`list_client_installations`、`get_default_client` | 已接入本地目录验证、ntfs-search 全盘扫描（Mft/Usn/Walkdir 自动选择 + `scan-progress` 事件）、SQLite 注册表和默认客户端管理 |
+| 客户端目录与注册表 | `validate_client_dir`、`scan_clients_via_mft`、`cancel_scan_clients`、`upsert_client_installation`、`remove_client_installation`、`set_default_client`、`list_client_installations`、`get_default_client` | 已接入本地目录验证、ntfs-search 全盘扫描（Mft/Usn/Walkdir 自动选择 + `scan-progress` 事件、可取消）、SQLite 注册表和默认客户端管理 |
 | 启动与运行检测 | `launch_client`、`launch_default_client`、`is_client_running` | 已接入进程启动、默认客户端复检和运行状态检测基础 |
-| 设置与历史 | `load_app_settings`、`save_app_settings`、`list_install_history` | 已接入 SQLite 设置快照和安装历史读取 |
+| 设置与历史 | `load_app_settings`、`save_app_settings`、`report_local_smoke_result`、`list_install_history` | 已接入 SQLite 设置快照、local smoke 结果上报和安装历史读取 |
 | 更新与 manifest | `load_manifest`、`check_client_update` | 已接入 manifest 校验、catalog/update source 分派和更新判断基础 |
-| 下载与安装 | `start_update_download`、`cancel_download`、`get_download_job`、`install_downloaded_update` | 已接入真实下载任务、进度事件、size/sha256 校验、staging、安装事务和回滚记录基础 |
+| 下载与安装 | `start_update_download`、`cancel_download`、`get_download_job`、`list_download_job_recoveries`、`install_downloaded_update` | 已接入真实下载任务、进度事件、size/sha256 校验、staging、安装事务、回滚记录和崩溃恢复读取 |
+| Catalog 与系统 | `get_client_catalog`、`probe_disk`、`create_shortcuts` | 已接入内置客户端目录、磁盘探测（剩余空间/SSD）和快捷方式创建 |
+| App 自更新 | `check_app_update`、`get_app_version` | 已接入 tauri-plugin-updater 启动器自更新和版本查询 |
 
 当前主要待成熟化边界：下载任务跨进程持久化/恢复、真实 Tauri 端到端验证、错误类型产品化、跨平台安装事务和启动兼容性诊断。
 
@@ -161,7 +161,7 @@ useEffect(() => {
 1. 类型 → `src/types.ts`
 2. IPC 封装 → `src/lib/tauri.ts`
 3. 通用布局 → `src/components/layout/`
-4. 启动页 → `src/components/launch/`
+4. 启动页 → `src/components/launcher/`
 5. 客户端管理 → `src/components/clients/`
 6. 更新管理 → `src/components/update/`
 
@@ -271,6 +271,13 @@ make check-lint
 git commit -m "build(lint): 接入 Rust 工程门禁脚本"
 git commit -m "docs(agent): 同步项目代理规则"
 ```
+
+## 临时文件与输出约束
+
+- 所有临时文件（调试输出、diff、日志、测试报告、审查产物等）必须生成到 `tmp/` 目录下。
+- `tmp/` 已在 `.gitignore` 中，不会进入版本控制。
+- 禁止在项目根目录或 `src-tauri/` 等源码目录下直接生成 `.txt`、`.out`、`.diff` 等临时文件。
+- Makefile、脚本或手动命令的重定向输出，统一指向 `tmp/` 子目录。
 
 ## 子代理规则
 
