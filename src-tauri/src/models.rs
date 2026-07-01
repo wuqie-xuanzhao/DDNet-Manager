@@ -116,6 +116,29 @@ pub enum UpdateAction {
     None,
 }
 
+/// 表示更新检查无法提供自动更新动作的具体原因。
+///
+/// 当 `action == UpdateAction::None` 时，此字段说明为什么没有可执行动作，
+/// 让前端能区分"已是最新版"（`reason == None`）与"无法判断/不支持"等其他语义，
+/// 避免把"不支持自动更新"误显示为"已是最新版本"。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateCheckReason {
+    /// 客户端不在内置 catalog 中（未知 client_id）。
+    ClientNotInCatalog,
+    /// 该渠道下无匹配的 release（如配置 nightly 但仓库无 nightly tag）。
+    NoReleaseForChannel,
+    /// release 存在但无当前平台的匹配资产。
+    NoAssetForPlatform,
+    /// 客户端在 catalog 中被显式标记为不支持自动更新（`UpdateSourceDescriptor::None`）。
+    AutoUpdateDisabled,
+    /// manifest 中没有该 client_id+channel+platform 的条目。
+    ManifestEntryMissing,
+    /// 检查成功，有可执行动作（Download/OpenUrl）或确为已是最新版。这是默认值。
+    #[default]
+    None,
+}
+
 /// 表示 DDNet 兼容客户端在本机的一条安装记录。
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ClientInstallation {
@@ -202,6 +225,8 @@ pub enum NetworkRouteMode {
     Direct,
     /// 通过本地 HTTP 代理隧道访问（如 Clash 的 http://127.0.0.1:7890）。
     LocalProxy,
+    /// 自动检测系统代理：先读环境变量 HTTPS_PROXY/HTTP_PROXY，再读 Windows 注册表系统代理。
+    AutoDetect,
 }
 
 /// 表示用户显式启用的本地代理路由配置。
@@ -255,6 +280,14 @@ pub struct AppSettings {
     /// 是否允许静默更新。
     #[serde(default = "default_allow_silent_update")]
     pub allow_silent_update: bool,
+    /// 用户显式信任的额外下载 host 列表（如公共反代域名），补充基线白名单。
+    /// 保留 SSRF 防护：仍拒绝 IP 直连和私网地址。
+    #[serde(default)]
+    pub extra_trusted_hosts: Vec<String>,
+    /// 公共反代前缀列表，空时下载层使用代码内 `DEFAULT_MIRROR_PREFIXES` 兜底。
+    /// P0 仅作为可覆盖配置；P1 将增加外部化热更新。
+    #[serde(default)]
+    pub mirror_prefixes: Vec<String>,
 }
 
 /// 表示本地 smoke 自动验收最终结果。
@@ -292,6 +325,8 @@ impl Default for AppSettings {
             exit_game_show_launcher: default_exit_game_show_launcher(),
             close_behavior: default_close_behavior(),
             allow_silent_update: default_allow_silent_update(),
+            extra_trusted_hosts: Vec::new(),
+            mirror_prefixes: Vec::new(),
         }
     }
 }
@@ -324,6 +359,8 @@ pub enum InstallHistoryStatus {
     Completed,
     /// 安装事务失败，错误信息记录在 `error` 中。
     Failed,
+    /// 原本成功的安装已被用户主动回滚到上一版本。
+    RolledBack,
 }
 
 /// 表示一条已完成或失败的安装历史记录。
@@ -390,6 +427,10 @@ pub struct ClientUpdateCheck {
     /// 更新检查诊断或不可自动安装原因。
     #[serde(default)]
     pub message: Option<String>,
+    /// 当 `action == None` 时，说明为什么没有可执行动作。
+    /// `None`（默认）表示检查成功有可执行动作或已是最新版。
+    #[serde(default)]
+    pub reason: UpdateCheckReason,
 }
 
 /// 表示检查客户端更新的请求。

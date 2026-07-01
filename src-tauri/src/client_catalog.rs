@@ -25,6 +25,12 @@ pub enum UpdateSourceDescriptor {
         macos_assets: &'static [&'static str],
         /// Linux 资产名模式。
         linux_assets: &'static [&'static str],
+        /// nightly channel 的 rolling release tag 名（如 `"nightly"`）。
+        ///
+        /// `Some` 表示该客户端支持 nightly channel，启动器按此 tag 拉
+        /// `/releases/tags/{nightly_tag}` 获取最新预发布构建；`None` 表示不支持
+        /// nightly，前端选 nightly 时返回无可用更新。
+        nightly_tag: Option<&'static str>,
     },
     /// DDNet 官方下载页更新源。
     DdnetOfficial,
@@ -117,6 +123,7 @@ const CATALOG: &[ClientCatalogEntry] = &[
             windows_assets: &["QmClient-windows.zip", "QmClient-windows.7z"],
             macos_assets: &["QmClient-macOS.dmg"],
             linux_assets: &["QmClient-ubuntu.tar.xz"],
+            nightly_tag: Some("nightly"),
         },
         upstream_url: Some("https://github.com/wxj881027/QmClient/releases"),
     },
@@ -138,6 +145,7 @@ const CATALOG: &[ClientCatalogEntry] = &[
             windows_assets: &["TClient-windows.zip"],
             macos_assets: &["TClient-macOS.dmg"],
             linux_assets: &["TClient-ubuntu.tar.xz"],
+            nightly_tag: None,
         },
         upstream_url: Some("https://github.com/TaterClient/TClient/releases"),
     },
@@ -159,6 +167,7 @@ const CATALOG: &[ClientCatalogEntry] = &[
             windows_assets: &["BestClient-windows.zip"],
             macos_assets: &[],
             linux_assets: &["BestClient-linux.tar.xz"],
+            nightly_tag: None,
         },
         upstream_url: Some("https://github.com/BestProjectTeam/BestClient/releases"),
     },

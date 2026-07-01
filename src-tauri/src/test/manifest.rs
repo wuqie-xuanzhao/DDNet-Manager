@@ -398,3 +398,56 @@ fn valid_manifest() -> String {
                 }}"#
     )
 }
+
+#[test]
+fn manifest_cache_path_uses_fnv1a_hash_and_manifests_subdir() {
+    // 守卫缓存路径格式：manifests/ 子目录 + 16 位十六进制文件名，
+    // 保证跨平台稳定且 URL 中含特殊字符也能安全作文件名。
+    let cache_dir = std::path::Path::new("/tmp/cache");
+    let path = crate::manifest::test_helpers::manifest_cache_path(
+        cache_dir,
+        "https://raw.githubusercontent.com/example/manifest/main/manifest.json",
+    );
+    assert_eq!(path.parent().unwrap(), cache_dir.join("manifests"));
+    let file_name = path.file_name().unwrap().to_string_lossy();
+    assert!(file_name.ends_with(".json"));
+    assert_eq!(file_name.len(), 16 + 5); // 16 hex + .json
+}
+
+#[test]
+fn manifest_cache_path_differs_for_different_urls() {
+    // 不同 URL 必须产生不同缓存文件，避免 manifest 之间互相污染。
+    let cache_dir = std::path::Path::new("/tmp/cache");
+    let path_a =
+        crate::manifest::test_helpers::manifest_cache_path(cache_dir, "https://example.com/a.json");
+    let path_b =
+        crate::manifest::test_helpers::manifest_cache_path(cache_dir, "https://example.com/b.json");
+    assert_ne!(path_a, path_b);
+}
+
+#[test]
+fn manifest_cache_path_stable_for_same_url() {
+    // 同一 URL 必须产生相同缓存路径，保证跨进程可命中。
+    let cache_dir = std::path::Path::new("/tmp/cache");
+    let url = "https://example.com/stable.json?v=1";
+    let path1 = crate::manifest::test_helpers::manifest_cache_path(cache_dir, url);
+    let path2 = crate::manifest::test_helpers::manifest_cache_path(cache_dir, url);
+    assert_eq!(path1, path2);
+}
+
+#[test]
+fn write_manifest_creates_parent_dir_and_persists_content() {
+    // 写缓存时自动创建 manifests/ 子目录，内容可原样读回。
+    let temp = tempfile::tempdir().expect("temp dir");
+    let cache_dir = temp.path();
+    let path = crate::manifest::test_helpers::manifest_cache_path(
+        cache_dir,
+        "https://example.com/test.json",
+    );
+    let content = valid_manifest();
+
+    crate::manifest::test_helpers::write_manifest_cache(&path, &content).expect("写缓存应成功");
+    assert!(path.exists());
+    let read_back = std::fs::read_to_string(&path).expect("读取缓存应成功");
+    assert_eq!(read_back, content);
+}

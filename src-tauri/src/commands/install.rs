@@ -361,3 +361,133 @@ fn install_history_record(input: InstallHistoryInput<'_>) -> InstallHistoryRecor
         completed_at,
     }
 }
+
+/// 回滚一次已完成的安装事务，把磁盘上的客户端目录恢复到该次安装前的状态。
+///
+/// 输入 `history_id` 必须对应一条 `Completed` 状态的安装历史，且其 `rollback_path`
+/// 在磁盘上仍然存在。失败时不修改任何持久化状态，直接返回错误。
+#[tauri::command]
+pub async fn rollback_client_installation(
+    _app: AppHandle,
+    registry: RegistryState<'_>,
+    history_id: String,
+) -> Result<ClientInstallation, IpcError> {
+    let rollback_ctx = resolve_rollback_context(&registry, &history_id)?;
+    if crate::process::is_client_running(Path::new(&rollback_ctx.client.executable_path))? {
+        return Err(IpcError::from(ManagerError::ClientRunning(
+            "target client is running; close it before rollback".to_string(),
+        )));
+    }
+
+    // 重 IO 移到 blocking 线程，避免 rename 卡 IPC runtime。
+    let rollback_dir = rollback_ctx.rollback_dir.clone();
+    let install_dir = PathBuf::from(&rollback_ctx.client.install_dir);
+    let restore_result = tokio::task::spawn_blocking(move || {
+        crate::download::install::restore_rollback(&install_dir, &rollback_dir)
+    })
+    .await
+    .map_err(|join_error| {
+        ManagerError::Internal(format!("rollback blocking task panicked: {join_error}"))
+    })?;
+    if let Err(error) = restore_result {
+        return Err(IpcError::from(ManagerError::Internal(format!(
+            "failed to restore rollback: {error}"
+        ))));
+    }
+
+    let updated_client = apply_rollback_validation(&rollback_ctx.client, &registry, &history_id)?;
+    Ok(updated_client)
+}
+
+/// 从 registry 反查回滚所需的全部上下文：history 记录 + client 安装记录 + rollback_dir。
+///
+/// 统一做前置校验：history 存在、状态为 Completed、rollback_path 非空且磁盘上仍存在、
+/// 对应的 client_installation 存在。所有失败统一映射为 `ManagerError`，由上层
+/// 转成 IpcError 返回给前端。
+fn resolve_rollback_context(
+    registry: &ClientRegistry,
+    history_id: &str,
+) -> Result<RollbackContext, ManagerError> {
+    let record = registry.install_history_by_id(history_id)?.ok_or_else(|| {
+        ManagerError::NotFound(format!("install history not found: {history_id}"))
+    })?;
+    if record.status != InstallHistoryStatus::Completed {
+        return Err(ManagerError::Internal(format!(
+            "install history {} is not Completed (current: {:?}); only successful installs can be rolled back",
+            history_id, record.status
+        )));
+    }
+    let rollback_path_str = record.rollback_path.ok_or_else(|| {
+        ManagerError::Internal(format!(
+            "install history {history_id} has no rollback_path; cannot restore"
+        ))
+    })?;
+    let rollback_dir = PathBuf::from(&rollback_path_str);
+    if !rollback_dir.exists() {
+        return Err(ManagerError::NotFound(format!(
+            "rollback dir no longer exists on disk: {rollback_path_str} (it may have been cleaned up by a launcher restart)"
+        )));
+    }
+    let client = registry
+        .client_installation_by_id(&record.client_installation_id)?
+        .ok_or_else(|| {
+            ManagerError::NotFound(format!(
+                "client installation not found: {}",
+                record.client_installation_id
+            ))
+        })?;
+    Ok(RollbackContext {
+        client,
+        rollback_dir,
+    })
+}
+
+/// 回滚上下文：一次 rollback 操作所需的全部前置数据。
+struct RollbackContext {
+    client: ClientInstallation,
+    rollback_dir: PathBuf,
+}
+
+/// 回滚磁盘完成后的校验与持久化收尾：重新 validate、写回 registry、标记 history 为 RolledBack。
+///
+/// 回滚已成功落地，因此 validate 失败不回退磁盘，只返回错误让前端感知。
+/// history 状态更新失败只打日志不中断主流程——客户端已回滚到旧版本是事实。
+fn apply_rollback_validation(
+    client: &ClientInstallation,
+    registry: &ClientRegistry,
+    history_id: &str,
+) -> Result<ClientInstallation, IpcError> {
+    let install_dir = PathBuf::from(&client.install_dir);
+    // 回滚后的 install_dir 是旧版本客户端，必须重新识别 health/executable_path/version。
+    // version 可能识别不到（registry 表中无对应 sha256 指纹），置 None 让下次扫描
+    // 或下次安装重新填充，避免猜测错版本号写入 registry。
+    let verified = crate::client_scan::validate_client_dir(&install_dir).map_err(|error| {
+        ManagerError::Internal(format!(
+            "rollback succeeded but validation failed: {error}; install_dir={}",
+            install_dir.display()
+        ))
+    })?;
+    if verified.health != ClientHealth::Ok {
+        return Err(IpcError::from(ManagerError::Internal(format!(
+            "rolled-back client is not healthy: {:?}",
+            verified.health
+        ))));
+    }
+    let mut updated = client.clone();
+    updated.install_dir = verified.install_dir;
+    updated.executable_path = verified.executable_path;
+    updated.storage_cfg_path = verified.storage_cfg_path;
+    updated.data_dir = verified.data_dir;
+    updated.version = verified.version;
+    updated.health = verified.health;
+    updated.last_scanned_at = verified.last_scanned_at;
+    registry.upsert_client_installation(&updated)?;
+
+    // 把原 history 状态改为 RolledBack，让前端感知此次 install 已被回滚。
+    if let Err(error) =
+        registry.update_install_history_status(history_id, &InstallHistoryStatus::RolledBack)
+    {
+        eprintln!("failed to mark install history {history_id} as RolledBack: {error}");
+    }
+    Ok(updated)
+}

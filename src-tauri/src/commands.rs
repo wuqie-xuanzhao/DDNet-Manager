@@ -1,3 +1,9 @@
+//! IPC 命令聚合层：声明各命令子模块并注册剩余未分组命令。
+//!
+//! lint-WARN(C1): 文件约 694 行 > 600，存量；按项目约定 C1 仅在 > 800 行时强制
+//! 拆分，当前规模未触发阈值。部分 command 仍留在此处未拆分到子模块，后续按
+//! scan/download 模式继续分组即可收敛。
+
 /// 下载与安装子命令。
 pub mod download;
 
@@ -44,6 +50,10 @@ pub(crate) struct DownloadTaskContext {
     pub(crate) job: DownloadJob,
     pub(crate) cache_path: PathBuf,
     pub(crate) route: Option<NetworkRouteConfig>,
+    /// 已 resolve 的反代前缀列表（空配置已 fallback 到默认列表）。
+    pub(crate) mirror_prefixes: Vec<String>,
+    /// 用户显式信任的额外下载 host（公共反代域名）。
+    pub(crate) extra_hosts: Vec<String>,
 }
 
 /// 下载任务准备阶段的输出结构。
@@ -215,22 +225,29 @@ pub fn is_client_running(path: String) -> Result<bool, IpcError> {
 }
 
 /// 从指定 URL 加载更新 manifest，并返回已校验的 manifest 内容。
+///
+/// 网络失败时若本地有缓存则回退到缓存版本，避免纯离线环境下 manifest 路径完全不可用。
 #[tauri::command]
 pub async fn load_manifest(
+    app: AppHandle,
     url: String,
     network_route: Option<NetworkRouteConfig>,
 ) -> Result<crate::models::UpdateManifest, IpcError> {
-    crate::manifest::fetch_manifest_with_route(&url, network_route.as_ref())
+    let cache_dir = app_cache_dir(&app).ok();
+    crate::manifest::fetch_manifest_with_route(&url, network_route.as_ref(), cache_dir.as_deref())
         .await
         .map_err(IpcError::from)
 }
 
 /// 检查指定客户端和渠道是否存在可用更新。
+///
+/// 始终返回 `ClientUpdateCheck`（非 Option）：当 `action == None` 时通过 `reason`
+/// 字段区分"已是最新版"与"无法判断/不支持自动更新"等语义，避免前端把后者误判为前者。
 #[tauri::command]
 pub async fn check_client_update(
     registry: RegistryState<'_>,
     request: CheckClientUpdateRequest,
-) -> Result<Option<ClientUpdateCheck>, IpcError> {
+) -> Result<ClientUpdateCheck, IpcError> {
     if crate::commands::download::request_requires_manifest_url(&request) {
         crate::commands::download::required_manifest_url(request.manifest_url.as_deref())?;
     }

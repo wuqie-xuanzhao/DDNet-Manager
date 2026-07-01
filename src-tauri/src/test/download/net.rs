@@ -13,7 +13,7 @@ fn validate_download_url_allows_local_smoke_hosts_when_enabled() {
             "http://[::1]/file.zip",
             "https://[fc00::1]/file.zip",
         ] {
-            validate_download_url(url).expect("显式开启 local smoke 后应允许本地下载地址");
+            validate_download_url(url, &[]).expect("显式开启 local smoke 后应允许本地下载地址");
         }
     });
 }
@@ -21,7 +21,7 @@ fn validate_download_url_allows_local_smoke_hosts_when_enabled() {
 #[test]
 fn validate_download_url_still_rejects_public_http_when_local_smoke_enabled() {
     crate::local_smoke::with_local_smoke_test_env(true, || {
-        let error = validate_download_url("http://example.com/file.zip")
+        let error = validate_download_url("http://example.com/file.zip", &[])
             .expect_err("local smoke 开关不应放通公网 HTTP 下载地址");
 
         assert_eq!(error.to_string(), "download url must use https");
@@ -33,7 +33,7 @@ fn validate_download_url_rejects_ambiguous_numeric_hosts() {
     for host in ["127.1", "2130706433", "0177.0.0.1"] {
         let url = format!("https://{host}/file.zip");
 
-        let error = validate_download_url(&url).expect_err("歧义数字 host 应被拒绝");
+        let error = validate_download_url(&url, &[]).expect_err("歧义数字 host 应被拒绝");
 
         assert_eq!(
             error.to_string(),
@@ -47,8 +47,25 @@ fn validate_download_url_rejects_ambiguous_numeric_hosts() {
 fn validate_download_url_accepts_github_release_redirect_host() {
     validate_download_url(
         "https://release-assets.githubusercontent.com/github-production-release-asset/example.zip",
+        &[],
     )
     .expect("GitHub Release 资产重定向 host 应可用于直连下载");
+}
+
+#[test]
+fn validate_download_url_accepts_extra_trusted_host() {
+    let extra = vec!["gh-proxy.com".to_string()];
+    validate_download_url("https://gh-proxy.com/https://github.com/x/y.zip", &extra)
+        .expect("extra_hosts 中的反代域名应被放行");
+}
+
+#[test]
+fn validate_download_url_rejects_extra_host_with_private_ip() {
+    // extra_hosts 放行 host 名，但 SSRF 防护仍拒绝私网 IP
+    let extra = vec!["127.0.0.1".to_string()];
+    let error = validate_download_url("https://127.0.0.1/file.zip", &extra)
+        .expect_err("私网 IP 即使在 extra_hosts 中也应被 SSRF 防护拒绝");
+    assert_eq!(error.to_string(), "download url host must be public");
 }
 
 #[tokio::test]
@@ -71,6 +88,8 @@ async fn download_asset_to_file_rejects_private_hosts_before_network() {
                 cache_path: &cache_path,
                 expected_size: 1,
                 route: None,
+                candidate_urls: &[],
+                extra_hosts: &[],
             },
             None,
             |_| true,
@@ -93,6 +112,8 @@ async fn download_asset_to_file_rejects_untrusted_public_host_before_network() {
             cache_path: &cache_path,
             expected_size: 1,
             route: None,
+            candidate_urls: &[],
+            extra_hosts: &[],
         },
         None,
         |_| true,

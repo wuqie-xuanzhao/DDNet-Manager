@@ -4,12 +4,17 @@
 //! ScanCancelState / TauriScanSink / priority_roots 等）拆出来独立成模块，
 //! 同时把原 run_scan 的 8 参数封装为 [`ScanConfig`] 结构体，符合 CLAUDE.md
 //! "函数参数超过 4 个优先封装为结构体" 规约。
+//!
+//! lint-WARN(C1): 文件约 641 行 > 600，存量；按项目约定 C1 仅在 > 800 行时强制
+//! 拆分，当前规模未触发阈值。扫描策略 + 进度 sink + 优先根目录列表高度内聚，
+//! 进一步拆分需要在多个文件间传递 ScanConfig 与 sink 引用。
 
 use crate::error::IpcError;
 use crate::models::{ClientHealth, ClientInstallation, ScanClientInstallationsOptions};
 use crate::registry::ClientRegistry;
 use std::path::PathBuf;
 use tauri::AppHandle;
+use tokio_util::sync::CancellationToken;
 
 use super::RegistryState;
 
@@ -138,92 +143,119 @@ pub async fn scan_clients_via_mft(
         Vec::new()
     };
 
-    let result = async {
-        let mut all_installations: Vec<ClientInstallation> = Vec::new();
-        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-        // 两阶段扫描：priority 先扫常见安装位置，命中数 < max_results 时继续 fallback 找全
-        if !priority_roots.is_empty() {
-            let priority_installations = run_scan(
-                ScanConfig {
-                    roots: priority_roots,
-                    excluded: excluded.clone(),
-                    max_results,
-                    timeout_secs: total_timeout / 3, // priority 阶段给 1/3 时间预算
-                    include_unhealthy: options.include_unhealthy,
-                    phase: ScanPhase::Priority,
-                },
-                &registry,
-                app.clone(),
-                master_cancel.clone(),
-            )
-            .await?;
-            for inst in priority_installations {
-                if seen_ids.insert(inst.id.clone()) {
-                    // B4: priority 命中且 health=ok 时自动 upsert 落 registry，
-                    // 让前端 triggerScan 不再需要二次 IPC 调用。upsert_scan_hit
-                    // 内部 health check + 保留已存 is_default（review issue M1）。
-                    upsert_scan_hit(&registry, &inst, "priority");
-                    all_installations.push(inst);
-                }
-            }
-            // priority 已找到 max_results 个，提前返回；否则继续 fallback
-            if all_installations.len() >= max_results {
-                return Ok(all_installations);
-            }
-        }
-
-        // Fallback / 用户显式指定 roots：全盘扫描
-        let mut roots: Vec<PathBuf> = if options.roots.is_empty() {
-            collect_default_drive_roots()
-        } else {
-            options.roots.iter().map(PathBuf::from).collect()
-        };
-
-        if options.include_saved_paths {
-            roots.extend(
-                registry
-                    .list_client_installations()?
-                    .into_iter()
-                    .filter_map(|c| {
-                        PathBuf::from(c.install_dir)
-                            .parent()
-                            .map(std::path::Path::to_path_buf)
-                    }),
-            );
-        }
-
-        let fallback_installations = run_scan(
-            ScanConfig {
-                roots,
-                excluded: excluded.clone(),
-                max_results,
-                timeout_secs: total_timeout,
-                include_unhealthy: options.include_unhealthy,
-                phase: ScanPhase::Fallback,
-            },
-            &registry,
-            app,
-            master_cancel.clone(),
-        )
-        .await?;
-        for inst in fallback_installations {
-            if seen_ids.insert(inst.id.clone()) {
-                // fallback 命中同样落库（review issue H1）：之前只 priority 自动
-                // upsert 会让自定义路径客户端重启后状态丢失。fallback 用户主动
-                // 扫全盘的命中更应该落库，行为与 priority 一致。
-                upsert_scan_hit(&registry, &inst, "fallback");
-                all_installations.push(inst);
-            }
-        }
-
-        all_installations.sort_by(|a, b| a.install_dir.cmp(&b.install_dir));
-        Ok(all_installations)
-    }
+    let result = run_two_phase_scan(TwoPhaseScanContext {
+        registry: &registry,
+        app,
+        options: &options,
+        excluded: &excluded,
+        max_results,
+        total_timeout,
+        priority_roots,
+        master_cancel,
+    })
     .await;
 
     cancel_state.clear();
     result
+}
+
+/// 两阶段扫描的运行时上下文，封装 [`scan_clients_via_mft`] 内部 async 块的所有参数。
+///
+/// 把 8 个紧耦合的扫描参数封装为结构体，符合 CLAUDE.md "函数参数超过 4 个优先
+/// 封装为结构体" 规约，同时让 [`run_two_phase_scan`] 签名保持单参数。
+struct TwoPhaseScanContext<'a> {
+    registry: &'a ClientRegistry,
+    app: AppHandle,
+    options: &'a ScanClientInstallationsOptions,
+    excluded: &'a [PathBuf],
+    max_results: usize,
+    total_timeout: u64,
+    priority_roots: Vec<PathBuf>,
+    master_cancel: CancellationToken,
+}
+
+/// 两阶段扫描核心逻辑：priority 先扫常见安装位置，命中数 < max_results 时 fallback 全盘。
+///
+/// priority 命中且 health=ok 时自动 upsert 落 registry（B4），让前端 triggerScan
+/// 不再需要二次 IPC 调用。fallback 命中同样落库（review issue H1），行为与 priority 一致。
+async fn run_two_phase_scan(
+    ctx: TwoPhaseScanContext<'_>,
+) -> Result<Vec<ClientInstallation>, IpcError> {
+    let mut all_installations: Vec<ClientInstallation> = Vec::new();
+    let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // priority 阶段：先扫常见安装位置，命中秒级返回
+    if !ctx.priority_roots.is_empty() {
+        let priority_installations = run_scan(
+            ScanConfig {
+                roots: ctx.priority_roots.clone(),
+                excluded: ctx.excluded.to_vec(),
+                max_results: ctx.max_results,
+                timeout_secs: ctx.total_timeout / 3, // priority 阶段给 1/3 时间预算
+                include_unhealthy: ctx.options.include_unhealthy,
+                phase: ScanPhase::Priority,
+            },
+            ctx.registry,
+            ctx.app.clone(),
+            ctx.master_cancel.clone(),
+        )
+        .await?;
+        for inst in priority_installations {
+            if seen_ids.insert(inst.id.clone()) {
+                // upsert_scan_hit 内部 health check + 保留已存 is_default（review issue M1）。
+                upsert_scan_hit(ctx.registry, &inst, "priority");
+                all_installations.push(inst);
+            }
+        }
+        // priority 已找到 max_results 个，提前返回；否则继续 fallback
+        if all_installations.len() >= ctx.max_results {
+            return Ok(all_installations);
+        }
+    }
+
+    // fallback 阶段 / 用户显式指定 roots：全盘扫描
+    let mut roots: Vec<PathBuf> = if ctx.options.roots.is_empty() {
+        collect_default_drive_roots()
+    } else {
+        ctx.options.roots.iter().map(PathBuf::from).collect()
+    };
+
+    if ctx.options.include_saved_paths {
+        roots.extend(
+            ctx.registry
+                .list_client_installations()?
+                .into_iter()
+                .filter_map(|c| {
+                    PathBuf::from(c.install_dir)
+                        .parent()
+                        .map(std::path::Path::to_path_buf)
+                }),
+        );
+    }
+
+    let fallback_installations = run_scan(
+        ScanConfig {
+            roots,
+            excluded: ctx.excluded.to_vec(),
+            max_results: ctx.max_results,
+            timeout_secs: ctx.total_timeout,
+            include_unhealthy: ctx.options.include_unhealthy,
+            phase: ScanPhase::Fallback,
+        },
+        ctx.registry,
+        ctx.app.clone(),
+        ctx.master_cancel.clone(),
+    )
+    .await?;
+    for inst in fallback_installations {
+        if seen_ids.insert(inst.id.clone()) {
+            upsert_scan_hit(ctx.registry, &inst, "fallback");
+            all_installations.push(inst);
+        }
+    }
+
+    all_installations.sort_by(|a, b| a.install_dir.cmp(&b.install_dir));
+    Ok(all_installations)
 }
 
 /// 单次扫描的用户可配置参数。封装成结构体让 [`run_scan`] 参数数量 ≤ 4

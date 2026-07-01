@@ -1,11 +1,12 @@
 use crate::error::ManagerError;
 use crate::local_smoke;
 use crate::models::{
-    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, UpdateAction, UpdateManifest,
-    UpdateSourceKind,
+    ClientUpdateCheck, ClientUpdateSelector, NetworkRouteConfig, UpdateAction, UpdateCheckReason,
+    UpdateManifest, UpdateSourceKind,
 };
 use reqwest::Url;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
@@ -60,35 +61,76 @@ pub fn build_manifest_url_with_route(
 }
 
 /// 从远程地址拉取更新 manifest，并复用本地解析校验逻辑。
+///
+/// 不带缓存目录，用于测试或无需持久化缓存的场景。
 pub async fn fetch_manifest(url: &str) -> Result<UpdateManifest, String> {
-    fetch_manifest_with_route(url, None).await
+    fetch_manifest_with_route(url, None, None).await
 }
 
 /// 使用显式网络路由配置从远程地址拉取更新 manifest。
 ///
 /// 本地代理模式通过 reqwest 客户端层注入代理隧道，URL 本身不改写；目标 host
 /// 仍由 build_manifest_url 校验为公开可信地址。
+///
+/// 成功后把 manifest 原文写入本地缓存；网络失败时若缓存存在则返回缓存版本
+/// （日志记录 fallback），让离线或网络抖动时仍能基于最近一次成功拉取的 manifest
+/// 执行更新检查。
 pub async fn fetch_manifest_with_route(
     url: &str,
     route: Option<&NetworkRouteConfig>,
+    cache_dir: Option<&Path>,
 ) -> Result<UpdateManifest, String> {
     let final_url = build_manifest_url_with_route(url, route)?;
-    let client = crate::network_route::build_routed_client(
-        route,
-        Some(Duration::from_secs(15)),
-        None,
-        true,
-    )?;
+    let cache_path = cache_dir.map(|dir| manifest_cache_path(dir, url));
 
-    let response = client
-        .get(final_url)
-        .send()
-        .await
-        .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("failed to fetch manifest: {error}"))?;
-    let text = read_limited_manifest_response(response).await?;
+    let fetch_result = async {
+        let client = crate::network_route::build_routed_client(
+            route,
+            Some(Duration::from_secs(15)),
+            None,
+            true,
+        )?;
+        let response = client
+            .get(final_url)
+            .send()
+            .await
+            .and_then(|response| response.error_for_status())
+            .map_err(|error| format!("failed to fetch manifest: {error}"))?;
+        read_limited_manifest_response(response).await
+    }
+    .await;
 
-    parse_manifest(&text)
+    match fetch_result {
+        Ok(text) => {
+            // 写缓存不影响主流程，失败只打日志。
+            if let Some(path) = &cache_path {
+                if let Err(error) = write_manifest_cache(path, &text) {
+                    eprintln!(
+                        "failed to write manifest cache at {}: {error}",
+                        path.display()
+                    );
+                }
+            }
+            parse_manifest(&text)
+        }
+        Err(network_error) => {
+            // 网络失败 → 回退到本地缓存。
+            if let Some(path) = &cache_path {
+                if let Ok(cached_text) = std::fs::read_to_string(path) {
+                    eprintln!(
+                        "manifest fetch failed, falling back to cached manifest at {}: {network_error}",
+                        path.display()
+                    );
+                    return parse_manifest(&cached_text).map_err(|parse_error| {
+                        format!(
+                            "cached manifest is corrupted ({parse_error}); original network error: {network_error}"
+                        )
+                    });
+                }
+            }
+            Err(network_error)
+        }
+    }
 }
 
 /// 从已校验的 manifest 中选择指定客户端、渠道与平台的更新资产。
@@ -125,6 +167,7 @@ pub fn select_client_update(
         action: UpdateAction::Download,
         action_url: None,
         message: None,
+        reason: UpdateCheckReason::None,
     }))
 }
 
@@ -267,6 +310,39 @@ fn normalized_ip_host(host: &str) -> &str {
     host.trim_start_matches('[').trim_end_matches(']')
 }
 
+/// 根据 manifest URL 计算本地缓存路径，文件名用 URL 的 FNV-1a 64 位哈希。
+///
+/// 放在 `<cache_dir>/manifests/` 子目录下，避免与其他缓存文件混在一起。
+/// URL 中可能含 query string，但完整 URL 参与哈希能区分不同参数的 manifest。
+fn manifest_cache_path(cache_dir: &Path, url: &str) -> PathBuf {
+    let hash = fnv1a_64(url.as_bytes());
+    cache_dir
+        .join("manifests")
+        .join(format!("{hash:016x}.json"))
+}
+
+/// FNV-1a 64 位哈希，用于把 URL 映射成稳定的短文件名。
+///
+/// 不引入额外依赖，直接手写 FNV-1a 算法，足够用于缓存键计算。
+fn fnv1a_64(data: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+/// 把 manifest 原文写入本地缓存文件，父目录不存在则自动创建。
+fn write_manifest_cache(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create manifest cache dir: {error}"))?;
+    }
+    std::fs::write(path, content)
+        .map_err(|error| format!("failed to write manifest cache: {error}"))
+}
+
 async fn read_limited_manifest_response(mut response: reqwest::Response) -> Result<String, String> {
     if response
         .content_length()
@@ -298,3 +374,19 @@ async fn read_limited_manifest_response(mut response: reqwest::Response) -> Resu
 #[cfg(test)]
 #[path = "test/manifest.rs"]
 mod tests;
+
+/// 测试辅助模块，暴露内部缓存函数供单元测试直接调用。
+#[cfg(test)]
+pub mod test_helpers {
+    use super::*;
+
+    /// 计算给定 URL 在缓存目录下的 manifest 缓存路径。
+    pub fn manifest_cache_path(cache_dir: &Path, url: &str) -> PathBuf {
+        super::manifest_cache_path(cache_dir, url)
+    }
+
+    /// 把 manifest 原文写入指定缓存路径，自动创建父目录。
+    pub fn write_manifest_cache(path: &Path, content: &str) -> Result<(), String> {
+        super::write_manifest_cache(path, content)
+    }
+}

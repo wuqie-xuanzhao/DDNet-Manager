@@ -12,7 +12,8 @@ use crate::download::{
     PackageKind,
 };
 use crate::models::{
-    ClientUpdateCheck, DownloadJob, DownloadJobStatus, UpdateAction, UpdateAsset, UpdateSourceKind,
+    ClientUpdateCheck, DownloadJob, DownloadJobStatus, UpdateAction, UpdateAsset,
+    UpdateCheckReason, UpdateSourceKind,
 };
 use crate::registry::ClientRegistry;
 use std::fs;
@@ -172,6 +173,7 @@ fn recover_from_registry_keeps_terminal_states_unchanged() {
 
 // ===== 共享 helpers（被 extract / install 子模块测试使用） =====
 
+/// 把 `(name, bytes)` 列表写入 zip 包到 `path`，供 extract / install 测试使用。
 pub(super) fn write_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
     let file = fs::File::create(path).expect("测试 zip 文件应创建成功");
     let mut zip = zip::ZipWriter::new(file);
@@ -186,6 +188,7 @@ pub(super) fn write_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
     zip.finish().expect("测试 zip 应写入完成");
 }
 
+/// 把 `(name, bytes)` 列表写入 tar.xz 包到 `path`，含 `..` 路径的条目走 raw 写入。
 pub(super) fn write_tar_xz(path: &std::path::Path, entries: &[(&str, &[u8])]) {
     let file = fs::File::create(path).expect("测试 tar.xz 文件应创建成功");
     let encoder = xz2::write::XzEncoder::new(file, 6);
@@ -249,6 +252,7 @@ fn append_raw_tar_entry<W: std::io::Write>(entry: RawTarEntry<'_, W>) {
     }
 }
 
+/// 创建 Windows 客户端目录结构（DDNet.exe + storage.cfg + data/）供测试使用。
 pub(super) fn create_client_dir(path: &std::path::Path, executable_bytes: &[u8]) {
     fs::create_dir_all(path).expect("测试客户端目录应创建成功");
     fs::write(path.join("DDNet.exe"), executable_bytes).expect("测试可执行文件应写入成功");
@@ -256,6 +260,7 @@ pub(super) fn create_client_dir(path: &std::path::Path, executable_bytes: &[u8])
     fs::create_dir(path.join("data")).expect("测试 data 目录应创建成功");
 }
 
+/// 创建 Linux 客户端目录结构（DDNet + storage.cfg + data/）供测试使用。
 pub(super) fn create_linux_client_dir(path: &std::path::Path, executable_bytes: &[u8]) {
     fs::create_dir_all(path).expect("测试 Linux 客户端目录应创建成功");
     fs::write(path.join("DDNet"), executable_bytes).expect("测试 Linux 可执行文件应写入成功");
@@ -263,6 +268,7 @@ pub(super) fn create_linux_client_dir(path: &std::path::Path, executable_bytes: 
     fs::create_dir(path.join("data")).expect("测试 data 目录应创建成功");
 }
 
+/// 创建 macOS app bundle 目录结构（Contents/MacOS + Contents/Resources）供测试使用。
 pub(super) fn create_app_bundle(path: &std::path::Path, executable_bytes: &[u8]) {
     let macos_dir = path.join("Contents").join("MacOS");
     let resources_dir = path.join("Contents").join("Resources");
@@ -290,6 +296,7 @@ fn sample_update(asset_url: &str) -> ClientUpdateCheck {
         action: UpdateAction::Download,
         action_url: None,
         message: None,
+        reason: UpdateCheckReason::None,
     }
 }
 

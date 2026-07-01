@@ -2,8 +2,8 @@
 
 use super::ClientRegistry;
 use crate::error::ManagerError;
-use crate::models::InstallHistoryRecord;
-use rusqlite::params;
+use crate::models::{InstallHistoryRecord, InstallHistoryStatus};
+use rusqlite::{params, OptionalExtension};
 
 impl ClientRegistry {
     /// 记录一次已完成或失败的 Manager-owned 安装事务。
@@ -88,5 +88,65 @@ impl ClientRegistry {
             })?);
         }
         Ok(history)
+    }
+
+    /// 按 ID 读取单条安装历史记录，供 rollback IPC 反查原始 install 信息。
+    pub fn install_history_by_id(
+        &self,
+        history_id: &str,
+    ) -> Result<Option<InstallHistoryRecord>, ManagerError> {
+        let conn = self.lock_conn()?;
+        let row = conn
+            .query_row(
+                "SELECT record_json FROM install_history WHERE id = ?1 LIMIT 1",
+                params![history_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to query install history by id: {error}"))
+            })?;
+        row.map(|record_json| {
+            serde_json::from_str::<InstallHistoryRecord>(&record_json).map_err(|error| {
+                ManagerError::Internal(format!("failed to parse install history: {error}"))
+            })
+        })
+        .transpose()
+    }
+
+    /// 更新指定安装历史记录的状态，用于 rollback 成功后把原 Completed 标记为 RolledBack。
+    ///
+    /// 仅更新 status 字段并同步重写 record_json，保持其他字段不变。
+    pub fn update_install_history_status(
+        &self,
+        history_id: &str,
+        status: &InstallHistoryStatus,
+    ) -> Result<(), ManagerError> {
+        let existing = self.install_history_by_id(history_id)?.ok_or_else(|| {
+            ManagerError::NotFound(format!("install history not found: {history_id}"))
+        })?;
+        let mut updated = existing;
+        updated.status = status.clone();
+        let status_str = serde_json::to_string(status).map_err(|error| {
+            ManagerError::Internal(format!("failed to serialize install status: {error}"))
+        })?;
+        let record_json = serde_json::to_string(&updated).map_err(|error| {
+            ManagerError::Internal(format!("failed to serialize install history: {error}"))
+        })?;
+        let conn = self.lock_conn()?;
+        let rows = conn
+            .execute(
+                "UPDATE install_history SET status = ?2, record_json = ?3 WHERE id = ?1",
+                params![history_id, status_str, record_json],
+            )
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to update install history status: {error}"))
+            })?;
+        if rows == 0 {
+            return Err(ManagerError::NotFound(format!(
+                "install history not found: {history_id}"
+            )));
+        }
+        Ok(())
     }
 }

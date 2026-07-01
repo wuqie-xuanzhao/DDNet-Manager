@@ -17,12 +17,7 @@ const MAX_UNPACKED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// 每个 worker thread 独立 `File::open` + `ZipArchive::new`，因为 zip 6.0 的
 /// `ZipArchive` 不是 `Sync`，`by_index` 期间持锁会串行化 IO。
 pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(), String> {
-    if staging_dir.exists() {
-        fs::remove_dir_all(staging_dir)
-            .map_err(|error| format!("failed to clear staging dir: {error}"))?;
-    }
-    fs::create_dir_all(staging_dir)
-        .map_err(|error| format!("failed to create staging dir: {error}"))?;
+    let staging_root = prepare_staging_dir(staging_dir)?;
 
     let zip_file =
         fs::File::open(zip_path).map_err(|error| format!("failed to open zip file: {error}"))?;
@@ -33,11 +28,25 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
         return Err(format!("zip contains more than {MAX_ZIP_FILES} files"));
     }
 
-    let staging_root = fs::canonicalize(staging_dir)
-        .map_err(|error| format!("failed to canonicalize staging dir: {error}"))?;
-
     // Phase A：串行预处理 —— 全部安全检查 + 目录创建 + 收集待解压文件清单。
-    // unpacked_bytes 在此阶段一次性累加完，Phase B 不再检查（已确定不超上限）。
+    let file_entries = collect_zip_entries(&mut archive, &staging_root)?;
+
+    // ≤ 2 文件快速路径：跳过 thread::scope 的 fork/join overhead（review issue #15）。
+    if file_entries.len() <= 2 {
+        return extract_zip_entries_serial(&mut archive, file_entries);
+    }
+
+    // Phase B：并行解压。
+    extract_zip_entries_parallel(zip_path, file_entries)
+}
+
+/// Phase A：串行预处理 —— 安全检查（symlink/路径穿越/size 上限）+ 目录创建 + 收集待解压文件清单。
+///
+/// `unpacked_bytes` 在此阶段一次性累加完，Phase B 不再检查（已确定不超上限）。
+fn collect_zip_entries(
+    archive: &mut zip::ZipArchive<fs::File>,
+    staging_root: &Path,
+) -> Result<Vec<(usize, PathBuf)>, String> {
     let mut file_entries: Vec<(usize, PathBuf)> = Vec::new();
     let mut unpacked_bytes = 0_u64;
     for index in 0..archive.len() {
@@ -57,7 +66,7 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
             .enclosed_name()
             .ok_or_else(|| format!("unsafe zip entry path: {}", entry.name()))?;
         let output_path = staging_root.join(enclosed_name);
-        ensure_inside_root(&staging_root, &output_path)?;
+        ensure_inside_root(staging_root, &output_path)?;
 
         if entry.is_dir() {
             fs::create_dir_all(&output_path)
@@ -81,22 +90,30 @@ pub fn extract_zip_to_staging(zip_path: &Path, staging_dir: &Path) -> Result<(),
 
         file_entries.push((index, output_path));
     }
+    Ok(file_entries)
+}
 
-    // ≤ 2 文件快速路径：跳过 thread::scope 的 fork/join overhead（review issue #15）。
-    // 实测 2 个小文件的 thread::scope 启动 + join 比 2 次顺序 IO 还慢，统一走串行。
-    if file_entries.len() <= 2 {
-        for (index, output_path) in file_entries.into_iter() {
-            let mut entry = archive
-                .by_index(index)
-                .map_err(|error| format!("failed to read zip entry: {error}"))?;
-            let mut output = fs::File::create(&output_path)
-                .map_err(|error| format!("failed to create extracted file: {error}"))?;
-            copy_zip_entry(&mut entry, &mut output)?;
-        }
-        return Ok(());
+/// ≤2 文件快速路径：顺序解压，跳过 thread::scope 的 fork/join overhead。
+fn extract_zip_entries_serial(
+    archive: &mut zip::ZipArchive<fs::File>,
+    file_entries: Vec<(usize, PathBuf)>,
+) -> Result<(), String> {
+    for (index, output_path) in file_entries.into_iter() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| format!("failed to read zip entry: {error}"))?;
+        let mut output = fs::File::create(&output_path)
+            .map_err(|error| format!("failed to create extracted file: {error}"))?;
+        copy_zip_entry(&mut entry, &mut output)?;
     }
+    Ok(())
+}
 
-    // Phase B：并行解压。num_threads = min(available_parallelism, 8, file_count)。
+/// Phase B：并行解压。num_threads = min(available_parallelism, 8, file_count)。
+fn extract_zip_entries_parallel(
+    zip_path: &Path,
+    file_entries: Vec<(usize, PathBuf)>,
+) -> Result<(), String> {
     let num_threads = std::thread::available_parallelism()
         .map(|n| n.get().clamp(1, 8))
         .unwrap_or(4)

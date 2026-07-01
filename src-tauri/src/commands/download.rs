@@ -104,6 +104,18 @@ pub async fn start_update_download(
     request: StartUpdateDownloadRequest,
 ) -> Result<DownloadJob, IpcError> {
     let prepared = prepare_update_download_job(&registry, &app, request).await?;
+    // 加载 AppSettings 取反代前缀和额外可信 host；设置缺失时用默认空列表
+    let settings = registry.load_app_settings().unwrap_or_default();
+    let mirror_prefixes = crate::mirror::resolve_prefixes(&settings.mirror_prefixes);
+    // review C1：从反代前缀提取 host 自动合并进 extra_hosts，让默认反代域名
+    // （gh-proxy.com 等）通过 SSRF 白名单校验。否则竞速胜出的反代源会被
+    // validate_download_url 拒绝，导致裸连用户无法下载。
+    let mut extra_hosts = settings.extra_trusted_hosts.clone();
+    for host in crate::mirror::extract_mirror_hosts(&mirror_prefixes) {
+        if !extra_hosts.iter().any(|h| h.eq_ignore_ascii_case(&host)) {
+            extra_hosts.push(host);
+        }
+    }
     let job = prepared.job;
     let cache_path = PathBuf::from(&job.cache_path);
     registry.upsert_download_job(&job)?;
@@ -115,6 +127,8 @@ pub async fn start_update_download(
         job: job.clone(),
         cache_path,
         route: prepared.route,
+        mirror_prefixes,
+        extra_hosts,
     });
 
     Ok(job)
@@ -147,12 +161,9 @@ async fn prepare_update_download_job(
     };
     let update = crate::update_source::check_client_update(&update_request, client.version)
         .await
-        .map_err(ManagerError::Internal)?
-        .ok_or_else(|| {
-            ManagerError::Internal(
-                "no downloadable update is available for this client".to_string(),
-            )
-        })?;
+        .map_err(ManagerError::Internal)?;
+    // update_source 现在始终返回 ClientUpdateCheck，无可用下载时 action != Download。
+    // 用 reason 不可用时附带的 message 直接报错。
     if update.action != UpdateAction::Download {
         return Err(ManagerError::Internal(
             update.message.clone().unwrap_or_else(|| {
@@ -248,6 +259,8 @@ fn spawn_download_task(context: DownloadTaskContext) {
         job: context.job,
         cache_path: context.cache_path,
         route: context.route,
+        mirror_prefixes: context.mirror_prefixes,
+        extra_hosts: context.extra_hosts,
         cancel_token,
     };
     tokio::spawn(async move {
@@ -264,6 +277,10 @@ struct DownloadTaskRuntime {
     job: DownloadJob,
     cache_path: PathBuf,
     route: Option<NetworkRouteConfig>,
+    /// 已 resolve 的反代前缀列表（空配置已 fallback 到默认列表）。
+    mirror_prefixes: Vec<String>,
+    /// 用户显式信任的额外下载 host（公共反代域名）。
+    extra_hosts: Vec<String>,
     cancel_token: Option<CancellationToken>,
 }
 
@@ -275,12 +292,17 @@ struct DownloadTaskRuntime {
 /// 后 handle_download_success 仍会 emit 一次最终状态）。
 async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> {
     let mut throttle = DownloadThrottle::new(runtime.job.size);
+    // 组装竞速候选 URL：原始 GitHub URL + 反代 URL（反代前缀已 resolve）
+    let candidate_urls =
+        crate::mirror::build_candidate_urls(&runtime.job.asset_url, &runtime.mirror_prefixes);
     crate::download::download_asset_to_file(
         crate::download::DownloadFileRequest {
             asset_url: &runtime.job.asset_url,
             cache_path: &runtime.cache_path,
             expected_size: runtime.job.size,
             route: runtime.route.as_ref(),
+            candidate_urls: &candidate_urls,
+            extra_hosts: &runtime.extra_hosts,
         },
         runtime.cancel_token.clone(),
         |downloaded_bytes| {

@@ -22,6 +22,15 @@ pub struct GitHubReleaseResponse {
     pub body: Option<String>,
     /// 发布中附带的资产列表。
     pub assets: Vec<GitHubReleaseAsset>,
+    /// 是否为预发布。GitHub `/releases/latest` 自动排除 prerelease，
+    /// 但 `/releases/tags/{tag}` 返回的 nightly release 此字段为 true。
+    #[serde(default)]
+    pub prerelease: bool,
+    /// 发布时间（ISO 8601 UTC，如 `2026-06-30T18:46:26Z`）。
+    /// nightly rolling release 的 tag_name 固定为 "nightly"，无法做版本比较，
+    /// 用此字段前 10 位日期生成 `nightly-{YYYY-MM-DD}` 版本号。
+    #[serde(default)]
+    pub published_at: String,
 }
 
 /// 表示 GitHub Release 中的一个资产项。
@@ -58,7 +67,9 @@ pub enum GitHubReleaseCheck {
 
 struct ReleaseSelection {
     platform: String,
-    tag_name: String,
+    /// 已规范化的版本号。stable channel 由 `normalize_release_version(tag_name)` 计算，
+    /// nightly channel 由 `nightly_version_from_published_at(published_at)` 计算。
+    version: String,
     asset: GitHubReleaseAsset,
 }
 
@@ -89,38 +100,136 @@ pub async fn fetch_latest_github_release(
     Ok(response)
 }
 
-/// 从 GitHub latest release 中选择当前平台可校验资产。
-pub async fn check_latest_release(
+/// 从 GitHub 按 tag 拉取单个 release（含 prerelease）。
+///
+/// 与 `/releases/latest` 不同，`/releases/tags/{tag}` 端点会返回该 tag 下的所有
+/// release，包括标记为 prerelease 的 nightly rolling build。用于 nightly channel。
+pub async fn fetch_github_release_by_tag(
+    owner: &str,
+    repo: &str,
+    tag: &str,
+    route: Option<&NetworkRouteConfig>,
+) -> Result<GitHubReleaseResponse, String> {
+    let url = format!("{GITHUB_API_BASE}/{owner}/{repo}/releases/tags/{tag}");
+    let client = crate::network_route::build_routed_client(
+        route,
+        Some(Duration::from_secs(15)),
+        Some(&user_agent()),
+        true,
+    )?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .and_then(|response| response.error_for_status())
+        .map_err(|error| format!("failed to fetch GitHub release by tag: {error}"))?
+        .json::<GitHubReleaseResponse>()
+        .await
+        .map_err(|error| format!("failed to parse GitHub release: {error}"))?;
+
+    Ok(response)
+}
+
+/// 从 GitHub release 的 `published_at` 字段生成 nightly 版本号。
+///
+/// nightly rolling release 的 `tag_name` 固定为 `"nightly"`，无法做版本比较。
+/// 取 `published_at` 前 10 位日期（`YYYY-MM-DD`）生成 `nightly-{date}`，
+/// 供 `is_update_needed` fallback 字符串比较。输入过短或非日期格式时返回
+/// `nightly-unknown`，避免 panic。
+fn nightly_version_from_published_at(published_at: &str) -> String {
+    let date: String = published_at.chars().take(10).collect();
+    // 严格校验 `YYYY-MM-DD` 格式，避免误把短字符串当日期。
+    let valid = date.len() == 10
+        && date.as_bytes()[4] == b'-'
+        && date.as_bytes()[7] == b'-'
+        && date
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| (i == 4 || i == 7) || b.is_ascii_digit());
+    if valid {
+        format!("nightly-{date}")
+    } else {
+        "nightly-unknown".to_string()
+    }
+}
+
+/// 按更新通道（stable/nightly）检查 GitHub Release 并选择当前平台可校验资产。
+///
+/// - `stable`：走 `/releases/latest`，版本号用 `normalize_release_version(tag_name)`。
+/// - `nightly`：走 `/releases/tags/{nightly_tag}`，版本号用
+///   `nightly_version_from_published_at(published_at)`。catalog 未配 `nightly_tag`
+///   时返回 `None`（该客户端不支持 nightly）。
+pub async fn check_release_by_channel(
     entry: &ClientCatalogEntry,
     platform: &str,
+    channel: &str,
     route: Option<&NetworkRouteConfig>,
 ) -> Result<Option<GitHubReleaseCheck>, String> {
-    let crate::client_catalog::UpdateSourceDescriptor::GithubRelease { owner, repo, .. } =
-        entry.update_source
+    let crate::client_catalog::UpdateSourceDescriptor::GithubRelease {
+        owner,
+        repo,
+        nightly_tag,
+        ..
+    } = entry.update_source
     else {
         return Ok(None);
     };
 
-    let release = fetch_latest_github_release(owner, repo, route).await?;
+    let (release, version) = match channel {
+        "nightly" => {
+            let Some(tag) = nightly_tag else {
+                // 该客户端未配 nightly_tag，不支持 nightly channel。
+                return Ok(None);
+            };
+            let release = fetch_github_release_by_tag(owner, repo, tag, route).await?;
+            let version = nightly_version_from_published_at(&release.published_at);
+            (release, version)
+        }
+        "stable" => {
+            let release = fetch_latest_github_release(owner, repo, route).await?;
+            let version = normalize_release_version(&release.tag_name);
+            (release, version)
+        }
+        other => {
+            // fail-fast：未知 channel 直接报错，避免静默走 stable 掩盖前端契约违规。
+            // 当前前端只产生 "stable"/"nightly"（UpdatePanel.tsx），其他值属于调用方 bug。
+            return Err(format!("unsupported channel: {other}"));
+        }
+    };
+
     let digests = fetch_expanded_assets_digests(owner, repo, &release.tag_name, route)
         .await
         .unwrap_or_default();
 
-    select_release_asset(entry, platform, release, &digests)
+    select_release_asset(ReleaseAssetSelection {
+        entry,
+        platform,
+        release,
+        version,
+        digests: &digests,
+    })
+}
+
+/// `select_release_asset` 的参数包，避免函数参数超过 4 个。
+struct ReleaseAssetSelection<'a> {
+    entry: &'a ClientCatalogEntry,
+    platform: &'a str,
+    release: GitHubReleaseResponse,
+    version: String,
+    digests: &'a HashMap<String, String>,
 }
 
 fn select_release_asset(
-    entry: &ClientCatalogEntry,
-    platform: &str,
-    release: GitHubReleaseResponse,
-    digests: &HashMap<String, String>,
+    selection: ReleaseAssetSelection<'_>,
 ) -> Result<Option<GitHubReleaseCheck>, String> {
-    let patterns = asset_patterns_for_platform(entry, platform);
+    let patterns = asset_patterns_for_platform(selection.entry, selection.platform);
     if patterns.is_empty() {
         return Ok(None);
     }
 
-    let Some(asset) = release
+    let Some(asset) = selection
+        .release
         .assets
         .into_iter()
         .find(|asset| patterns.iter().any(|pattern| asset.name == *pattern))
@@ -130,11 +239,11 @@ fn select_release_asset(
 
     build_update_asset(
         ReleaseSelection {
-            platform: platform.to_string(),
-            tag_name: release.tag_name,
+            platform: selection.platform.to_string(),
+            version: selection.version,
             asset,
         },
-        digests,
+        selection.digests,
     )
 }
 
@@ -142,7 +251,8 @@ fn build_update_asset(
     selection: ReleaseSelection,
     digests: &HashMap<String, String>,
 ) -> Result<Option<GitHubReleaseCheck>, String> {
-    let version = normalize_release_version(&selection.tag_name);
+    // version 已由调用方规范化（stable: normalize_release_version, nightly: nightly_version_from_published_at）。
+    let version = selection.version;
     // 优先用 expanded_assets 的 digest（标准 release API 默认不返回），回退到 asset.digest
     let sha256 = digests.get(&selection.asset.name).cloned().or_else(|| {
         selection

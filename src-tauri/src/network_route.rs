@@ -1,16 +1,22 @@
 //! 网络路由辅助：根据用户配置构建走本地代理隧道的 reqwest 客户端。
 //!
-//! 本地代理模式（LocalProxy）通过 reqwest::Proxy 让所有出站请求走用户指定的
-//! 本地代理（如 Clash 的 http://127.0.0.1:7890），URL 本身不改写。下载目标
-//! host 仍由各模块的 SSRF 校验把关，代理地址只作为隧道出口，不进入目标校验。
+//! 三种代理模式：
+//! - `Direct`：不使用代理，直接访问原始地址。
+//! - `LocalProxy`：用户手动填写本地代理地址（如 Clash 的 http://127.0.0.1:7890）。
+//! - `AutoDetect`：自动检测系统代理——先读环境变量 `HTTPS_PROXY`/`HTTP_PROXY`，
+//!   再读 Windows 注册表系统代理（覆盖 Clash/V2Ray 设置系统代理的场景）。
+//!
+//! URL 本身不改写，代理只作为隧道出口。下载目标 host 仍由各模块的 SSRF 校验把关，
+//! 代理地址（如 127.0.0.1）不进入目标校验。
 
-use crate::models::NetworkRouteConfig;
+use crate::models::{NetworkRouteConfig, NetworkRouteMode};
 use std::time::Duration;
 
 /// 构建带本地代理隧道的 reqwest 客户端。
 ///
 /// - `direct` 模式或未配置 route：返回普通客户端。
-/// - `local_proxy` 模式：显式注入 reqwest::Proxy，让出站请求走用户指定的本地代理。
+/// - `local_proxy` 模式：显式注入 `route.local_proxy_url` 为 reqwest::Proxy。
+/// - `auto_detect` 模式：调 [`detect_system_proxy`] 解析系统代理后注入。
 ///
 /// `follow_redirects` 控制是否自动跟随 HTTP 重定向：metadata 请求（manifest、
 /// GitHub release API、DDNet 官网）传 `true`；资产下载传 `false`，由下载层手动
@@ -36,20 +42,145 @@ pub fn build_routed_client(
         builder = builder.user_agent(user_agent);
     }
 
-    if let Some(route) = route {
-        if let Some(proxy_url) = route.local_proxy_url.as_deref() {
-            let proxy_url = proxy_url.trim();
-            if !proxy_url.is_empty() {
-                let proxy = reqwest::Proxy::all(proxy_url)
-                    .map_err(|error| format!("invalid local proxy url: {error}"))?;
-                builder = builder.proxy(proxy);
-            }
+    if let Some(proxy_url) = resolve_effective_proxy(route) {
+        let proxy_url = proxy_url.trim();
+        if !proxy_url.is_empty() {
+            let proxy = reqwest::Proxy::all(proxy_url)
+                .map_err(|error| format!("invalid local proxy url: {error}"))?;
+            builder = builder.proxy(proxy);
         }
     }
 
     builder
         .build()
         .map_err(|error| format!("failed to build http client: {error}"))
+}
+
+/// 根据路由配置解析实际生效的代理 URL。
+///
+/// - `Direct` 或 `None`：返回 `None`（直连）。
+/// - `LocalProxy`：返回 `route.local_proxy_url`（可能为空）。
+/// - `AutoDetect`：调 [`detect_system_proxy`] 检测系统代理。
+pub fn resolve_effective_proxy(route: Option<&NetworkRouteConfig>) -> Option<String> {
+    let route = route?;
+    match route.mode {
+        NetworkRouteMode::Direct => None,
+        NetworkRouteMode::LocalProxy => route.local_proxy_url.clone(),
+        NetworkRouteMode::AutoDetect => detect_system_proxy(),
+    }
+}
+
+/// 自动检测系统代理：先读环境变量，再读 Windows 注册表。
+///
+/// 检测顺序：
+/// 1. `HTTPS_PROXY` / `https_proxy` / `HTTP_PROXY` / `http_proxy` 环境变量。
+/// 2. Windows 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`
+///    的 `ProxyEnable` + `ProxyServer`（覆盖 Clash/V2Ray 设置系统代理的场景）。
+///
+/// 非 Windows 平台仅走环境变量分支。返回 `http://host:port` 格式字符串。
+pub fn detect_system_proxy() -> Option<String> {
+    if let Some(env_proxy) = detect_env_proxy() {
+        return Some(env_proxy);
+    }
+    #[cfg(windows)]
+    if let Some(reg_proxy) = detect_windows_registry_proxy() {
+        return Some(reg_proxy);
+    }
+    None
+}
+
+/// 从环境变量检测代理：依次尝试 HTTPS_PROXY/https_proxy/HTTP_PROXY/http_proxy。
+fn detect_env_proxy() -> Option<String> {
+    for var in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] {
+        if let Ok(value) = std::env::var(var) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(normalize_proxy_url(trimmed));
+            }
+        }
+    }
+    None
+}
+
+/// 把检测到的代理地址规范化为 reqwest::Proxy 能识别的 `scheme://host:port` 格式。
+///
+/// 用户配置或注册表值可能省略 scheme（如 `127.0.0.1:7890`），reqwest 会拒绝；
+/// 补上 `http://` 前缀。已含 scheme（含 `socks5://`、`http://`、`https://` 等）的
+/// 保持原样。review C5：此前仅检查 `http://`/`https://`，其他 scheme（如
+/// `socks5://127.0.0.1:1080`）会被错误补成 `http://socks5://...`。
+fn normalize_proxy_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("http://{trimmed}")
+    }
+}
+
+/// 解析 Windows 注册表 `ProxyServer` 值为 `host:port`。
+///
+/// `ProxyServer` 格式可能是：
+/// - `host:port`（简单格式，直接用）
+/// - `http=host:port;https=host:port;ftp=host:port;socks=host:port`（分协议格式）
+///
+/// 分协议格式优先取 `https=`，其次 `http=`，最后第一个条目。
+fn parse_windows_proxy_server(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if !trimmed.contains('=') {
+        // 简单格式 host:port
+        return Some(trimmed.to_string());
+    }
+    // 分协议格式：按 ; 分割，优先 https=，其次 http=
+    let mut https_entry: Option<&str> = None;
+    let mut http_entry: Option<&str> = None;
+    let mut first_entry: Option<&str> = None;
+    for entry in trimmed.split(';') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if first_entry.is_none() {
+            first_entry = Some(entry);
+        }
+        if let Some(rest) = entry.strip_prefix("https=") {
+            https_entry = Some(rest);
+        } else if let Some(rest) = entry.strip_prefix("http=") {
+            http_entry = Some(rest);
+        }
+    }
+    let chosen = https_entry.or(http_entry).or(first_entry)?;
+    // first_entry 可能含 `proto=host:port`，取 `=` 后部分
+    let host_port = chosen.split('=').next_back().unwrap_or(chosen);
+    if host_port.is_empty() {
+        None
+    } else {
+        Some(host_port.to_string())
+    }
+}
+
+/// 读取 Windows 注册表系统代理设置。
+///
+/// 仅在 Windows 平台编译。读 `HKCU\...\Internet Settings` 的 `ProxyEnable`
+/// (DWORD) 和 `ProxyServer` (String)。`ProxyEnable=0` 时返回 `None`。
+#[cfg(windows)]
+fn detect_windows_registry_proxy() -> Option<String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let settings = hkcu
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        .ok()?;
+    let proxy_enable: u32 = settings.get_value("ProxyEnable").ok()?;
+    if proxy_enable == 0 {
+        return None;
+    }
+    let proxy_server: String = settings.get_value("ProxyServer").ok()?;
+    let host_port = parse_windows_proxy_server(&proxy_server)?;
+    Some(normalize_proxy_url(&host_port))
 }
 
 #[cfg(test)]

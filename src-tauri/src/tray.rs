@@ -16,6 +16,11 @@ use tauri::{AppHandle, Listener, Manager, PhysicalPosition};
 /// （review issue #5：避免托盘图标依赖 OS 进程退出回收）。
 pub const MAIN_TRAY_ID: &str = "ddnet-manager-main-tray";
 
+/// 构建系统托盘图标并注册托盘事件与菜单 action 监听器。
+///
+/// 在 [`tauri::App`] 初始化期间调用一次：构建固定 id 为 [`MAIN_TRAY_ID`] 的托盘
+/// 图标，绑定左键显示主窗口、右键弹出托盘菜单窗口的事件处理，并监听
+/// `tray-menu-action` 事件分发 show / quit。失败时返回 [`tauri::Error`]。
 pub fn setup_tray(app: &tauri::App) -> Result<(), tauri::Error> {
     let mut tray_builder = TrayIconBuilder::with_id(MAIN_TRAY_ID).tooltip("DDNet Manager");
     if let Some(icon) = app.default_window_icon() {

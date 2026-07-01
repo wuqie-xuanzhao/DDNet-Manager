@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use super::{
-    build_update_asset, normalize_release_version, parse_expanded_assets_digests,
-    parse_github_sha256_digest, select_release_asset, GitHubReleaseAsset, GitHubReleaseCheck,
-    GitHubReleaseResponse, ReleaseSelection,
+    build_update_asset, nightly_version_from_published_at, normalize_release_version,
+    parse_expanded_assets_digests, parse_github_sha256_digest, select_release_asset,
+    GitHubReleaseAsset, GitHubReleaseCheck, GitHubReleaseResponse, ReleaseAssetSelection,
+    ReleaseSelection,
 };
 
 #[test]
@@ -76,7 +77,7 @@ fn build_update_asset_prefers_expanded_assets_digest() {
     let result = build_update_asset(
         ReleaseSelection {
             platform: "windows-x86_64".to_string(),
-            tag_name: "v2.62.4".to_string(),
+            version: "2.62.4".to_string(),
             asset: GitHubReleaseAsset {
                 name: "QmClient-windows.zip".to_string(),
                 browser_download_url: "https://github.com/example/release.zip".to_string(),
@@ -106,7 +107,7 @@ fn missing_digest_returns_manual_release_action() {
     let result = build_update_asset(
         ReleaseSelection {
             platform: "windows-x86_64".to_string(),
-            tag_name: "v2.62.4".to_string(),
+            version: "2.62.4".to_string(),
             asset: GitHubReleaseAsset {
                 name: "QmClient-windows.zip".to_string(),
                 browser_download_url: "https://github.com/example/release.zip".to_string(),
@@ -146,6 +147,8 @@ fn select_release_asset_prefers_expanded_digest_over_missing_api_digest() {
             size: 89531134,
             digest: None,
         }],
+        prerelease: false,
+        published_at: String::new(),
     };
     let mut digests = HashMap::new();
     digests.insert(
@@ -153,9 +156,15 @@ fn select_release_asset_prefers_expanded_digest_over_missing_api_digest() {
         "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
     );
 
-    let result = select_release_asset(entry, "windows-x86_64", release, &digests)
-        .expect("应返回更新检查结果")
-        .expect("应存在匹配资产");
+    let result = select_release_asset(ReleaseAssetSelection {
+        entry,
+        platform: "windows-x86_64",
+        release,
+        version: "2.62.4".to_string(),
+        digests: &digests,
+    })
+    .expect("应返回更新检查结果")
+    .expect("应存在匹配资产");
 
     match result {
         GitHubReleaseCheck::Download { version, asset } => {
@@ -171,4 +180,44 @@ fn select_release_asset_prefers_expanded_digest_over_missing_api_digest() {
             panic!("expanded digest 存在时应返回下载动作，而非降级手动")
         }
     }
+}
+
+#[test]
+fn nightly_version_from_published_at_extracts_date_prefix() {
+    // GitHub API 的 published_at 是 ISO 8601 UTC：2026-06-30T18:46:26Z
+    // nightly 版本号取日期前缀，形成 nightly-2026-06-30，供 is_update_needed fallback 比较
+    assert_eq!(
+        nightly_version_from_published_at("2026-06-30T18:46:26Z"),
+        "nightly-2026-06-30"
+    );
+    assert_eq!(
+        nightly_version_from_published_at("2026-07-01T00:00:00Z"),
+        "nightly-2026-07-01"
+    );
+}
+
+#[test]
+fn nightly_version_from_published_at_handles_short_input() {
+    // 异常兜底：published_at 过短无法取到 10 位日期时返回 nightly-unknown，避免 panic
+    assert_eq!(nightly_version_from_published_at(""), "nightly-unknown");
+    assert_eq!(nightly_version_from_published_at("2026"), "nightly-unknown");
+}
+
+#[test]
+fn nightly_version_from_published_at_rejects_non_date_format() {
+    // 长度够 10 但不符合 YYYY-MM-DD 结构（位置 4/7 非 '-' 或其余位非数字）→ nightly-unknown
+    assert_eq!(
+        nightly_version_from_published_at("garbage-2026-06-30"),
+        "nightly-unknown"
+    );
+    assert_eq!(
+        nightly_version_from_published_at("20260630ABC"),
+        "nightly-unknown"
+    );
+    // 合法日期格式但语义非法（月份 13、日 45）仍会通过——只做格式校验不校验日历合法性，
+    // nightly 版本号只需可比较，无需语义合法的日期。
+    assert_eq!(
+        nightly_version_from_published_at("2026-13-45T00:00:00Z"),
+        "nightly-2026-13-45"
+    );
 }

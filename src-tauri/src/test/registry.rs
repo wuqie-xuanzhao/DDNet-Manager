@@ -1,3 +1,9 @@
+//! ClientRegistry 持久化层测试：安装记录 / 默认客户端 / 下载任务 / 安装历史。
+//!
+//! lint-WARN(C1): 文件约 607 行 > 600，存量；按项目约定 C1 仅在 > 800 行时强制
+//! 拆分，当前规模未触发阈值。registry 行为覆盖面广（CRUD + 默认客户端 + 指纹 +
+//! 历史回滚），拆成多文件会让共享 fixture 重复定义。
+
 use crate::models::{
     AppSettings, ClientCompatibility, ClientConfidence, ClientHealth, ClientInstallSource,
     ClientInstallation, CompatibilityStatus, DownloadJob, DownloadJobStatus, InstallHistoryRecord,
@@ -235,6 +241,8 @@ fn registry_persists_app_settings() {
         exit_game_show_launcher: true,
         close_behavior: "minimize_to_tray".to_string(),
         allow_silent_update: true,
+        extra_trusted_hosts: Vec::new(),
+        mirror_prefixes: Vec::new(),
     };
 
     registry
@@ -264,6 +272,8 @@ fn registry_does_not_persist_github_token_in_app_settings_json() {
         exit_game_show_launcher: true,
         close_behavior: "minimize_to_tray".to_string(),
         allow_silent_update: true,
+        extra_trusted_hosts: Vec::new(),
+        mirror_prefixes: Vec::new(),
     };
 
     registry
@@ -421,6 +431,92 @@ fn registry_records_install_history() {
         .expect("安装历史应读取成功");
 
     assert_eq!(history, vec![record]);
+}
+
+#[test]
+fn registry_install_history_by_id_returns_record() {
+    // 守卫 rollback IPC 反查路径：必须能按 history_id 拿到原始记录，
+    // 否则 rollback_client_installation 无法校验 status / 取 rollback_path。
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
+    let record = InstallHistoryRecord {
+        id: "install-lookup-1".to_string(),
+        job_id: "download-1".to_string(),
+        client_installation_id: "qmclient-main".to_string(),
+        client_id: "qmclient".to_string(),
+        version: "2.62.4".to_string(),
+        asset_url: "https://example.com/QmClient.zip".to_string(),
+        package_kind: "zip".to_string(),
+        status: InstallHistoryStatus::Completed,
+        rollback_path: Some(
+            "D:/Games/QmClient.ddnet-manager-rollback-install-lookup-1".to_string(),
+        ),
+        error: None,
+        completed_at: Some("2026-07-01T00:00:00Z".to_string()),
+    };
+    registry
+        .record_install_history(&record)
+        .expect("安装历史应持久化成功");
+
+    let fetched = registry
+        .install_history_by_id("install-lookup-1")
+        .expect("按 ID 查询历史应成功");
+    assert_eq!(fetched, Some(record));
+
+    let missing = registry
+        .install_history_by_id("install-missing")
+        .expect("查询不存在的历史应返回 Ok(None)");
+    assert!(missing.is_none());
+}
+
+#[test]
+fn registry_update_install_history_status_marks_rolled_back() {
+    // 守卫 rollback 成功后状态更新：必须把 Completed 改为 RolledBack，
+    // 否则前端会继续给已回滚的安装暴露 rollback 入口。
+    let temp_dir = tempfile::tempdir().expect("测试临时目录应创建成功");
+    let db_path = temp_dir.path().join("ddnet-manager.sqlite");
+    let registry = crate::registry::ClientRegistry::open(&db_path).expect("注册表应打开成功");
+    let record = InstallHistoryRecord {
+        id: "install-rollback-1".to_string(),
+        job_id: "download-1".to_string(),
+        client_installation_id: "qmclient-main".to_string(),
+        client_id: "qmclient".to_string(),
+        version: "2.62.4".to_string(),
+        asset_url: "https://example.com/QmClient.zip".to_string(),
+        package_kind: "zip".to_string(),
+        status: InstallHistoryStatus::Completed,
+        rollback_path: Some(
+            "D:/Games/QmClient.ddnet-manager-rollback-install-rollback-1".to_string(),
+        ),
+        error: None,
+        completed_at: Some("2026-07-01T00:00:00Z".to_string()),
+    };
+    registry
+        .record_install_history(&record)
+        .expect("安装历史应持久化成功");
+
+    registry
+        .update_install_history_status("install-rollback-1", &InstallHistoryStatus::RolledBack)
+        .expect("状态更新应成功");
+
+    let updated = registry
+        .install_history_by_id("install-rollback-1")
+        .expect("查询应成功")
+        .expect("记录应存在");
+    assert_eq!(updated.status, InstallHistoryStatus::RolledBack);
+    // 其他字段不应被状态更新改动。
+    assert_eq!(updated.version, "2.62.4");
+    assert_eq!(
+        updated.rollback_path.as_deref(),
+        Some("D:/Games/QmClient.ddnet-manager-rollback-install-rollback-1")
+    );
+
+    // 更新不存在的 history_id 应返回 NotFound。
+    let err = registry
+        .update_install_history_status("install-missing", &InstallHistoryStatus::RolledBack)
+        .expect_err("更新不存在的记录应失败");
+    assert!(matches!(err, crate::error::ManagerError::NotFound(_)));
 }
 
 #[test]

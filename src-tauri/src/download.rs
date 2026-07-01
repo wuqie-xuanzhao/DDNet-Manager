@@ -20,6 +20,8 @@ pub mod extract;
 pub mod install;
 /// 下载 URL 校验、HTTP 请求与流式写入。
 pub mod net;
+/// 多源竞速测速模块（HEAD 淘汰 + Range 测吞吐）。
+pub mod race;
 /// 缓存文件校验与恢复摘要构建。
 pub mod verify;
 
@@ -77,7 +79,7 @@ impl PackageKind {
 
 /// 表示一次下载文件写入请求。
 pub struct DownloadFileRequest<'a> {
-    /// 资产下载地址。
+    /// 资产下载地址（权威原始 GitHub URL，由更新发现层产出）。
     pub asset_url: &'a str,
     /// 缓存文件路径。
     pub cache_path: &'a std::path::Path,
@@ -85,6 +87,10 @@ pub struct DownloadFileRequest<'a> {
     pub expected_size: u64,
     /// 用户配置的网络路由（本地代理）；为空表示直连。
     pub route: Option<&'a crate::models::NetworkRouteConfig>,
+    /// 竞速候选 URL 列表（含原始 URL + 反代 URL）。空或仅含原始 URL 时退化为单源直连。
+    pub candidate_urls: &'a [String],
+    /// 用户显式信任的额外下载 host（如公共反代域名），补充基线白名单。
+    pub extra_hosts: &'a [String],
 }
 
 /// 管理当前进程内的下载任务状态。

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -174,8 +175,15 @@ fn is_install_artifact_name(name: &str) -> bool {
 /// - `<name>.ddnet-manager-replacement[.app]`
 /// - `<name>.ddnet-manager-restore-failed`
 ///
+/// `protected_paths` 中的路径会被跳过，用于保留成功安装后留下的可回滚 rollback 目录。
+/// 调用方应从 `install_history` 表查询所有 `Completed` 记录的 `rollback_path` 组装此集合。
+/// 路径比较统一规范化为正斜杠字符串，兼容 Windows 反斜杠与 history 表中已规范化的存储。
+///
 /// 返回已清理的目录数量。
-pub fn cleanup_stale_install_artifacts(scan_dir: &Path) -> Result<usize, String> {
+pub fn cleanup_stale_install_artifacts(
+    scan_dir: &Path,
+    protected_paths: &HashSet<PathBuf>,
+) -> Result<usize, String> {
     if !scan_dir.exists() {
         return Ok(0);
     }
@@ -186,14 +194,28 @@ pub fn cleanup_stale_install_artifacts(scan_dir: &Path) -> Result<usize, String>
         let entry = entry.map_err(|error| format!("failed to read cleanup entry: {error}"))?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if is_install_artifact_name(&name_str) && entry.path().is_dir() {
-            fs::remove_dir_all(entry.path()).map_err(|error| {
-                format!("failed to remove stale artifact '{}': {error}", name_str)
-            })?;
-            removed += 1;
+        let entry_path = entry.path();
+        if !is_install_artifact_name(&name_str) || !entry_path.is_dir() {
+            continue;
         }
+        if path_is_protected(&entry_path, protected_paths) {
+            continue;
+        }
+        fs::remove_dir_all(&entry_path)
+            .map_err(|error| format!("failed to remove stale artifact '{}': {error}", name_str))?;
+        removed += 1;
     }
     Ok(removed)
+}
+
+/// 判断扫描到的目录路径是否在受保护集合中。
+///
+/// 两边都规范化为正斜杠字符串后比较，兼容 Windows 反斜杠与 history 表中已规范化的存储。
+fn path_is_protected(path: &Path, protected: &HashSet<PathBuf>) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    protected
+        .iter()
+        .any(|p| p.to_string_lossy().replace('\\', "/") == normalized)
 }
 
 /// 启动时清理上次进程崩溃留下的 staging 残留。
@@ -313,6 +335,10 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn empty_protected() -> HashSet<PathBuf> {
+        HashSet::new()
+    }
+
     #[test]
     fn cleanup_stale_install_artifacts_removes_matching_dirs() {
         let base = tempfile::tempdir().expect("temp dir");
@@ -328,7 +354,8 @@ mod tests {
         fs::create_dir_all(&restore_failed).expect("restore-failed");
         fs::create_dir_all(&legit).expect("legit");
 
-        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        let removed =
+            cleanup_stale_install_artifacts(base.path(), &empty_protected()).expect("cleanup");
         assert_eq!(removed, 3);
         assert!(!rollback.exists());
         assert!(!replacement.exists());
@@ -343,7 +370,8 @@ mod tests {
         let replacement_app = base.path().join("DDNet.ddnet-manager-replacement.app");
         fs::create_dir_all(&replacement_app).expect("replacement.app");
 
-        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        let removed =
+            cleanup_stale_install_artifacts(base.path(), &empty_protected()).expect("cleanup");
         assert_eq!(removed, 1);
         assert!(!replacement_app.exists());
     }
@@ -356,7 +384,8 @@ mod tests {
             .path()
             .join("client.ddnet-manager-rollback-install-xyz");
         fs::write(&file_path, "not a dir").expect("file");
-        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        let removed =
+            cleanup_stale_install_artifacts(base.path(), &empty_protected()).expect("cleanup");
         assert_eq!(removed, 0);
         assert!(file_path.exists());
     }
@@ -364,7 +393,8 @@ mod tests {
     #[test]
     fn cleanup_stale_install_artifacts_returns_zero_for_missing_dir() {
         let missing = PathBuf::from("C:\\nonexistent-ddnet-test-path-12345");
-        let removed = cleanup_stale_install_artifacts(&missing).expect("cleanup");
+        let removed =
+            cleanup_stale_install_artifacts(&missing, &empty_protected()).expect("cleanup");
         assert_eq!(removed, 0);
     }
 
@@ -379,11 +409,64 @@ mod tests {
         fs::create_dir_all(&lookalike_replaced_dir).expect("lookalike tutorial");
         fs::create_dir_all(&lookalike_prefix_only).expect("empty suffix");
 
-        let removed = cleanup_stale_install_artifacts(base.path()).expect("cleanup");
+        let removed =
+            cleanup_stale_install_artifacts(base.path(), &empty_protected()).expect("cleanup");
         assert_eq!(removed, 0, "no lookalike user dir should be removed");
         assert!(lookalike_rollback_notes.exists());
         assert!(lookalike_replaced_dir.exists());
         assert!(lookalike_prefix_only.exists());
+    }
+
+    #[test]
+    fn cleanup_stale_install_artifacts_preserves_protected_rollback_dirs() {
+        // 守卫：成功安装后保留的 rollback 目录不应被 cleanup 清掉，
+        // 否则用户主动 rollback IPC 重启后失效（缺口3 核心）。
+        let base = tempfile::tempdir().expect("temp dir");
+        let rollback_kept = base
+            .path()
+            .join("client.ddnet-manager-rollback-install-keep");
+        let rollback_stale = base
+            .path()
+            .join("client.ddnet-manager-rollback-install-stale");
+        let replacement = base.path().join("client.ddnet-manager-replacement");
+        fs::create_dir_all(&rollback_kept).expect("rollback-keep");
+        fs::create_dir_all(&rollback_stale).expect("rollback-stale");
+        fs::create_dir_all(&replacement).expect("replacement");
+
+        let mut protected = HashSet::new();
+        protected.insert(rollback_kept.clone());
+
+        let removed = cleanup_stale_install_artifacts(base.path(), &protected).expect("cleanup");
+        assert_eq!(removed, 2, "stale rollback + replacement 应被清理");
+        assert!(
+            rollback_kept.exists(),
+            "protected rollback 必须保留供 IPC rollback 使用"
+        );
+        assert!(!rollback_stale.exists());
+        assert!(!replacement.exists());
+    }
+
+    #[test]
+    fn cleanup_stale_install_artifacts_protected_path_normalizes_backslash() {
+        // history 表中 rollback_path 存储为正斜杠（install_history_record 用 replace 规范化），
+        // 但扫描时 entry.path() 在 Windows 上是反斜杠。两边都必须规范化后比较。
+        let base = tempfile::tempdir().expect("temp dir");
+        let rollback = base
+            .path()
+            .join("client.ddnet-manager-rollback-install-norm");
+        fs::create_dir_all(&rollback).expect("rollback");
+
+        // 模拟 history 表中的正斜杠存储
+        let protected_str = rollback.to_string_lossy().replace('\\', "/");
+        let mut protected = HashSet::new();
+        protected.insert(PathBuf::from(protected_str));
+
+        let removed = cleanup_stale_install_artifacts(base.path(), &protected).expect("cleanup");
+        assert_eq!(
+            removed, 0,
+            "正斜杠形式 protected 路径应能匹配反斜杠扫描结果"
+        );
+        assert!(rollback.exists());
     }
 
     #[test]
