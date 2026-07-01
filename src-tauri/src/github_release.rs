@@ -1,4 +1,5 @@
 use crate::client_catalog::ClientCatalogEntry;
+use crate::error::ManagerError;
 use crate::models::{NetworkRouteConfig, UpdateAsset};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -78,7 +79,7 @@ pub async fn fetch_latest_github_release(
     owner: &str,
     repo: &str,
     route: Option<&NetworkRouteConfig>,
-) -> Result<GitHubReleaseResponse, String> {
+) -> Result<GitHubReleaseResponse, ManagerError> {
     let url = format!("{GITHUB_API_BASE}/{owner}/{repo}/releases/latest");
     let client = crate::network_route::build_routed_client(
         route,
@@ -92,10 +93,10 @@ pub async fn fetch_latest_github_release(
         .send()
         .await
         .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("failed to fetch GitHub release: {error}"))?
+        .map_err(|error| ManagerError::ManifestUnreachable(format!("failed to fetch GitHub release: {error}")))?
         .json::<GitHubReleaseResponse>()
         .await
-        .map_err(|error| format!("failed to parse GitHub release: {error}"))?;
+        .map_err(|error| ManagerError::Internal(format!("failed to parse GitHub release: {error}")))?;
 
     Ok(response)
 }
@@ -109,7 +110,7 @@ pub async fn fetch_github_release_by_tag(
     repo: &str,
     tag: &str,
     route: Option<&NetworkRouteConfig>,
-) -> Result<GitHubReleaseResponse, String> {
+) -> Result<GitHubReleaseResponse, ManagerError> {
     let url = format!("{GITHUB_API_BASE}/{owner}/{repo}/releases/tags/{tag}");
     let client = crate::network_route::build_routed_client(
         route,
@@ -123,10 +124,10 @@ pub async fn fetch_github_release_by_tag(
         .send()
         .await
         .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("failed to fetch GitHub release by tag: {error}"))?
+        .map_err(|error| ManagerError::ManifestUnreachable(format!("failed to fetch GitHub release by tag: {error}")))?
         .json::<GitHubReleaseResponse>()
         .await
-        .map_err(|error| format!("failed to parse GitHub release: {error}"))?;
+        .map_err(|error| ManagerError::Internal(format!("failed to parse GitHub release: {error}")))?;
 
     Ok(response)
 }
@@ -165,7 +166,7 @@ pub async fn check_release_by_channel(
     platform: &str,
     channel: &str,
     route: Option<&NetworkRouteConfig>,
-) -> Result<Option<GitHubReleaseCheck>, String> {
+) -> Result<Option<GitHubReleaseCheck>, ManagerError> {
     let crate::client_catalog::UpdateSourceDescriptor::GithubRelease {
         owner,
         repo,
@@ -194,7 +195,9 @@ pub async fn check_release_by_channel(
         other => {
             // fail-fast：未知 channel 直接报错，避免静默走 stable 掩盖前端契约违规。
             // 当前前端只产生 "stable"/"nightly"（UpdatePanel.tsx），其他值属于调用方 bug。
-            return Err(format!("unsupported channel: {other}"));
+            return Err(ManagerError::Internal(format!(
+                "unsupported channel: {other}"
+            )));
         }
     };
 
@@ -222,7 +225,7 @@ struct ReleaseAssetSelection<'a> {
 
 fn select_release_asset(
     selection: ReleaseAssetSelection<'_>,
-) -> Result<Option<GitHubReleaseCheck>, String> {
+) -> Result<Option<GitHubReleaseCheck>, ManagerError> {
     let patterns = asset_patterns_for_platform(selection.entry, selection.platform);
     if patterns.is_empty() {
         return Ok(None);
@@ -250,7 +253,7 @@ fn select_release_asset(
 fn build_update_asset(
     selection: ReleaseSelection,
     digests: &HashMap<String, String>,
-) -> Result<Option<GitHubReleaseCheck>, String> {
+) -> Result<Option<GitHubReleaseCheck>, ManagerError> {
     // version 已由调用方规范化（stable: normalize_release_version, nightly: nightly_version_from_published_at）。
     let version = selection.version;
     // 优先用 expanded_assets 的 digest（标准 release API 默认不返回），回退到 asset.digest
@@ -357,7 +360,7 @@ async fn fetch_expanded_assets_digests(
     repo: &str,
     tag: &str,
     route: Option<&NetworkRouteConfig>,
-) -> Result<HashMap<String, String>, String> {
+) -> Result<HashMap<String, String>, ManagerError> {
     let url = format!("https://github.com/{owner}/{repo}/releases/expanded_assets/{tag}");
     let client = crate::network_route::build_routed_client(
         route,
@@ -371,10 +374,10 @@ async fn fetch_expanded_assets_digests(
         .send()
         .await
         .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("failed to fetch expanded-assets: {error}"))?
+        .map_err(|error| ManagerError::ManifestUnreachable(format!("failed to fetch expanded-assets: {error}")))?
         .text()
         .await
-        .map_err(|error| format!("failed to read expanded-assets body: {error}"))?;
+        .map_err(|error| ManagerError::Internal(format!("failed to read expanded-assets body: {error}")))?;
 
     Ok(parse_expanded_assets_digests(&html))
 }

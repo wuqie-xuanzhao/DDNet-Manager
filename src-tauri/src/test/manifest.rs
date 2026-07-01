@@ -55,7 +55,10 @@ fn rejects_zero_schema_version() {
     )
     .expect_err("schema_version 为 0 应被拒绝");
 
-    assert_eq!(error, "manifest schema_version must be greater than 0");
+    assert_eq!(
+        error.to_string(),
+        "manifest schema_version must be greater than 0"
+    );
 }
 
 #[test]
@@ -68,7 +71,10 @@ fn rejects_empty_clients() {
     )
     .expect_err("空 clients 应被拒绝");
 
-    assert_eq!(error, "manifest must contain at least one client");
+    assert_eq!(
+        error.to_string(),
+        "manifest must contain at least one client"
+    );
 }
 
 #[test]
@@ -76,7 +82,7 @@ fn prefixes_invalid_json_errors() {
     let error = parse_manifest("{").expect_err("非法 JSON 应被拒绝");
 
     assert!(
-        error.starts_with("invalid manifest json:"),
+        error.to_string().starts_with("invalid manifest json:"),
         "unexpected error: {error}"
     );
 }
@@ -93,7 +99,7 @@ fn build_manifest_url_rejects_untrusted_host() {
     let error = build_manifest_url("https://example.com/manifest.json")
         .expect_err("非 allowlist host 应被拒绝");
 
-    assert_eq!(error, "manifest url host is not trusted");
+    assert_eq!(error.to_string(), "manifest url host is not trusted");
 }
 
 #[test]
@@ -101,7 +107,7 @@ fn build_manifest_url_rejects_http_url() {
     let error =
         build_manifest_url("http://example.com/manifest.json").expect_err("HTTP URL 应被拒绝");
 
-    assert_eq!(error, "manifest url must use https");
+    assert_eq!(error.to_string(), "manifest url must use https");
 }
 
 #[test]
@@ -148,7 +154,7 @@ fn build_manifest_url_still_rejects_public_http_when_local_smoke_enabled() {
         let error = build_manifest_url("http://example.com/manifest.json")
             .expect_err("local smoke 开关不应放通公网 HTTP manifest 地址");
 
-        assert_eq!(error, "manifest url must use https");
+        assert_eq!(error.to_string(), "manifest url must use https");
     });
 }
 
@@ -194,7 +200,10 @@ fn rejects_empty_assets() {
     )
     .expect_err("空 assets 应被拒绝");
 
-    assert_eq!(error, "manifest client assets must not be empty");
+    assert_eq!(
+        error.to_string(),
+        "manifest client assets must not be empty"
+    );
 }
 
 #[test]
@@ -222,7 +231,10 @@ fn rejects_invalid_sha256() {
             )
             .expect_err("非法 sha256 应被拒绝");
 
-    assert_eq!(error, "manifest asset sha256 must be 64 ASCII hex chars");
+    assert_eq!(
+        error.to_string(),
+        "manifest asset sha256 must be 64 ASCII hex chars"
+    );
 }
 
 #[test]
@@ -250,7 +262,7 @@ fn rejects_http_asset_url() {
             )
             .expect_err("HTTP asset_url 应被拒绝");
 
-    assert_eq!(error, "manifest url must use https");
+    assert_eq!(error.to_string(), "manifest url must use https");
 }
 
 #[test]
@@ -310,7 +322,7 @@ fn rejects_untrusted_asset_url() {
     );
     let error = parse_manifest(&input).expect_err("非 allowlist asset_url 应被拒绝");
 
-    assert_eq!(error, "manifest asset_url host is not trusted");
+    assert_eq!(error.to_string(), "manifest asset_url host is not trusted");
 }
 
 #[test]
@@ -318,7 +330,7 @@ fn rejects_empty_client_id() {
     let input = valid_manifest().replace(r#""client_id": "qmclient""#, r#""client_id": """#);
     let error = parse_manifest(&input).expect_err("空 client_id 应被拒绝");
 
-    assert_eq!(error, "manifest client_id must not be empty");
+    assert_eq!(error.to_string(), "manifest client_id must not be empty");
 }
 
 #[test]
@@ -326,7 +338,10 @@ fn rejects_empty_channel() {
     let input = valid_manifest().replace(r#""channel": "stable""#, r#""channel": """#);
     let error = parse_manifest(&input).expect_err("空 channel 应被拒绝");
 
-    assert_eq!(error, "manifest client channel must not be empty");
+    assert_eq!(
+        error.to_string(),
+        "manifest client channel must not be empty"
+    );
 }
 
 #[test]
@@ -334,7 +349,10 @@ fn rejects_empty_version() {
     let input = valid_manifest().replace(r#""version": "18.9.1""#, r#""version": """#);
     let error = parse_manifest(&input).expect_err("空 version 应被拒绝");
 
-    assert_eq!(error, "manifest client version must not be empty");
+    assert_eq!(
+        error.to_string(),
+        "manifest client version must not be empty"
+    );
 }
 
 #[test]
@@ -345,7 +363,10 @@ fn rejects_empty_release_notes() {
     );
     let error = parse_manifest(&input).expect_err("空 release_notes 应被拒绝");
 
-    assert_eq!(error, "manifest client release_notes must not be empty");
+    assert_eq!(
+        error.to_string(),
+        "manifest client release_notes must not be empty"
+    );
 }
 
 #[test]
@@ -353,7 +374,10 @@ fn rejects_empty_platform() {
     let input = valid_manifest().replace(r#""platform": "windows-x86_64""#, r#""platform": """#);
     let error = parse_manifest(&input).expect_err("空 platform 应被拒绝");
 
-    assert_eq!(error, "manifest asset platform must not be empty");
+    assert_eq!(
+        error.to_string(),
+        "manifest asset platform must not be empty"
+    );
 }
 
 #[test]
@@ -364,7 +388,7 @@ fn rejects_empty_asset_url() {
     );
     let error = parse_manifest(&input).expect_err("空 asset_url 应被拒绝");
 
-    assert_eq!(error, "manifest asset_url must not be empty");
+    assert_eq!(error.to_string(), "manifest asset_url must not be empty");
 }
 
 #[test]
@@ -372,7 +396,10 @@ fn rejects_zero_asset_size() {
     let input = valid_manifest().replace(r#""size": 981467136"#, r#""size": 0"#);
     let error = parse_manifest(&input).expect_err("size 为 0 应被拒绝");
 
-    assert_eq!(error, "manifest asset size must be greater than 0");
+    assert_eq!(
+        error.to_string(),
+        "manifest asset size must be greater than 0"
+    );
 }
 
 fn valid_manifest() -> String {

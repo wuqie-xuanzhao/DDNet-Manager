@@ -179,9 +179,7 @@ async fn prepare_update_download_job(
             }),
         ));
     }
-    let downloads_dir = app_cache_dir(app)
-        .map_err(ManagerError::Internal)?
-        .join("downloads");
+    let downloads_dir = app_cache_dir(app)?.join("downloads");
     let mut job =
         crate::download::create_download_job(&client_installation_id, &update, &downloads_dir);
     job.status = DownloadJobStatus::Downloading;
@@ -192,11 +190,11 @@ async fn prepare_update_download_job(
 }
 
 /// 返回调用方显式配置的自维护 manifest 地址，未配置时拒绝继续请求。
-pub(crate) fn required_manifest_url(input: Option<&str>) -> Result<&str, String> {
+pub(crate) fn required_manifest_url(input: Option<&str>) -> Result<&str, ManagerError> {
     input
         .map(str::trim)
         .filter(|url| !url.is_empty())
-        .ok_or_else(|| "manifest url is not configured".to_string())
+        .ok_or_else(|| ManagerError::Internal("manifest url is not configured".to_string()))
 }
 
 /// 判断当前更新检查请求是否必须显式提供 manifest URL。
@@ -205,20 +203,22 @@ pub(crate) fn request_requires_manifest_url(request: &CheckClientUpdateRequest) 
 }
 
 /// 返回本地 smoke 结果文件路径，要求显式通过环境变量配置。
-pub(crate) fn required_local_smoke_result_path() -> Result<PathBuf, String> {
+pub(crate) fn required_local_smoke_result_path() -> Result<PathBuf, ManagerError> {
     std::env::var(LOCAL_SMOKE_RESULT_PATH_ENV)
         .ok()
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
-        .ok_or_else(|| "local smoke result path is not configured".to_string())
+        .ok_or_else(|| {
+            ManagerError::Internal("local smoke result path is not configured".to_string())
+        })
 }
 
 /// 返回本地 smoke 结果写入使用的同目录临时文件路径。
-pub(crate) fn local_smoke_result_temp_path(output_path: &Path) -> Result<PathBuf, String> {
-    let file_name = output_path
-        .file_name()
-        .ok_or_else(|| "local smoke result path must include a file name".to_string())?;
+pub(crate) fn local_smoke_result_temp_path(output_path: &Path) -> Result<PathBuf, ManagerError> {
+    let file_name = output_path.file_name().ok_or_else(|| {
+        ManagerError::Internal("local smoke result path must include a file name".to_string())
+    })?;
     let mut temp_file_name = file_name.to_os_string();
     temp_file_name.push(".tmp");
 
@@ -228,9 +228,11 @@ pub(crate) fn local_smoke_result_temp_path(output_path: &Path) -> Result<PathBuf
 /// 将本地 smoke 验收结果写入 JSON 文件，仅允许在已启用 local smoke 时调用。
 pub(crate) fn write_local_smoke_result_report(
     result: &crate::models::LocalSmokeResultReport,
-) -> Result<(), String> {
+) -> Result<(), ManagerError> {
     if !crate::local_smoke::is_local_smoke_enabled() {
-        return Err("local smoke reporting is not enabled".to_string());
+        return Err(ManagerError::Internal(
+            "local smoke reporting is not enabled".to_string(),
+        ));
     }
 
     let output_path = required_local_smoke_result_path()?;
@@ -238,20 +240,22 @@ pub(crate) fn write_local_smoke_result_report(
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
     {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create local smoke result dir: {error}"))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            ManagerError::Internal(format!("failed to create local smoke result dir: {error}"))
+        })?;
     }
 
-    let payload = serde_json::to_string_pretty(result)
-        .map_err(|error| format!("failed to serialize local smoke result: {error}"))?;
+    let payload = serde_json::to_string_pretty(result).map_err(|error| {
+        ManagerError::Internal(format!("failed to serialize local smoke result: {error}"))
+    })?;
     let temp_path = local_smoke_result_temp_path(&output_path)?;
     fs::write(&temp_path, payload).map_err(|error| {
         let _ = fs::remove_file(&temp_path);
-        format!("failed to write local smoke result: {error}")
+        ManagerError::Internal(format!("failed to write local smoke result: {error}"))
     })?;
     fs::rename(&temp_path, &output_path).map_err(|error| {
         let _ = fs::remove_file(&temp_path);
-        format!("failed to replace local smoke result: {error}")
+        ManagerError::Internal(format!("failed to replace local smoke result: {error}"))
     })
 }
 
@@ -298,7 +302,7 @@ struct DownloadTaskRuntime {
 /// 仍同步更新 manager 内存状态（轻量），但 sqlite 持久化 + IPC emit 受节流保护。
 /// 最后一个 chunk 的 emit 由 download-completed 事件兜底（即使这里跳过，下载完成
 /// 后 handle_download_success 仍会 emit 一次最终状态）。
-async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> {
+async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), ManagerError> {
     let mut throttle = DownloadThrottle::new(runtime.job.size);
     // 组装竞速候选 URL：原始 GitHub URL + 反代 URL（反代前缀已 resolve）
     let candidate_urls =
@@ -342,7 +346,6 @@ async fn run_download_loop(runtime: &DownloadTaskRuntime) -> Result<(), String> 
             runtime.job.size,
             &sink,
         )
-        .map_err(|error| error.to_string())
     })
 }
 
@@ -390,7 +393,7 @@ impl DownloadThrottle {
 }
 
 /// 处理下载/校验结果：成功切 Verified + emit completed；失败切 Failed + emit failed。
-async fn handle_download_result(runtime: &DownloadTaskRuntime, result: Result<(), String>) {
+async fn handle_download_result(runtime: &DownloadTaskRuntime, result: Result<(), ManagerError>) {
     match result {
         Ok(()) => handle_download_success(runtime).await,
         Err(error) => handle_download_failure(runtime, error).await,
@@ -431,7 +434,7 @@ async fn handle_download_success(runtime: &DownloadTaskRuntime) {
     }
 }
 
-async fn handle_download_failure(runtime: &DownloadTaskRuntime, error: String) {
+async fn handle_download_failure(runtime: &DownloadTaskRuntime, error: ManagerError) {
     let job_id = runtime.job.id.clone();
     // 取消导致的失败不写 Failed 状态：cancel 路径已经把 status=Canceled 持久化。
     if runtime
@@ -444,7 +447,7 @@ async fn handle_download_failure(runtime: &DownloadTaskRuntime, error: String) {
     let _ = std::fs::remove_file(&runtime.cache_path);
     if let Ok(job) = runtime.manager.update(&job_id, |job| {
         job.status = DownloadJobStatus::Failed;
-        job.error = Some(error);
+        job.error = Some(error.to_string());
     }) {
         persist_download_job_snapshot(&runtime.registry, &job);
         let _ = runtime.app.emit_to("main", "download-failed", job);
@@ -502,14 +505,11 @@ pub(crate) fn enter_installing_snapshot(
     job_id: &str,
 ) -> Result<DownloadJob, ManagerError> {
     let previous = manager
-        .get(job_id)
-        .map_err(ManagerError::Internal)?
+        .get(job_id)?
         .ok_or_else(|| ManagerError::NotFound(format!("download job not found: {job_id}")))?;
-    let job = manager
-        .update(job_id, |job| {
-            job.status = DownloadJobStatus::Installing;
-        })
-        .map_err(ManagerError::Internal)?;
+    let job = manager.update(job_id, |job| {
+        job.status = DownloadJobStatus::Installing;
+    })?;
     if let Err(error) = registry.upsert_download_job(&job) {
         let rollback_result = manager.update(job_id, |job| {
             *job = previous;
@@ -530,12 +530,10 @@ pub(crate) fn complete_download_job_snapshot(
     registry: &ClientRegistry,
     job_id: &str,
 ) -> Result<DownloadJob, ManagerError> {
-    let job = manager
-        .update(job_id, |job| {
-            job.status = DownloadJobStatus::Completed;
-            job.error = None;
-        })
-        .map_err(ManagerError::Internal)?;
+    let job = manager.update(job_id, |job| {
+        job.status = DownloadJobStatus::Completed;
+        job.error = None;
+    })?;
     registry.upsert_download_job(&job)?;
     Ok(job)
 }
@@ -546,15 +544,13 @@ pub(crate) fn load_download_job_snapshot(
     registry: &ClientRegistry,
     job_id: &str,
 ) -> Result<Option<DownloadJob>, ManagerError> {
-    if let Some(job) = manager.get(job_id).map_err(ManagerError::Internal)? {
+    if let Some(job) = manager.get(job_id)? {
         return Ok(Some(job));
     }
     let Some(job) = registry.download_job_by_id(job_id)? else {
         return Ok(None);
     };
-    manager
-        .insert(job.clone())
-        .map_err(ManagerError::Internal)?;
+    manager.insert(job.clone())?;
     Ok(Some(job))
 }
 
@@ -565,9 +561,7 @@ fn list_download_job_recoveries_from_registry(
     registry
         .list_download_jobs(client_installation_id)?
         .into_iter()
-        .map(|job| {
-            crate::download::build_download_job_recovery(&job).map_err(ManagerError::Internal)
-        })
+        .map(|job| crate::download::build_download_job_recovery(&job))
         .collect()
 }
 

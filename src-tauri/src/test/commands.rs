@@ -82,11 +82,15 @@ fn test_download_job(id: &str, status: DownloadJobStatus, cache_path: String) ->
 #[test]
 fn required_manifest_url_rejects_missing_or_blank_input() {
     assert_eq!(
-        required_manifest_url(None).expect_err("缺少 manifest 地址应被拒绝"),
+        required_manifest_url(None)
+            .expect_err("缺少 manifest 地址应被拒绝")
+            .to_string(),
         "manifest url is not configured"
     );
     assert_eq!(
-        required_manifest_url(Some("   ")).expect_err("空 manifest 地址应被拒绝"),
+        required_manifest_url(Some("   "))
+            .expect_err("空 manifest 地址应被拒绝")
+            .to_string(),
         "manifest url is not configured"
     );
 }
@@ -108,14 +112,18 @@ fn required_manifest_url_trims_configured_input() {
 fn required_local_smoke_result_path_rejects_missing_or_blank_input() {
     with_local_smoke_result_path_env(None, || {
         assert_eq!(
-            required_local_smoke_result_path().expect_err("缺少结果路径应被拒绝"),
+            required_local_smoke_result_path()
+                .expect_err("缺少结果路径应被拒绝")
+                .to_string(),
             "local smoke result path is not configured"
         );
     });
 
     with_local_smoke_result_path_env(Some("   "), || {
         assert_eq!(
-            required_local_smoke_result_path().expect_err("空结果路径应被拒绝"),
+            required_local_smoke_result_path()
+                .expect_err("空结果路径应被拒绝")
+                .to_string(),
             "local smoke result path is not configured"
         );
     });
@@ -144,7 +152,9 @@ fn write_local_smoke_result_report_requires_debug_local_smoke_gate() {
     with_local_smoke_result_path_env(Some(&output_path.to_string_lossy()), || {
         crate::local_smoke::with_local_smoke_test_env(false, || {
             assert_eq!(
-                write_local_smoke_result_report(&report).expect_err("未开启 local smoke 应被拒绝"),
+                write_local_smoke_result_report(&report)
+                    .expect_err("未开启 local smoke 应被拒绝")
+                    .to_string(),
                 "local smoke reporting is not enabled"
             );
         });

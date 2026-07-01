@@ -8,6 +8,7 @@
 //! - [`net`]：下载 URL 校验、HTTP 重定向跟随、流式写入与缓存清理。
 //! - [`install`]：客户端目录替换、回滚与残留清理。
 
+use crate::error::ManagerError;
 use crate::models::{ClientUpdateCheck, DownloadJob, DownloadJobStatus};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -109,11 +110,11 @@ const MAX_CONCURRENT_DOWNLOADS: usize = 3;
 
 impl DownloadManager {
     /// 插入新的下载任务，若活跃下载数已达上限则拒绝。
-    pub fn insert(&self, job: DownloadJob) -> Result<(), String> {
+    pub fn insert(&self, job: DownloadJob) -> Result<(), ManagerError> {
         let mut jobs = self
             .jobs
             .lock()
-            .map_err(|_| "download job state is poisoned".to_string())?;
+            .map_err(|_| ManagerError::Internal("download job state is poisoned".to_string()))?;
         let active_count = jobs
             .values()
             .filter(|job| {
@@ -124,40 +125,40 @@ impl DownloadManager {
             })
             .count();
         if active_count >= MAX_CONCURRENT_DOWNLOADS {
-            return Err(format!(
+            return Err(ManagerError::Internal(format!(
                 "concurrent download limit reached ({MAX_CONCURRENT_DOWNLOADS}); wait for an active download to finish"
-            ));
+            )));
         }
         self.cancellers
             .lock()
-            .map_err(|_| "download job state is poisoned".to_string())?
+            .map_err(|_| ManagerError::Internal("download job state is poisoned".to_string()))?
             .insert(job.id.clone(), CancellationToken::new());
         jobs.insert(job.id.clone(), job);
         Ok(())
     }
 
     /// 读取指定下载任务。
-    pub fn get(&self, job_id: &str) -> Result<Option<DownloadJob>, String> {
+    pub fn get(&self, job_id: &str) -> Result<Option<DownloadJob>, ManagerError> {
         Ok(self
             .jobs
             .lock()
-            .map_err(|_| "download job state is poisoned".to_string())?
+            .map_err(|_| ManagerError::Internal("download job state is poisoned".to_string()))?
             .get(job_id)
             .cloned())
     }
 
     /// 更新指定下载任务。
-    pub fn update<F>(&self, job_id: &str, update: F) -> Result<DownloadJob, String>
+    pub fn update<F>(&self, job_id: &str, update: F) -> Result<DownloadJob, ManagerError>
     where
         F: FnOnce(&mut DownloadJob),
     {
         let mut jobs = self
             .jobs
             .lock()
-            .map_err(|_| "download job state is poisoned".to_string())?;
+            .map_err(|_| ManagerError::Internal("download job state is poisoned".to_string()))?;
         let job = jobs
             .get_mut(job_id)
-            .ok_or_else(|| format!("download job not found: {job_id}"))?;
+            .ok_or_else(|| ManagerError::NotFound(format!("download job not found: {job_id}")))?;
         update(job);
         Ok(job.clone())
     }
@@ -165,7 +166,7 @@ impl DownloadManager {
     /// 标记下载任务已取消，并触发对应的 [`CancellationToken`]。
     ///
     /// 取消信号通过 `select!` 立即唤醒下载循环，无需等待下一个 chunk 边界。
-    pub fn cancel(&self, job_id: &str) -> Result<DownloadJob, String> {
+    pub fn cancel(&self, job_id: &str) -> Result<DownloadJob, ManagerError> {
         if let Ok(cancellers) = self.cancellers.lock() {
             if let Some(token) = cancellers.get(job_id) {
                 token.cancel();
@@ -209,8 +210,7 @@ impl DownloadManager {
                     Some("application exited before download or install completed".to_string());
                 registry.upsert_download_job(&job)?;
             }
-            self.insert_bypass_limit(job.clone())
-                .map_err(crate::error::ManagerError::Internal)?;
+            self.insert_bypass_limit(job.clone())?;
             recovered.push(job);
         }
         Ok(recovered)
@@ -221,15 +221,15 @@ impl DownloadManager {
     /// 仅用于从注册表恢复已持久化的任务或测试场景；新发起的下载必须通过
     /// [`insert`](Self::insert) 方法接受并发限制检查。同时为恢复的任务附带一个
     /// 新的 [`CancellationToken`]，避免后续 cancel 时找不到令牌。
-    pub fn insert_bypass_limit(&self, job: DownloadJob) -> Result<(), String> {
+    pub fn insert_bypass_limit(&self, job: DownloadJob) -> Result<(), ManagerError> {
         self.cancellers
             .lock()
-            .map_err(|_| "download job state is poisoned".to_string())?
+            .map_err(|_| ManagerError::Internal("download job state is poisoned".to_string()))?
             .entry(job.id.clone())
             .or_insert_with(CancellationToken::new);
         self.jobs
             .lock()
-            .map_err(|_| "download job state is poisoned".to_string())?
+            .map_err(|_| ManagerError::Internal("download job state is poisoned".to_string()))?
             .insert(job.id.clone(), job);
         Ok(())
     }
@@ -278,13 +278,13 @@ pub fn package_kind_for_asset_url(asset_url: &str) -> PackageKind {
 }
 
 /// 校验当前自动安装链路是否支持该安装包类型。
-pub fn auto_install_guard(package_kind: PackageKind) -> Result<(), String> {
+pub fn auto_install_guard(package_kind: PackageKind) -> Result<(), ManagerError> {
     match package_kind {
         PackageKind::Zip | PackageKind::TarXz | PackageKind::Dmg => Ok(()),
-        PackageKind::Unknown => Err(
+        PackageKind::Unknown => Err(ManagerError::Internal(
             "automatic install only supports .zip, .tar.xz, and .dmg packages; unknown package type requires manual install"
                 .to_string(),
-        ),
+        )),
     }
 }
 

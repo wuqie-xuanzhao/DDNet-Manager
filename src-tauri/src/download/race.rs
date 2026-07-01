@@ -11,6 +11,7 @@
 //! 测速字节复用为 `.partial` 首段（零浪费）：竞速胜出源返回的 `head_start`
 //! 字节由下载层写入 `.part`，正式下载从该 offset 用 Range 续传。
 
+use crate::error::ManagerError;
 use tokio_util::sync::CancellationToken;
 
 /// 竞速测速下载前 N 字节用于测吞吐，复用为 `.partial` 首段。
@@ -43,19 +44,23 @@ pub async fn select_best_source(
     candidate_urls: &[String],
     expected_size: u64,
     cancel: Option<&CancellationToken>,
-) -> Result<RaceWinner, String> {
+) -> Result<RaceWinner, ManagerError> {
     if candidate_urls.is_empty() {
-        return Err("no candidate urls provided for racing".to_string());
+        return Err(ManagerError::Internal(
+            "no candidate urls provided for racing".to_string(),
+        ));
     }
     if let Some(token) = cancel {
         if token.is_cancelled() {
-            return Err("download canceled".to_string());
+            return Err(ManagerError::Internal("download canceled".to_string()));
         }
     }
 
     let alive = stage1_head_probe(client, candidate_urls, expected_size, cancel).await?;
     if alive.is_empty() {
-        return Err("all candidate sources unreachable or rejected by head probe".to_string());
+        return Err(ManagerError::Internal(
+            "all candidate sources unreachable or rejected by head probe".to_string(),
+        ));
     }
 
     stage2_range_race(client, &alive, cancel).await
@@ -71,7 +76,7 @@ async fn stage1_head_probe(
     candidate_urls: &[String],
     expected_size: u64,
     cancel: Option<&CancellationToken>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, ManagerError> {
     let mut set = tokio::task::JoinSet::new();
     for url in candidate_urls {
         let url = url.clone();
@@ -91,7 +96,7 @@ async fn stage1_head_probe(
                     biased;
                     _ = token.cancelled() => {
                         set.abort_all();
-                        return Err("download canceled".to_string());
+                        return Err(ManagerError::Internal("download canceled".to_string()));
                     }
                     result = set.join_next() => result,
                 }
@@ -101,7 +106,8 @@ async fn stage1_head_probe(
         let Some(join_result) = join_result else {
             break;
         };
-        let (url, ok) = join_result.map_err(|error| format!("head probe task failed: {error}"))?;
+        let (url, ok) = join_result
+            .map_err(|error| ManagerError::Internal(format!("head probe task failed: {error}")))?;
         if ok {
             alive.push(url);
         }
@@ -167,7 +173,7 @@ async fn stage2_range_race(
     client: &reqwest::Client,
     alive_urls: &[String],
     cancel: Option<&CancellationToken>,
-) -> Result<RaceWinner, String> {
+) -> Result<RaceWinner, ManagerError> {
     let mut set = tokio::task::JoinSet::new();
     for url in alive_urls {
         let url = url.clone();
@@ -187,7 +193,7 @@ async fn stage2_range_race(
                     biased;
                     _ = token.cancelled() => {
                         set.abort_all();
-                        return Err("download canceled".to_string());
+                        return Err(ManagerError::Internal("download canceled".to_string()));
                     }
                     result = set.join_next() => result,
                 }
@@ -197,8 +203,8 @@ async fn stage2_range_race(
         let Some(join_result) = join_result else {
             break;
         };
-        let (url, result) =
-            join_result.map_err(|error| format!("range probe task failed: {error}"))?;
+        let (url, result) = join_result
+            .map_err(|error| ManagerError::Internal(format!("range probe task failed: {error}")))?;
         match result {
             Ok(bytes) => {
                 // 第一个成功的即为胜出（JoinSet 按完成顺序返回），中止其余探测
@@ -213,14 +219,16 @@ async fn stage2_range_race(
         }
     }
 
-    winner.ok_or_else(|| "all candidate sources failed range probe".to_string())
+    winner.ok_or_else(|| {
+        ManagerError::Internal("all candidate sources failed range probe".to_string())
+    })
 }
 
 /// 单个候选的 Range 测速：下载前 5 MiB（或整个文件，若更小）。
 ///
 /// 用 `response.chunk()` 流式读取并限制字节数，防止服务器忽略 Range 返回整个
 /// 文件时下载几十 MB。硬超时 `RACE_RANGE_TIMEOUT` 由请求级 timeout 保证。
-async fn range_probe_once(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+async fn range_probe_once(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, ManagerError> {
     let request = client
         .get(url)
         .timeout(RACE_RANGE_TIMEOUT)

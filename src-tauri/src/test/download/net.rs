@@ -97,7 +97,7 @@ async fn download_asset_to_file_rejects_private_hosts_before_network() {
         .await
         .expect_err("私网或本机下载地址应被拒绝");
 
-        assert_eq!(error, "download url host must be public");
+        assert_eq!(error.to_string(), "download url host must be public");
     }
 }
 
@@ -121,5 +121,5 @@ async fn download_asset_to_file_rejects_untrusted_public_host_before_network() {
     .await
     .expect_err("非可信 host 应被拒绝");
 
-    assert_eq!(error, "download url host is not trusted");
+    assert_eq!(error.to_string(), "download url host is not trusted");
 }

@@ -70,5 +70,5 @@ fn returns_error_when_official_asset_lacks_sha256() {
     let error =
         select_official_asset_from_text(html, "", "macos").expect_err("缺少 sha256 时不能自动安装");
 
-    assert!(error.contains("missing sha256"));
+    assert!(error.to_string().contains("missing sha256"));
 }

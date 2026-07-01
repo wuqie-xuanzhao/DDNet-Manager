@@ -19,16 +19,20 @@ const TRUSTED_ASSET_HOSTS: &[&str] = &[
 ];
 
 /// 解析更新 manifest JSON，并校验基础结构约束。
-pub fn parse_manifest(input: &str) -> Result<UpdateManifest, String> {
-    let manifest: UpdateManifest =
-        serde_json::from_str(input).map_err(|error| format!("invalid manifest json: {error}"))?;
+pub fn parse_manifest(input: &str) -> Result<UpdateManifest, ManagerError> {
+    let manifest: UpdateManifest = serde_json::from_str(input)
+        .map_err(|error| ManagerError::Internal(format!("invalid manifest json: {error}")))?;
 
     if manifest.schema_version == 0 {
-        return Err("manifest schema_version must be greater than 0".to_string());
+        return Err(ManagerError::Internal(
+            "manifest schema_version must be greater than 0".to_string(),
+        ));
     }
 
     if manifest.clients.is_empty() {
-        return Err("manifest must contain at least one client".to_string());
+        return Err(ManagerError::Internal(
+            "manifest must contain at least one client".to_string(),
+        ));
     }
 
     validate_manifest_schema(&manifest)?;
@@ -37,12 +41,15 @@ pub fn parse_manifest(input: &str) -> Result<UpdateManifest, String> {
 }
 
 /// 构造并校验 manifest URL，确保只访问公开 HTTPS 地址。
-pub fn build_manifest_url(url: &str) -> Result<Url, String> {
+pub fn build_manifest_url(url: &str) -> Result<Url, ManagerError> {
     if local_smoke::has_ambiguous_numeric_url_host(url) {
-        return Err("manifest url host must be public".to_string());
+        return Err(ManagerError::NetworkHostNotTrusted(
+            "manifest url host must be public".to_string(),
+        ));
     }
 
-    let parsed = Url::parse(url).map_err(|error| format!("invalid manifest url: {error}"))?;
+    let parsed = Url::parse(url)
+        .map_err(|error| ManagerError::Internal(format!("invalid manifest url: {error}")))?;
 
     validate_manifest_url(&parsed)?;
 
@@ -56,14 +63,14 @@ pub fn build_manifest_url(url: &str) -> Result<Url, String> {
 pub fn build_manifest_url_with_route(
     url: &str,
     _route: Option<&NetworkRouteConfig>,
-) -> Result<Url, String> {
+) -> Result<Url, ManagerError> {
     build_manifest_url(url)
 }
 
 /// 从远程地址拉取更新 manifest，并复用本地解析校验逻辑。
 ///
 /// 不带缓存目录，用于测试或无需持久化缓存的场景。
-pub async fn fetch_manifest(url: &str) -> Result<UpdateManifest, String> {
+pub async fn fetch_manifest(url: &str) -> Result<UpdateManifest, ManagerError> {
     fetch_manifest_with_route(url, None, None).await
 }
 
@@ -79,7 +86,7 @@ pub async fn fetch_manifest_with_route(
     url: &str,
     route: Option<&NetworkRouteConfig>,
     cache_dir: Option<&Path>,
-) -> Result<UpdateManifest, String> {
+) -> Result<UpdateManifest, ManagerError> {
     let final_url = build_manifest_url_with_route(url, route)?;
     let cache_path = cache_dir.map(|dir| manifest_cache_path(dir, url));
 
@@ -95,7 +102,9 @@ pub async fn fetch_manifest_with_route(
             .send()
             .await
             .and_then(|response| response.error_for_status())
-            .map_err(|error| format!("failed to fetch manifest: {error}"))?;
+            .map_err(|error| {
+                ManagerError::ManifestUnreachable(format!("failed to fetch manifest: {error}"))
+            })?;
         read_limited_manifest_response(response).await
     }
     .await;
@@ -122,9 +131,9 @@ pub async fn fetch_manifest_with_route(
                         path.display()
                     );
                     return parse_manifest(&cached_text).map_err(|parse_error| {
-                        format!(
+                        ManagerError::ManifestUnreachable(format!(
                             "cached manifest is corrupted ({parse_error}); original network error: {network_error}"
-                        )
+                        ))
                     });
                 }
             }
@@ -137,7 +146,7 @@ pub async fn fetch_manifest_with_route(
 pub fn select_client_update(
     manifest: &UpdateManifest,
     selector: &ClientUpdateSelector,
-) -> Result<Option<ClientUpdateCheck>, String> {
+) -> Result<Option<ClientUpdateCheck>, ManagerError> {
     let Some(client) = manifest.clients.iter().find(|client| {
         client.client_id == selector.client_id && client.channel == selector.channel
     }) else {
@@ -150,10 +159,10 @@ pub fn select_client_update(
         .find(|asset| asset.platform == selector.platform)
         .cloned()
         .ok_or_else(|| {
-            format!(
+            ManagerError::Internal(format!(
                 "manifest has no asset for client {} channel {} platform {}",
                 selector.client_id, selector.channel, selector.platform
-            )
+            ))
         })?;
 
     Ok(Some(ClientUpdateCheck {
@@ -171,43 +180,64 @@ pub fn select_client_update(
     }))
 }
 
-fn validate_manifest_schema(manifest: &UpdateManifest) -> Result<(), String> {
+fn validate_manifest_schema(manifest: &UpdateManifest) -> Result<(), ManagerError> {
     for client in &manifest.clients {
         if client.client_id.trim().is_empty() {
-            return Err("manifest client_id must not be empty".to_string());
+            return Err(ManagerError::Internal(
+                "manifest client_id must not be empty".to_string(),
+            ));
         }
         if client.channel.trim().is_empty() {
-            return Err("manifest client channel must not be empty".to_string());
+            return Err(ManagerError::Internal(
+                "manifest client channel must not be empty".to_string(),
+            ));
         }
         if client.version.trim().is_empty() {
-            return Err("manifest client version must not be empty".to_string());
+            return Err(ManagerError::Internal(
+                "manifest client version must not be empty".to_string(),
+            ));
         }
         if client.release_notes.trim().is_empty() {
-            return Err("manifest client release_notes must not be empty".to_string());
+            return Err(ManagerError::Internal(
+                "manifest client release_notes must not be empty".to_string(),
+            ));
         }
         if client.assets.is_empty() {
-            return Err("manifest client assets must not be empty".to_string());
+            return Err(ManagerError::Internal(
+                "manifest client assets must not be empty".to_string(),
+            ));
         }
 
         for asset in &client.assets {
             if asset.platform.trim().is_empty() {
-                return Err("manifest asset platform must not be empty".to_string());
+                return Err(ManagerError::Internal(
+                    "manifest asset platform must not be empty".to_string(),
+                ));
             }
             if asset.asset_url.trim().is_empty() {
-                return Err("manifest asset_url must not be empty".to_string());
+                return Err(ManagerError::Internal(
+                    "manifest asset_url must not be empty".to_string(),
+                ));
             }
             if asset.sha256.trim().is_empty() {
-                return Err("manifest asset sha256 must not be empty".to_string());
+                return Err(ManagerError::Internal(
+                    "manifest asset sha256 must not be empty".to_string(),
+                ));
             }
             if !is_sha256_hex(&asset.sha256) {
-                return Err("manifest asset sha256 must be 64 ASCII hex chars".to_string());
+                return Err(ManagerError::Internal(
+                    "manifest asset sha256 must be 64 ASCII hex chars".to_string(),
+                ));
             }
             if asset.size == 0 {
-                return Err("manifest asset size must be greater than 0".to_string());
+                return Err(ManagerError::Internal(
+                    "manifest asset size must be greater than 0".to_string(),
+                ));
             }
 
-            let asset_url = Url::parse(&asset.asset_url)
-                .map_err(|error| format!("invalid manifest asset_url: {error}"))?;
+            let asset_url = Url::parse(&asset.asset_url).map_err(|error| {
+                ManagerError::Internal(format!("invalid manifest asset_url: {error}"))
+            })?;
             validate_asset_url(&asset_url)?;
         }
     }
@@ -219,7 +249,7 @@ fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn validate_manifest_url(url: &Url) -> Result<(), String> {
+fn validate_manifest_url(url: &Url) -> Result<(), ManagerError> {
     if url
         .host_str()
         .is_some_and(|host| local_smoke::allows_local_smoke_url(url.scheme(), host))
@@ -227,16 +257,15 @@ fn validate_manifest_url(url: &Url) -> Result<(), String> {
         return Ok(());
     }
 
-    let host = validate_public_https_url(url).map_err(|error| error.to_string())?;
+    let host = validate_public_https_url(url)?;
     validate_trusted_host(
         &host,
         TRUSTED_MANIFEST_HOSTS,
         "manifest url host is not trusted",
     )
-    .map_err(|error| error.to_string())
 }
 
-fn validate_asset_url(url: &Url) -> Result<(), String> {
+fn validate_asset_url(url: &Url) -> Result<(), ManagerError> {
     if url
         .host_str()
         .is_some_and(|host| local_smoke::allows_local_smoke_url(url.scheme(), host))
@@ -244,13 +273,12 @@ fn validate_asset_url(url: &Url) -> Result<(), String> {
         return Ok(());
     }
 
-    let host = validate_public_https_url(url).map_err(|error| error.to_string())?;
+    let host = validate_public_https_url(url)?;
     validate_trusted_host(
         &host,
         TRUSTED_ASSET_HOSTS,
         "manifest asset_url host is not trusted",
     )
-    .map_err(|error| error.to_string())
 }
 
 /// 校验 manifest URL 使用公开 HTTPS、非 loopback / 私网 host。
@@ -334,41 +362,43 @@ fn fnv1a_64(data: &[u8]) -> u64 {
 }
 
 /// 把 manifest 原文写入本地缓存文件，父目录不存在则自动创建。
-fn write_manifest_cache(path: &Path, content: &str) -> Result<(), String> {
+fn write_manifest_cache(path: &Path, content: &str) -> Result<(), ManagerError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create manifest cache dir: {error}"))?;
+        std::fs::create_dir_all(parent).map_err(|error| {
+            ManagerError::Internal(format!("failed to create manifest cache dir: {error}"))
+        })?;
     }
     std::fs::write(path, content)
-        .map_err(|error| format!("failed to write manifest cache: {error}"))
+        .map_err(|error| ManagerError::Internal(format!("failed to write manifest cache: {error}")))
 }
 
-async fn read_limited_manifest_response(mut response: reqwest::Response) -> Result<String, String> {
+async fn read_limited_manifest_response(
+    mut response: reqwest::Response,
+) -> Result<String, ManagerError> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_MANIFEST_BYTES as u64)
     {
-        return Err(format!(
+        return Err(ManagerError::Internal(format!(
             "manifest response exceeds {MAX_MANIFEST_BYTES} bytes"
-        ));
+        )));
     }
 
     let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("failed to read manifest response: {error}"))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        ManagerError::ManifestUnreachable(format!("failed to read manifest response: {error}"))
+    })? {
         if bytes.len() + chunk.len() > MAX_MANIFEST_BYTES {
-            return Err(format!(
+            return Err(ManagerError::Internal(format!(
                 "manifest response exceeds {MAX_MANIFEST_BYTES} bytes"
-            ));
+            )));
         }
         bytes.extend_from_slice(&chunk);
     }
 
-    String::from_utf8(bytes)
-        .map_err(|error| format!("manifest response is not valid UTF-8: {error}"))
+    String::from_utf8(bytes).map_err(|error| {
+        ManagerError::Internal(format!("manifest response is not valid UTF-8: {error}"))
+    })
 }
 
 #[cfg(test)]
@@ -386,7 +416,7 @@ pub mod test_helpers {
     }
 
     /// 把 manifest 原文写入指定缓存路径，自动创建父目录。
-    pub fn write_manifest_cache(path: &Path, content: &str) -> Result<(), String> {
+    pub fn write_manifest_cache(path: &Path, content: &str) -> Result<(), ManagerError> {
         super::write_manifest_cache(path, content)
     }
 }

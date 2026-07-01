@@ -46,8 +46,7 @@ pub async fn install_downloaded_update(
             job.status
         ))));
     }
-    let recovery =
-        crate::download::build_download_job_recovery(&job).map_err(ManagerError::Internal)?;
+    let recovery = crate::download::build_download_job_recovery(&job)?;
     if !recovery.can_install {
         return Err(IpcError::from(ManagerError::Internal(format!(
             "download job cache is not installable: {:?}",
@@ -115,7 +114,7 @@ fn run_install_blocking(
 ) -> Result<DownloadJob, ManagerError> {
     let cache_path = PathBuf::from(&context.job.cache_path);
     let install_id = format!("install-{}", context.job.id);
-    let cache_root = app_cache_dir(&context.app).map_err(ManagerError::Internal)?;
+    let cache_root = app_cache_dir(&context.app)?;
     let staging_dir = cache_root.join("staging").join(&install_id);
     let rollback_dir =
         crate::download::install::rollback_dir_for(Path::new(&client.install_dir), &install_id);
@@ -123,7 +122,6 @@ fn run_install_blocking(
     let package_kind = crate::download::package_kind_for_asset_url(&context.job.asset_url);
     let install_result: Result<(), ManagerError> =
         crate::download::auto_install_guard(package_kind)
-            .map_err(ManagerError::Internal)
             .and_then(|_| {
                 crate::download::verify_downloaded_file(
                     &cache_path,
@@ -133,12 +131,8 @@ fn run_install_blocking(
             })
             .and_then(|_| {
                 crate::download::extract_package_to_staging(&cache_path, &staging_dir, package_kind)
-                    .map_err(ManagerError::Internal)
             })
-            .and_then(|_| {
-                crate::download::find_staged_client_dir(&staging_dir)
-                    .map_err(ManagerError::Internal)
-            })
+            .and_then(|_| crate::download::find_staged_client_dir(&staging_dir))
             .and_then(|staged_client_dir| {
                 if crate::process::is_client_running(Path::new(&client.executable_path))? {
                     return Err(ManagerError::ClientRunning(
@@ -150,7 +144,6 @@ fn run_install_blocking(
                     Path::new(&client.install_dir),
                     &rollback_dir,
                 )
-                .map_err(ManagerError::Internal)
             });
 
     match install_result {
@@ -323,13 +316,10 @@ fn finish_install_failure(
             }));
     }
     let error_message = error.to_string();
-    let job = context
-        .manager
-        .update(&context.job_id, |job| {
-            job.status = DownloadJobStatus::Failed;
-            job.error = Some(error_message);
-        })
-        .map_err(ManagerError::Internal)?;
+    let job = context.manager.update(&context.job_id, |job| {
+        job.status = DownloadJobStatus::Failed;
+        job.error = Some(error_message);
+    })?;
     context.registry.upsert_download_job(&job)?;
     context
         .app

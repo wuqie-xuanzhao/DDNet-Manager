@@ -9,6 +9,7 @@
 //! URL 本身不改写，代理只作为隧道出口。下载目标 host 仍由各模块的 SSRF 校验把关，
 //! 代理地址（如 127.0.0.1）不进入目标校验。
 
+use crate::error::ManagerError;
 use crate::models::{NetworkRouteConfig, NetworkRouteMode};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -45,7 +46,7 @@ pub fn build_routed_client(
     timeout: Option<Duration>,
     user_agent: Option<&str>,
     follow_redirects: bool,
-) -> Result<reqwest::Client, String> {
+) -> Result<reqwest::Client, ManagerError> {
     let mut builder = reqwest::Client::builder().redirect(if follow_redirects {
         reqwest::redirect::Policy::default()
     } else {
@@ -61,15 +62,16 @@ pub fn build_routed_client(
     if let Some(proxy_url) = resolve_effective_proxy(route) {
         let proxy_url = proxy_url.trim();
         if !proxy_url.is_empty() {
-            let proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|error| format!("invalid local proxy url: {error}"))?;
+            let proxy = reqwest::Proxy::all(proxy_url).map_err(|error| {
+                ManagerError::Internal(format!("invalid local proxy url: {error}"))
+            })?;
             builder = builder.proxy(proxy);
         }
     }
 
     builder
         .build()
-        .map_err(|error| format!("failed to build http client: {error}"))
+        .map_err(|error| ManagerError::Internal(format!("failed to build http client: {error}")))
 }
 
 /// 根据路由配置解析实际生效的代理 URL。
@@ -204,19 +206,22 @@ fn detect_windows_registry_proxy() -> Option<String> {
 /// 探测目标为 `https://github.com`（HEAD 请求），超时 5 秒。该端点稳定且
 /// 与下载/更新检查的实际目标一致，能真实反映路由可用性。
 ///
-/// 返回 `Ok(Duration)` 表示可达，`Err(String)` 表示不可达或超时。
+/// 返回 `Ok(Duration)` 表示可达，`Err(ManagerError)` 表示不可达或超时。
 pub async fn probe_route_connectivity(
     route: Option<&NetworkRouteConfig>,
-) -> Result<std::time::Duration, String> {
+) -> Result<std::time::Duration, ManagerError> {
     let client = build_routed_client(route, Some(Duration::from_secs(5)), None, true)?;
     let start = std::time::Instant::now();
     let response = client
         .head("https://github.com")
         .send()
         .await
-        .map_err(|error| format!("route probe request failed: {error}"))?;
+        .map_err(|error| ManagerError::Internal(format!("route probe request failed: {error}")))?;
     if !response.status().is_success() && !response.status().is_redirection() {
-        return Err(format!("route probe returned status {}", response.status()));
+        return Err(ManagerError::Internal(format!(
+            "route probe returned status {}",
+            response.status()
+        )));
     }
     Ok(start.elapsed())
 }

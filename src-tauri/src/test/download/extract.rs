@@ -28,7 +28,7 @@ fn extract_zip_to_staging_rejects_path_traversal() {
 
     let error = extract_zip_to_staging(&zip_path, &staging_dir).expect_err("路径穿越应被拒绝");
 
-    assert!(error.contains("unsafe zip entry path"));
+    assert!(error.to_string().contains("unsafe zip entry path"));
     assert!(!temp_dir.path().join("evil.txt").exists());
 }
 
@@ -50,7 +50,7 @@ fn extract_zip_to_staging_rejects_symlink_entry() {
     let error =
         extract_zip_to_staging(&zip_path, &staging_dir).expect_err("symlink entry 应被拒绝");
 
-    assert!(error.contains("unsafe zip symlink entry"));
+    assert!(error.to_string().contains("unsafe zip symlink entry"));
     assert!(!staging_dir.join("evil_link").exists());
 }
 
@@ -92,7 +92,7 @@ fn extract_tar_xz_to_staging_rejects_path_traversal() {
     let error = extract_package_to_staging(&archive_path, &staging_dir, PackageKind::TarXz)
         .expect_err("tar.xz 路径穿越应被拒绝");
 
-    assert!(error.contains("unsafe tar entry path"));
+    assert!(error.to_string().contains("unsafe tar entry path"));
     assert!(!temp_dir.path().join("evil.txt").exists());
 }
 
@@ -107,11 +107,14 @@ fn extract_dmg_to_staging_has_platform_specific_manager_owned_boundary() {
 
     if cfg!(target_os = "macos") {
         let error = result.expect_err("无效 dmg 应在 macOS 挂载阶段失败");
-        assert!(error.contains("failed to attach dmg") || error.contains("failed to copy app"));
+        assert!(
+            error.to_string().contains("failed to attach dmg")
+                || error.to_string().contains("failed to copy app")
+        );
     } else {
         let error = result.expect_err("非 macOS 不能执行 dmg Manager-owned 安装");
         assert_eq!(
-            error,
+            error.to_string(),
             "automatic .dmg install requires macOS hdiutil and app bundle copy support"
         );
     }
@@ -164,7 +167,7 @@ fn extract_zip_to_staging_rejects_symlink_in_mixed_zip() {
 
     let error = extract_zip_to_staging(&zip_path, &staging_dir)
         .expect_err("混合 zip 中的 symlink 应在 Phase A 被拒绝");
-    assert!(error.contains("unsafe zip symlink entry"));
+    assert!(error.to_string().contains("unsafe zip symlink entry"));
 }
 
 #[test]

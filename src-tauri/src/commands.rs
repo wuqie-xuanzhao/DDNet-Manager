@@ -13,7 +13,7 @@ pub mod install;
 /// 客户端扫描子命令（scan_clients_via_mft / cancel_scan_clients / ScanCancelState）。
 pub mod scan;
 
-use crate::error::IpcError;
+use crate::error::{IpcError, ManagerError};
 use crate::models::{
     AppSettings, CheckClientUpdateRequest, ClientHealth, ClientInstallation, ClientUpdateCheck,
     DownloadJob, InstallHistoryRecord, InstallHistoryStatus, LocalSmokeResultReport,
@@ -163,9 +163,9 @@ pub fn save_app_settings(
 }
 
 #[cfg(target_os = "windows")]
-fn set_autostart_registry(enabled: bool) -> Result<(), String> {
-    let exe_path =
-        std::env::current_exe().map_err(|e| format!("Failed to get current exe path: {}", e))?;
+fn set_autostart_registry(enabled: bool) -> Result<(), ManagerError> {
+    let exe_path = std::env::current_exe()
+        .map_err(|e| ManagerError::Internal(format!("Failed to get current exe path: {e}")))?;
     let exe_str = exe_path.to_string_lossy().to_string();
 
     let status = if enabled {
@@ -196,8 +196,12 @@ fn set_autostart_registry(enabled: bool) -> Result<(), String> {
 
     match status {
         Ok(s) if s.success() => Ok(()),
-        Ok(_) => Err("reg command returned non-zero status".to_string()),
-        Err(e) => Err(format!("Failed to run reg command: {}", e)),
+        Ok(_) => Err(ManagerError::Internal(
+            "reg command returned non-zero status".to_string(),
+        )),
+        Err(e) => Err(ManagerError::Internal(format!(
+            "Failed to run reg command: {e}"
+        ))),
     }
 }
 
@@ -696,8 +700,8 @@ fn create_linux_desktop_file(
 }
 
 /// 返回 Tauri 应用缓存目录。
-pub(crate) fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_cache_dir()
-        .map_err(|error| format!("failed to resolve app cache dir: {error}"))
+pub(crate) fn app_cache_dir(app: &AppHandle) -> Result<PathBuf, ManagerError> {
+    app.path().app_cache_dir().map_err(|error| {
+        ManagerError::Internal(format!("failed to resolve app cache dir: {error}"))
+    })
 }

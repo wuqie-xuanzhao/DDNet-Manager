@@ -17,7 +17,7 @@ async fn select_best_source_rejects_empty_candidates() {
     let error = select_best_source(&client, &[], 100, None)
         .await
         .expect_err("空候选列表应返回错误");
-    assert!(error.contains("no candidate urls"));
+    assert!(error.to_string().contains("no candidate urls"));
 }
 
 #[tokio::test]
@@ -66,7 +66,7 @@ async fn select_best_source_rejects_candidate_without_accept_ranges() {
     let error = select_best_source(&test_client(), &[url], 100, None)
         .await
         .expect_err("不支持 Range 的候选应被淘汰，导致全部不可达");
-    assert!(error.contains("unreachable"));
+    assert!(error.to_string().contains("unreachable"));
 }
 
 #[test]
@@ -109,7 +109,7 @@ async fn select_best_source_rejects_non_2xx_head() {
     let error = select_best_source(&test_client(), &[url], 100, None)
         .await
         .expect_err("403 HEAD 应被淘汰");
-    assert!(error.contains("unreachable"));
+    assert!(error.to_string().contains("unreachable"));
 }
 
 #[tokio::test]
@@ -214,7 +214,7 @@ async fn select_best_source_returns_error_when_all_range_probes_fail() {
     let error = select_best_source(&test_client(), &[url], 100, None)
         .await
         .expect_err("所有 Range 探测失败应返回错误");
-    assert!(error.contains("failed range probe"));
+    assert!(error.to_string().contains("failed range probe"));
 }
 
 #[tokio::test]
@@ -241,5 +241,5 @@ async fn select_best_source_respects_cancel_token() {
     let error = select_best_source(&test_client(), &[url], 100, Some(&token))
         .await
         .expect_err("已 cancel 的 token 应立即返回错误");
-    assert_eq!(error, "download canceled");
+    assert_eq!(error.to_string(), "download canceled");
 }

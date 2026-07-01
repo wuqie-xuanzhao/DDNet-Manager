@@ -1,3 +1,4 @@
+use crate::error::ManagerError;
 use crate::models::{
     CheckClientUpdateRequest, ClientUpdateCheck, ClientUpdateSelector, UpdateAction, UpdateAsset,
     UpdateCheckReason, UpdateSourceKind,
@@ -51,8 +52,7 @@ pub async fn check_client_update(
             platform: request.platform.clone().unwrap_or_else(current_platform),
             cache_dir,
         })
-        .await
-        .map_err(Into::into);
+        .await;
     }
 
     let client_id = crate::client_catalog::normalize_client_id(&request.client_id);
@@ -77,10 +77,11 @@ pub async fn check_client_update(
         platform,
     })
     .await
-    .map_err(Into::into)
 }
 
-async fn check_catalog_update(input: CatalogUpdateInput<'_>) -> Result<ClientUpdateCheck, String> {
+async fn check_catalog_update(
+    input: CatalogUpdateInput<'_>,
+) -> Result<ClientUpdateCheck, ManagerError> {
     match input.entry.update_source {
         crate::client_catalog::UpdateSourceDescriptor::GithubRelease { .. } => {
             check_github_release_update(input).await
@@ -117,7 +118,7 @@ async fn check_catalog_update(input: CatalogUpdateInput<'_>) -> Result<ClientUpd
 /// GithubRelease 来源的更新检查：拉 release by channel，区分 Download / Manual 两种动作。
 async fn check_github_release_update(
     input: CatalogUpdateInput<'_>,
-) -> Result<ClientUpdateCheck, String> {
+) -> Result<ClientUpdateCheck, ManagerError> {
     let Some(check) = crate::github_release::check_release_by_channel(
         input.entry,
         &input.platform,
@@ -168,7 +169,7 @@ async fn check_github_release_update(
 /// DDNet 官方来源的更新检查：解析官方下载页，匹配当前平台资产。
 async fn check_ddnet_official_update(
     input: CatalogUpdateInput<'_>,
-) -> Result<ClientUpdateCheck, String> {
+) -> Result<ClientUpdateCheck, ManagerError> {
     let Some(asset) = crate::ddnet_source::check_official_download(
         &input.platform,
         input.request.network_route.as_ref(),
@@ -223,7 +224,7 @@ fn manual_update(input: ManualUpdateInput, current_version: Option<String>) -> C
 
 async fn check_manifest_update(
     input: ManifestUpdateInput<'_>,
-) -> Result<ClientUpdateCheck, String> {
+) -> Result<ClientUpdateCheck, ManagerError> {
     let manifest = crate::manifest::fetch_manifest_with_route(
         crate::commands::download::required_manifest_url(input.request.manifest_url.as_deref())?,
         input.request.network_route.as_ref(),

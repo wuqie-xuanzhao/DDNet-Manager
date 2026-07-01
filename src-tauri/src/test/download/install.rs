@@ -97,7 +97,9 @@ fn install_staged_client_keeps_existing_install_when_staging_is_unhealthy() {
     let error = install_staged_client(&staged_dir, &install_dir, &rollback_dir)
         .expect_err("不健康 staging 应失败");
 
-    assert!(error.contains("replacement client is not healthy"));
+    assert!(error
+        .to_string()
+        .contains("replacement client is not healthy"));
     assert_eq!(
         fs::read(install_dir.join("DDNet.exe")).expect("旧安装应保留"),
         b"old"

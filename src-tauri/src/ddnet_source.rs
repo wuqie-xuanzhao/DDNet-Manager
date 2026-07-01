@@ -1,3 +1,4 @@
+use crate::error::ManagerError;
 use crate::models::{NetworkRouteConfig, UpdateAsset};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -30,17 +31,21 @@ pub fn select_official_asset_from_text(
     downloads_html: &str,
     sha256sums: &str,
     platform: &str,
-) -> Result<Option<DdnetDownloadAsset>, String> {
+) -> Result<Option<DdnetDownloadAsset>, ManagerError> {
     let Some(file_name) = select_newest_platform_file(downloads_html, platform) else {
         return Ok(None);
     };
     let sha256_by_file = parse_sha256sums(sha256sums);
-    let sha256 = sha256_by_file
-        .get(&file_name)
-        .cloned()
-        .ok_or_else(|| format!("missing sha256 for DDNet official asset: {file_name}"))?;
-    let version = parse_ddnet_version(&file_name)
-        .ok_or_else(|| format!("failed to parse DDNet version from asset: {file_name}"))?;
+    let sha256 = sha256_by_file.get(&file_name).cloned().ok_or_else(|| {
+        ManagerError::Sha256Missing(format!(
+            "missing sha256 for DDNet official asset: {file_name}"
+        ))
+    })?;
+    let version = parse_ddnet_version(&file_name).ok_or_else(|| {
+        ManagerError::Internal(format!(
+            "failed to parse DDNet version from asset: {file_name}"
+        ))
+    })?;
 
     Ok(Some(DdnetDownloadAsset {
         version,
@@ -57,7 +62,7 @@ pub fn select_official_asset_from_text(
 pub async fn check_official_download(
     platform: &str,
     route: Option<&NetworkRouteConfig>,
-) -> Result<Option<DdnetDownloadAsset>, String> {
+) -> Result<Option<DdnetDownloadAsset>, ManagerError> {
     let client = crate::network_route::build_routed_client(
         route,
         Some(Duration::from_secs(15)),
@@ -74,29 +79,37 @@ pub async fn check_official_download(
     Ok(Some(asset))
 }
 
-async fn fetch_text(client: &reqwest::Client, url: &str, label: &str) -> Result<String, String> {
+async fn fetch_text(
+    client: &reqwest::Client,
+    url: &str,
+    label: &str,
+) -> Result<String, ManagerError> {
     client
         .get(url)
         .send()
         .await
         .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("failed to fetch {label}: {error}"))?
+        .map_err(|error| ManagerError::Internal(format!("failed to fetch {label}: {error}")))?
         .text()
         .await
-        .map_err(|error| format!("failed to read {label}: {error}"))
+        .map_err(|error| ManagerError::Internal(format!("failed to read {label}: {error}")))
 }
 
-async fn fetch_content_length(client: &reqwest::Client, url: &str) -> Result<u64, String> {
+async fn fetch_content_length(client: &reqwest::Client, url: &str) -> Result<u64, ManagerError> {
     let response = client
         .head(url)
         .send()
         .await
         .and_then(|response| response.error_for_status())
-        .map_err(|error| format!("failed to fetch DDNet asset size: {error}"))?;
+        .map_err(|error| {
+            ManagerError::Internal(format!("failed to fetch DDNet asset size: {error}"))
+        })?;
     response
         .content_length()
         .filter(|size| *size > 0)
-        .ok_or_else(|| "DDNet official asset is missing Content-Length".to_string())
+        .ok_or_else(|| {
+            ManagerError::Internal("DDNet official asset is missing Content-Length".to_string())
+        })
 }
 
 fn extract_candidate_file_names(downloads_html: &str) -> Vec<String> {

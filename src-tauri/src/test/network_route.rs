@@ -41,7 +41,7 @@ fn rejects_invalid_local_proxy_url() {
     };
     let error = build_routed_client(Some(&route), Some(Duration::from_secs(10)), None, true)
         .expect_err("无效代理 URL 应被拒绝");
-    assert!(error.contains("invalid local proxy url"));
+    assert!(error.to_string().contains("invalid local proxy url"));
 }
 
 #[test]

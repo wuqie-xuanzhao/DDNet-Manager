@@ -1,3 +1,4 @@
+use crate::error::ManagerError;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,30 +8,33 @@ pub fn install_staged_client(
     staged_client_dir: &Path,
     install_dir: &Path,
     rollback_dir: &Path,
-) -> Result<(), String> {
+) -> Result<(), ManagerError> {
     let replacement_dir = replacement_dir_for(install_dir);
     if replacement_dir.exists() {
-        fs::remove_dir_all(&replacement_dir)
-            .map_err(|error| format!("failed to clear replacement dir: {error}"))?;
+        fs::remove_dir_all(&replacement_dir).map_err(|error| {
+            ManagerError::Internal(format!("failed to clear replacement dir: {error}"))
+        })?;
     }
     if rollback_dir.exists() {
-        fs::remove_dir_all(rollback_dir)
-            .map_err(|error| format!("failed to clear rollback dir: {error}"))?;
+        fs::remove_dir_all(rollback_dir).map_err(|error| {
+            ManagerError::Internal(format!("failed to clear rollback dir: {error}"))
+        })?;
     }
     if let Some(parent) = rollback_dir.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create rollback parent: {error}"))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            ManagerError::Internal(format!("failed to create rollback parent: {error}"))
+        })?;
     }
 
     copy_dir_recursive(staged_client_dir, &replacement_dir)?;
     let replacement_client = crate::client_scan::validate_client_dir(&replacement_dir)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ManagerError::Internal(error.to_string()))?;
     if replacement_client.health != crate::models::ClientHealth::Ok {
         let _ = fs::remove_dir_all(&replacement_dir);
-        return Err(format!(
+        return Err(ManagerError::Internal(format!(
             "replacement client is not healthy: {:?}",
             replacement_client.health
-        ));
+        )));
     }
 
     let had_existing_install = install_dir.exists();
@@ -39,14 +43,17 @@ pub fn install_staged_client(
         // DDNet），rename 会以 AccessDenied 失败。这里给出明确诊断，避免上层把
         // 这种可恢复错误归类为内部错误。
         if let Err(error) = fs::rename(install_dir, rollback_dir) {
-            let running_hint = if crate::process::is_install_dir_busy(install_dir) {
-                " (target install dir is busy; close the running client and retry)"
+            let is_busy = crate::process::is_install_dir_busy(install_dir);
+            let message = if is_busy {
+                format!("target install dir is busy; close the running client and retry: {error}")
             } else {
-                ""
+                format!("failed to create rollback point: {error}")
             };
-            return Err(format!(
-                "failed to create rollback point{running_hint}: {error}"
-            ));
+            return Err(if is_busy {
+                ManagerError::ClientRunning(message)
+            } else {
+                ManagerError::Internal(message)
+            });
         }
     }
 
@@ -56,14 +63,16 @@ pub fn install_staged_client(
                 // 双失败：原 install_dir 已被改名为 rollback_dir，激活与恢复都失败，
                 // rollback_dir 仍保留在磁盘上。错误信息显式带上 rollback_dir 路径，
                 // 让用户/运维知道从哪里手动恢复旧版本。
-                return Err(format!(
+                return Err(ManagerError::Internal(format!(
                     "failed to activate replacement: {error}; failed to restore rollback: {restore_error}; \
                      rollback_dir={} (recover manually if needed)",
                     rollback_dir.display()
-                ));
+                )));
             }
         }
-        return Err(format!("failed to activate replacement: {error}"));
+        return Err(ManagerError::Internal(format!(
+            "failed to activate replacement: {error}"
+        )));
     }
 
     Ok(())
@@ -79,40 +88,49 @@ pub fn rollback_dir_for(install_dir: &Path, install_id: &str) -> PathBuf {
 }
 
 /// 使用已创建的回滚目录恢复目标安装目录。
-pub fn restore_rollback(install_dir: &Path, rollback_dir: &Path) -> Result<(), String> {
+pub fn restore_rollback(install_dir: &Path, rollback_dir: &Path) -> Result<(), ManagerError> {
     if !rollback_dir.exists() {
-        return Err(format!(
+        return Err(ManagerError::NotFound(format!(
             "rollback dir does not exist: {}",
             rollback_dir.display()
-        ));
+        )));
     }
 
     let failed_dir = failed_restore_dir_for(install_dir);
     if failed_dir.exists() {
-        fs::remove_dir_all(&failed_dir)
-            .map_err(|error| format!("failed to clear failed restore dir: {error}"))?;
+        fs::remove_dir_all(&failed_dir).map_err(|error| {
+            ManagerError::Internal(format!("failed to clear failed restore dir: {error}"))
+        })?;
     }
 
     let had_active_install = install_dir.exists();
     if had_active_install {
-        fs::rename(install_dir, &failed_dir)
-            .map_err(|error| format!("failed to move active install before rollback: {error}"))?;
+        fs::rename(install_dir, &failed_dir).map_err(|error| {
+            ManagerError::Internal(format!(
+                "failed to move active install before rollback: {error}"
+            ))
+        })?;
     }
 
     if let Err(error) = fs::rename(rollback_dir, install_dir) {
         if had_active_install && failed_dir.exists() {
             if let Err(restore_error) = fs::rename(&failed_dir, install_dir) {
-                return Err(format!(
+                return Err(ManagerError::Internal(format!(
                     "failed to restore rollback: {error}; failed to restore active install: {restore_error}"
-                ));
+                )));
             }
         }
-        return Err(format!("failed to restore rollback: {error}"));
+        return Err(ManagerError::Internal(format!(
+            "failed to restore rollback: {error}"
+        )));
     }
 
     if failed_dir.exists() {
-        fs::remove_dir_all(&failed_dir)
-            .map_err(|error| format!("failed to clear replaced install after rollback: {error}"))?;
+        fs::remove_dir_all(&failed_dir).map_err(|error| {
+            ManagerError::Internal(format!(
+                "failed to clear replaced install after rollback: {error}"
+            ))
+        })?;
     }
 
     Ok(())
@@ -183,15 +201,18 @@ fn is_install_artifact_name(name: &str) -> bool {
 pub fn cleanup_stale_install_artifacts(
     scan_dir: &Path,
     protected_paths: &HashSet<PathBuf>,
-) -> Result<usize, String> {
+) -> Result<usize, ManagerError> {
     if !scan_dir.exists() {
         return Ok(0);
     }
-    let entries = fs::read_dir(scan_dir)
-        .map_err(|error| format!("failed to read dir for cleanup: {error}"))?;
+    let entries = fs::read_dir(scan_dir).map_err(|error| {
+        ManagerError::Internal(format!("failed to read dir for cleanup: {error}"))
+    })?;
     let mut removed = 0usize;
     for entry in entries {
-        let entry = entry.map_err(|error| format!("failed to read cleanup entry: {error}"))?;
+        let entry = entry.map_err(|error| {
+            ManagerError::Internal(format!("failed to read cleanup entry: {error}"))
+        })?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         let entry_path = entry.path();
@@ -201,8 +222,12 @@ pub fn cleanup_stale_install_artifacts(
         if path_is_protected(&entry_path, protected_paths) {
             continue;
         }
-        fs::remove_dir_all(&entry_path)
-            .map_err(|error| format!("failed to remove stale artifact '{}': {error}", name_str))?;
+        fs::remove_dir_all(&entry_path).map_err(|error| {
+            ManagerError::Internal(format!(
+                "failed to remove stale artifact '{}': {error}",
+                name_str
+            ))
+        })?;
         removed += 1;
     }
     Ok(removed)
@@ -226,20 +251,25 @@ fn path_is_protected(path: &Path, protected: &HashSet<PathBuf>) -> bool {
 /// `install-*` 子目录都可安全删除。
 ///
 /// 仅清理 `install-` 前缀的子目录，保留 staging_root 本身与其他名字的目录。
-pub fn cleanup_stale_staging(staging_root: &Path) -> Result<usize, String> {
+pub fn cleanup_stale_staging(staging_root: &Path) -> Result<usize, ManagerError> {
     if !staging_root.exists() {
         return Ok(0);
     }
     let entries = fs::read_dir(staging_root)
-        .map_err(|error| format!("failed to read staging root: {error}"))?;
+        .map_err(|error| ManagerError::Internal(format!("failed to read staging root: {error}")))?;
     let mut removed = 0usize;
     for entry in entries {
-        let entry = entry.map_err(|error| format!("failed to read staging entry: {error}"))?;
+        let entry = entry.map_err(|error| {
+            ManagerError::Internal(format!("failed to read staging entry: {error}"))
+        })?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if path_starts_with_install(&entry.path(), &name_str) {
             fs::remove_dir_all(entry.path()).map_err(|error| {
-                format!("failed to remove stale staging '{}': {error}", name_str)
+                ManagerError::Internal(format!(
+                    "failed to remove stale staging '{}': {error}",
+                    name_str
+                ))
             })?;
             removed += 1;
         }
@@ -281,51 +311,60 @@ fn failed_restore_dir_for(install_dir: &Path) -> PathBuf {
 
 /// 递归复制目录树，保留常规文件、目录与 symlink；用于把 staging 客户端拷贝到
 /// replacement 目录或从 dmg 镜像拷出 app bundle。
-pub(crate) fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::create_dir_all(destination)
-        .map_err(|error| format!("failed to create install dir: {error}"))?;
+pub(crate) fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), ManagerError> {
+    fs::create_dir_all(destination).map_err(|error| {
+        ManagerError::Internal(format!("failed to create install dir: {error}"))
+    })?;
 
-    for entry in
-        fs::read_dir(source).map_err(|error| format!("failed to read source dir: {error}"))?
+    for entry in fs::read_dir(source)
+        .map_err(|error| ManagerError::Internal(format!("failed to read source dir: {error}")))?
     {
-        let entry = entry.map_err(|error| format!("failed to read source entry: {error}"))?;
+        let entry = entry.map_err(|error| {
+            ManagerError::Internal(format!("failed to read source entry: {error}"))
+        })?;
         let source_path = entry.path();
         let destination_path = destination.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("failed to read source file type: {error}"))?;
+        let file_type = entry.file_type().map_err(|error| {
+            ManagerError::Internal(format!("failed to read source file type: {error}"))
+        })?;
         if file_type.is_symlink() {
             copy_symlink(&source_path, &destination_path)?;
         } else if file_type.is_dir() {
             copy_dir_recursive(&source_path, &destination_path)?;
         } else {
-            fs::copy(&source_path, &destination_path)
-                .map_err(|error| format!("failed to copy install file: {error}"))?;
+            fs::copy(&source_path, &destination_path).map_err(|error| {
+                ManagerError::Internal(format!("failed to copy install file: {error}"))
+            })?;
         }
     }
 
     Ok(())
 }
 
-fn copy_symlink(source_path: &Path, destination_path: &Path) -> Result<(), String> {
+fn copy_symlink(source_path: &Path, destination_path: &Path) -> Result<(), ManagerError> {
     #[cfg(unix)]
     {
-        let target = fs::read_link(source_path)
-            .map_err(|error| format!("failed to read install symlink: {error}"))?;
-        std::os::unix::fs::symlink(&target, destination_path)
-            .map_err(|error| format!("failed to copy install symlink: {error}"))
+        let target = fs::read_link(source_path).map_err(|error| {
+            ManagerError::Internal(format!("failed to read install symlink: {error}"))
+        })?;
+        std::os::unix::fs::symlink(&target, destination_path).map_err(|error| {
+            ManagerError::Internal(format!("failed to copy install symlink: {error}"))
+        })
     }
 
     #[cfg(windows)]
     {
-        let target = fs::read_link(source_path)
-            .map_err(|error| format!("failed to read install symlink: {error}"))?;
+        let target = fs::read_link(source_path).map_err(|error| {
+            ManagerError::Internal(format!("failed to read install symlink: {error}"))
+        })?;
         if source_path.is_dir() {
-            std::os::windows::fs::symlink_dir(&target, destination_path)
-                .map_err(|error| format!("failed to copy install symlink: {error}"))
+            std::os::windows::fs::symlink_dir(&target, destination_path).map_err(|error| {
+                ManagerError::Internal(format!("failed to copy install symlink: {error}"))
+            })
         } else {
-            std::os::windows::fs::symlink_file(&target, destination_path)
-                .map_err(|error| format!("failed to copy install symlink: {error}"))
+            std::os::windows::fs::symlink_file(&target, destination_path).map_err(|error| {
+                ManagerError::Internal(format!("failed to copy install symlink: {error}"))
+            })
         }
     }
 }

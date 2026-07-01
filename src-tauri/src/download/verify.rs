@@ -33,7 +33,7 @@ impl DownloadJobRecoveryDecision {
 }
 
 /// 基于下载任务当前缓存文件构建恢复摘要。
-pub fn build_download_job_recovery(job: &DownloadJob) -> Result<DownloadJobRecovery, String> {
+pub fn build_download_job_recovery(job: &DownloadJob) -> Result<DownloadJobRecovery, ManagerError> {
     let cache_state = detect_download_cache_state(job)?;
     let permanent_install_failure = is_permanent_install_failure(job.error.as_deref());
     let decision = if permanent_install_failure && cache_state == DownloadCacheState::Verified {
@@ -53,15 +53,12 @@ pub fn build_download_job_recovery(job: &DownloadJob) -> Result<DownloadJobRecov
     })
 }
 
-fn detect_download_cache_state(job: &DownloadJob) -> Result<DownloadCacheState, String> {
+fn detect_download_cache_state(job: &DownloadJob) -> Result<DownloadCacheState, ManagerError> {
     let cache_path = Path::new(&job.cache_path);
     if !cache_path.exists() {
         return Ok(DownloadCacheState::Missing);
     }
-    if verify_downloaded_file(cache_path, &job.sha256, job.size)
-        .map_err(|error| error.to_string())
-        .is_ok()
-    {
+    if verify_downloaded_file(cache_path, &job.sha256, job.size).is_ok() {
         return Ok(DownloadCacheState::Verified);
     }
     if matches!(

@@ -152,9 +152,11 @@ pub fn is_non_public_ip(ip: IpAddr) -> bool {
 }
 
 /// 校验 IP 地址是否为公网地址，非公网地址返回错误。
-pub fn validate_public_ip(ip: IpAddr) -> Result<(), String> {
+pub fn validate_public_ip(ip: IpAddr) -> Result<(), crate::error::ManagerError> {
     if is_non_public_ip(ip) {
-        return Err("host must be a public IP address".to_string());
+        return Err(crate::error::ManagerError::NetworkHostNotTrusted(
+            "host must be a public IP address".to_string(),
+        ));
     }
     Ok(())
 }

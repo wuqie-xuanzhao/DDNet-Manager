@@ -102,43 +102,47 @@ pub(crate) async fn send_download_request(
     asset_url: &str,
     extra_hosts: &[String],
     start_offset: u64,
-) -> Result<reqwest::Response, String> {
-    let mut current_url =
-        Url::parse(asset_url).map_err(|error| format!("invalid download url: {error}"))?;
+) -> Result<reqwest::Response, ManagerError> {
+    let mut current_url = Url::parse(asset_url)
+        .map_err(|error| ManagerError::Internal(format!("invalid download url: {error}")))?;
 
     for _ in 0..=MAX_DOWNLOAD_REDIRECTS {
-        validate_download_url(current_url.as_str(), extra_hosts)
-            .map_err(|error| error.to_string())?;
+        validate_download_url(current_url.as_str(), extra_hosts)?;
         let mut request = client.get(current_url.clone());
         if start_offset > 0 {
             request = request.header(reqwest::header::RANGE, format!("bytes={start_offset}-"));
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|error| format!("failed to download update asset: {error}"))?;
+        let response = request.send().await.map_err(|error| {
+            ManagerError::Internal(format!("failed to download update asset: {error}"))
+        })?;
 
         if response.status().is_redirection() {
             let location = response
                 .headers()
                 .get(reqwest::header::LOCATION)
-                .ok_or_else(|| "download redirect missing Location header".to_string())?
+                .ok_or_else(|| {
+                    ManagerError::Internal("download redirect missing Location header".to_string())
+                })?
                 .to_str()
-                .map_err(|error| format!("download redirect Location is invalid: {error}"))?;
-            current_url = current_url
-                .join(location)
-                .map_err(|error| format!("download redirect Location is invalid: {error}"))?;
+                .map_err(|error| {
+                    ManagerError::Internal(format!(
+                        "download redirect Location is invalid: {error}"
+                    ))
+                })?;
+            current_url = current_url.join(location).map_err(|error| {
+                ManagerError::Internal(format!("download redirect Location is invalid: {error}"))
+            })?;
             continue;
         }
 
-        return response
-            .error_for_status()
-            .map_err(|error| format!("failed to download update asset: {error}"));
+        return response.error_for_status().map_err(|error| {
+            ManagerError::Internal(format!("failed to download update asset: {error}"))
+        });
     }
 
-    Err(format!(
+    Err(ManagerError::Internal(format!(
         "download redirected more than {MAX_DOWNLOAD_REDIRECTS} times"
-    ))
+    )))
 }
 
 /// 下载远程资产到缓存文件，并通过回调报告已下载字节数。
@@ -162,36 +166,40 @@ pub async fn download_asset_to_file<F>(
     request: super::DownloadFileRequest<'_>,
     cancel: Option<CancellationToken>,
     mut on_progress: F,
-) -> Result<(), String>
+) -> Result<(), ManagerError>
 where
     F: FnMut(u64) -> bool + Send,
 {
     let part_path = part_file_path(request.cache_path);
     if let Some(parent) = request.cache_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create download cache dir: {error}"))?;
+        fs::create_dir_all(parent).map_err(|error| {
+            ManagerError::Internal(format!("failed to create download cache dir: {error}"))
+        })?;
     }
     if part_path.exists() {
-        fs::remove_file(&part_path)
-            .map_err(|error| format!("failed to clear partial download file: {error}"))?;
+        fs::remove_file(&part_path).map_err(|error| {
+            ManagerError::Internal(format!("failed to clear partial download file: {error}"))
+        })?;
     }
 
     // 阶段1：竞速选源（安全候选 >1 时）或单源直连退化
     let winner = select_download_winner(&request, cancel.as_ref()).await?;
 
     // 阶段2：对胜出 URL 做 SSRF 校验
-    validate_download_url(&winner.url, request.extra_hosts).map_err(|error| error.to_string())?;
+    validate_download_url(&winner.url, request.extra_hosts)?;
 
     check_cancel_or_cleanup(cancel.as_ref(), &part_path)?;
 
     // 阶段3：写入 head_start（测速字节复用为 .partial 首段）
     let start_offset = winner.head_start.len() as u64;
     {
-        let mut file = fs::File::create(&part_path)
-            .map_err(|error| format!("failed to create download cache file: {error}"))?;
+        let mut file = fs::File::create(&part_path).map_err(|error| {
+            ManagerError::Internal(format!("failed to create download cache file: {error}"))
+        })?;
         if !winner.head_start.is_empty() {
-            file.write_all(&winner.head_start)
-                .map_err(|error| format!("failed to write race head start: {error}"))?;
+            file.write_all(&winner.head_start).map_err(|error| {
+                ManagerError::Internal(format!("failed to write race head start: {error}"))
+            })?;
         }
     }
 
@@ -232,10 +240,10 @@ where
 fn check_cancel_or_cleanup(
     cancel: Option<&CancellationToken>,
     part_path: &Path,
-) -> Result<(), String> {
+) -> Result<(), ManagerError> {
     if cancel.is_some_and(|token| token.is_cancelled()) {
         let _ = fs::remove_file(part_path);
-        return Err("download canceled".to_string());
+        return Err(ManagerError::Internal("download canceled".to_string()));
     }
     Ok(())
 }
@@ -250,10 +258,12 @@ fn validate_download_response(
     start_offset: u64,
     expected_size: u64,
     part_path: &Path,
-) -> Result<(), String> {
+) -> Result<(), ManagerError> {
     if start_offset > 0 && response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
         let _ = fs::remove_file(part_path);
-        return Err("server ignored Range request (expected 206 Partial Content)".to_string());
+        return Err(ManagerError::Internal(
+            "server ignored Range request (expected 206 Partial Content)".to_string(),
+        ));
     }
     if start_offset == 0
         && response
@@ -261,7 +271,9 @@ fn validate_download_response(
             .is_some_and(|length| length != expected_size)
     {
         let _ = fs::remove_file(part_path);
-        return Err("download content length does not match manifest size".to_string());
+        return Err(ManagerError::Internal(
+            "download content length does not match manifest size".to_string(),
+        ));
     }
     Ok(())
 }
@@ -282,7 +294,7 @@ fn validate_download_response(
 async fn select_download_winner(
     request: &super::DownloadFileRequest<'_>,
     cancel: Option<&CancellationToken>,
-) -> Result<crate::download::race::RaceWinner, String> {
+) -> Result<crate::download::race::RaceWinner, ManagerError> {
     let safe_candidates: Vec<String> = request
         .candidate_urls
         .iter()
@@ -336,7 +348,7 @@ async fn stream_download_to_partfile<F>(
     response: &mut reqwest::Response,
     control: &mut DownloadControl<'_, F>,
     start_offset: u64,
-) -> Result<(), String>
+) -> Result<(), ManagerError>
 where
     F: FnMut(u64) -> bool + Send,
 {
@@ -345,10 +357,13 @@ where
         std::fs::OpenOptions::new()
             .append(true)
             .open(&part_path)
-            .map_err(|error| format!("failed to open partial download file: {error}"))?
+            .map_err(|error| {
+                ManagerError::Internal(format!("failed to open partial download file: {error}"))
+            })?
     } else {
-        fs::File::create(&part_path)
-            .map_err(|error| format!("failed to create download cache file: {error}"))?
+        fs::File::create(&part_path).map_err(|error| {
+            ManagerError::Internal(format!("failed to create download cache file: {error}"))
+        })?
     };
     let mut downloaded = start_offset;
 
@@ -360,7 +375,7 @@ where
                     biased;
                     _ = token.cancelled() => {
                         let _ = fs::remove_file(part_path);
-                        return Err("download canceled".to_string());
+                        return Err(ManagerError::Internal("download canceled".to_string()));
                     }
                     chunk = response.chunk() => chunk,
                 }
@@ -371,7 +386,9 @@ where
             Ok(chunk) => chunk,
             Err(error) => {
                 let _ = fs::remove_file(part_path);
-                return Err(format!("failed to read download stream: {error}"));
+                return Err(ManagerError::Internal(format!(
+                    "failed to read download stream: {error}"
+                )));
             }
         };
         let Some(chunk) = next_chunk else {
@@ -379,10 +396,10 @@ where
             // 服务器断流问题，而非依赖后续 SHA-256 兜底。
             if downloaded != request.expected_size {
                 let _ = fs::remove_file(part_path);
-                return Err(format!(
+                return Err(ManagerError::Internal(format!(
                     "downloaded bytes {downloaded} do not match manifest size {}",
                     request.expected_size
-                ));
+                )));
             }
             break;
         };
@@ -390,20 +407,26 @@ where
             Some(value) => value,
             None => {
                 let _ = fs::remove_file(part_path);
-                return Err("downloaded byte count overflow".to_string());
+                return Err(ManagerError::Internal(
+                    "downloaded byte count overflow".to_string(),
+                ));
             }
         };
         if downloaded > request.expected_size {
             let _ = fs::remove_file(part_path);
-            return Err("downloaded bytes exceed manifest size".to_string());
+            return Err(ManagerError::Internal(
+                "downloaded bytes exceed manifest size".to_string(),
+            ));
         }
         if let Err(error) = file.write_all(&chunk) {
             let _ = fs::remove_file(part_path);
-            return Err(format!("failed to write download cache file: {error}"));
+            return Err(ManagerError::Internal(format!(
+                "failed to write download cache file: {error}"
+            )));
         }
         if !(control.on_progress)(downloaded) {
             let _ = fs::remove_file(part_path);
-            return Err("download canceled".to_string());
+            return Err(ManagerError::Internal("download canceled".to_string()));
         }
     }
 
@@ -411,13 +434,15 @@ where
 }
 
 /// 关闭 `.part` 文件句柄，原子重命名为最终缓存路径。
-fn finalize_download_cache(cache_path: &Path, part_path: &Path) -> Result<(), String> {
+fn finalize_download_cache(cache_path: &Path, part_path: &Path) -> Result<(), ManagerError> {
     if cache_path.exists() {
-        fs::remove_file(cache_path)
-            .map_err(|error| format!("failed to replace existing cache file: {error}"))?;
+        fs::remove_file(cache_path).map_err(|error| {
+            ManagerError::Internal(format!("failed to replace existing cache file: {error}"))
+        })?;
     }
-    fs::rename(part_path, cache_path)
-        .map_err(|error| format!("failed to finalize download cache file: {error}"))
+    fs::rename(part_path, cache_path).map_err(|error| {
+        ManagerError::Internal(format!("failed to finalize download cache file: {error}"))
+    })
 }
 
 /// 清理下载缓存目录中超过 TTL 的缓存文件和临时分片文件。
@@ -427,34 +452,37 @@ fn finalize_download_cache(cache_path: &Path, part_path: &Path) -> Result<(), St
 pub fn cleanup_expired_cache_files(
     downloads_dir: &Path,
     ttl_days: Option<i64>,
-) -> Result<usize, String> {
+) -> Result<usize, ManagerError> {
     if !downloads_dir.exists() {
         return Ok(0);
     }
     let ttl = ttl_days.unwrap_or(DEFAULT_CACHE_TTL_DAYS);
     let cutoff = OffsetDateTime::now_utc()
         .checked_sub(time::Duration::days(ttl))
-        .ok_or_else(|| "invalid TTL days".to_string())?;
+        .ok_or_else(|| ManagerError::Internal("invalid TTL days".to_string()))?;
     let cutoff_unix = cutoff.unix_timestamp();
 
-    let entries = fs::read_dir(downloads_dir)
-        .map_err(|error| format!("failed to read downloads dir: {error}"))?;
+    let entries = fs::read_dir(downloads_dir).map_err(|error| {
+        ManagerError::Internal(format!("failed to read downloads dir: {error}"))
+    })?;
     let mut removed = 0usize;
     for entry in entries {
-        let entry = entry.map_err(|error| format!("failed to read cache entry: {error}"))?;
+        let entry = entry.map_err(|error| {
+            ManagerError::Internal(format!("failed to read cache entry: {error}"))
+        })?;
         let path = entry.path();
         if path.is_dir() {
             continue;
         }
-        let metadata = entry
-            .metadata()
-            .map_err(|error| format!("failed to read cache metadata: {error}"))?;
-        let modified = metadata
-            .modified()
-            .map_err(|error| format!("failed to read cache mtime: {error}"))?;
+        let metadata = entry.metadata().map_err(|error| {
+            ManagerError::Internal(format!("failed to read cache metadata: {error}"))
+        })?;
+        let modified = metadata.modified().map_err(|error| {
+            ManagerError::Internal(format!("failed to read cache mtime: {error}"))
+        })?;
         let modified_unix = modified
             .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| format!("cache mtime before epoch: {error}"))?
+            .map_err(|error| ManagerError::Internal(format!("cache mtime before epoch: {error}")))?
             .as_secs() as i64;
         if modified_unix < cutoff_unix && fs::remove_file(&path).is_ok() {
             removed += 1;
