@@ -143,15 +143,7 @@ async fn prepare_update_download_job(
     // 若用户未配置路由，自动探测并选择最佳网络路径（direct → auto_detect → local_proxy）。
     let network_route = match request.network_route.clone() {
         Some(route) => Some(route),
-        None => {
-            crate::network_route::auto_select_route(
-                request
-                    .network_route
-                    .as_ref()
-                    .and_then(|r| r.local_proxy_url.as_deref()),
-            )
-            .await
-        }
+        None => crate::network_route::auto_select_route(None).await,
     };
     let client = registry
         .list_client_installations()?
