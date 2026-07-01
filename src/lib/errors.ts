@@ -1,4 +1,4 @@
-import type { IpcError } from "../types";
+import type { IpcError, UpdateCheckReason } from "../types";
 
 const fallbackErrorMessage = "操作失败，请稍后重试。";
 const MAX_RAW_ERROR_SUMMARY_LENGTH = 180;
@@ -82,4 +82,29 @@ export function getUpdateErrorMessage(error: unknown): string {
   }
 
   return fallbackErrorMessage;
+}
+
+/** 把更新检查不可用原因映射为小白友好的中文文案。
+ * 后端可能已附带详细 message，优先使用；否则按 reason 类型给出默认白话说明。 */
+export function getUpdateCheckReasonMessage(reason: UpdateCheckReason, backendMessage?: string | null): string {
+  if (backendMessage && backendMessage.trim()) {
+    return backendMessage.trim();
+  }
+
+  switch (reason) {
+    case "client_not_in_catalog":
+      return "该客户端暂不支持自动更新。";
+    case "no_release_for_channel":
+      return "当前渠道暂无可用版本。";
+    case "no_asset_for_platform":
+      return "当前平台暂无可用下载。";
+    case "auto_update_disabled":
+      return "该客户端已禁用自动更新。";
+    case "manifest_entry_missing":
+      return "更新清单缺少该客户端信息。";
+    case "none":
+      return "已是最新版本。";
+    default:
+      return "无可用更新。";
+  }
 }

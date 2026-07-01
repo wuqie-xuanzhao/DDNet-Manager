@@ -26,7 +26,7 @@ import type {
   LocalSmokeAutomationConfig,
   AppSettings
 } from "../../types";
-import { getUpdateErrorMessage } from "../../lib/errors";
+import { getUpdateCheckReasonMessage, getUpdateErrorMessage } from "../../lib/errors";
 import {
   buildStartUpdateDownloadRequest,
   buildUpdateSourceRequest,
@@ -144,6 +144,7 @@ export function UpdatePanel(props: {
   const [notice, setNotice] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const latestRequestIdRef = useRef(0);
   const currentClientIdRef = useRef<string | null>(null);
   const smokePhaseRef = useRef<SmokePhase>("idle");
@@ -530,7 +531,7 @@ export function UpdatePanel(props: {
       // review B4：unavailable 结果不 setUpdate，保持 update 为 null（check 开始时已 setUpdate(null)），
       // 避免空 latest_version / action=none 的 unavailable 结果污染 update state。
       if (result.reason !== "none") {
-        const message = result.message ?? "无可用更新";
+        const message = getUpdateCheckReasonMessage(result.reason, result.message);
         setError(message);
         if (smokeAutomation) {
           void completeSmoke("failed", "check", message);
@@ -751,136 +752,151 @@ export function UpdatePanel(props: {
 
   return (
     <div className="space-y-5">
+      {/* 高级选项：渠道选择 + 网络路由，默认折叠 */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">更新源</span>
-        </div>
-        <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
-          <div className="flex items-center justify-between py-1">
-            <span className="text-sm font-medium text-[var(--app-text-secondary)]">类型</span>
-            <span className="text-sm font-bold text-[var(--app-text)]">内置客户端更新源</span>
-          </div>
-          <div className="border-t border-[var(--app-border-subtle)]" />
-          <div className="flex items-center justify-between py-1 relative">
-            <span className="text-sm font-medium text-[var(--app-text-secondary)]">更新渠道</span>
-            <div className="relative">
-              <button
-                id="channel-select"
-                type="button"
-                aria-haspopup="listbox"
-                aria-expanded={isChannelDropdownOpen}
-                onClick={() => setIsChannelDropdownOpen((prev) => !prev)}
-                disabled={isBusy}
-                className="bg-[#1f2229] border-[1.5px] border-[#fed330] hover:bg-white/5 rounded-full px-4 py-1.5 text-sm text-[#fed330] font-semibold flex items-center justify-between space-x-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <span>{channel === "stable" ? "stable (稳定版)" : "nightly (测试版)"}</span>
-                <svg
-                  viewBox="0 0 24 24"
-                  className={`w-3.5 h-3.5 fill-none stroke-current stroke-[3] transition-transform duration-200 ${
-                    isChannelDropdownOpen ? "rotate-180" : ""
-                  }`}
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              <AnimatePresence>
-                {isChannelDropdownOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-40 cursor-default"
-                      onClick={() => setIsChannelDropdownOpen(false)}
-                    />
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95, y: -8 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, y: -8 }}
-                      transition={{ duration: 0.15, ease: "easeOut" }}
-                      className="absolute right-0 mt-1.5 w-44 bg-[#1f2229] border border-[#fed330]/30 rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] py-1.5 z-50 overflow-hidden"
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((prev) => !prev)}
+          className="flex w-full items-center justify-between rounded-lg bg-black/20 border border-[var(--app-border-subtle)] px-4 py-2.5 text-sm font-bold text-[var(--app-text-muted)] cursor-pointer transition-colors hover:bg-black/30"
+        >
+          <span>高级选项</span>
+          <span className="text-xs font-semibold">{showAdvanced ? "收起" : "展开"}</span>
+        </button>
+        {showAdvanced ? (
+          <>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
+                <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">更新源</span>
+              </div>
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-sm font-medium text-[var(--app-text-secondary)]">类型</span>
+                  <span className="text-sm font-bold text-[var(--app-text)]">内置客户端更新源</span>
+                </div>
+                <div className="border-t border-[var(--app-border-subtle)]" />
+                <div className="flex items-center justify-between py-1 relative">
+                  <span className="text-sm font-medium text-[var(--app-text-secondary)]">更新渠道</span>
+                  <div className="relative">
+                    <button
+                      id="channel-select"
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={isChannelDropdownOpen}
+                      onClick={() => setIsChannelDropdownOpen((prev) => !prev)}
+                      disabled={isBusy}
+                      className="bg-[#1f2229] border-[1.5px] border-[#fed330] hover:bg-white/5 rounded-full px-4 py-1.5 text-sm text-[#fed330] font-semibold flex items-center justify-between space-x-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {[
-                        { value: "stable", label: "stable (稳定版)" },
-                        { value: "nightly", label: "nightly (测试版)" }
-                      ].map((opt) => {
-                        const isSelected = channel === opt.value;
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() => {
-                              resetResult();
-                              setChannel(opt.value);
-                              setIsChannelDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-4 py-2 text-sm font-semibold transition-colors duration-150 ${
-                              isSelected
-                                ? "bg-white/10 text-white font-bold"
-                                : "text-[#c8c9cc] hover:bg-white/5 hover:text-white"
-                            }`}
+                      <span>{channel === "stable" ? "stable (稳定版)" : "nightly (测试版)"}</span>
+                      <svg
+                        viewBox="0 0 24 24"
+                        className={`w-3.5 h-3.5 fill-none stroke-current stroke-[3] transition-transform duration-200 ${
+                          isChannelDropdownOpen ? "rotate-180" : ""
+                        }`}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                    <AnimatePresence>
+                      {isChannelDropdownOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-40 cursor-default"
+                            onClick={() => setIsChannelDropdownOpen(false)}
+                          />
+                          <motion.div
+                            initial={{ opacity: 0, scale: 0.95, y: -8 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: -8 }}
+                            transition={{ duration: 0.15, ease: "easeOut" }}
+                            className="absolute right-0 mt-1.5 w-44 bg-[#1f2229] border border-[#fed330]/30 rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.5)] py-1.5 z-50 overflow-hidden"
                           >
-                            {opt.label}
-                          </button>
-                        );
-                      })}
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
+                            {[
+                              { value: "stable", label: "stable (稳定版)" },
+                              { value: "nightly", label: "nightly (测试版)" }
+                            ].map((opt) => {
+                              const isSelected = channel === opt.value;
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  onClick={() => {
+                                    resetResult();
+                                    setChannel(opt.value);
+                                    setIsChannelDropdownOpen(false);
+                                  }}
+                                  className={`w-full text-left px-4 py-2 text-sm font-semibold transition-colors duration-150 ${
+                                    isSelected
+                                      ? "bg-white/10 text-white font-bold"
+                                      : "text-[#c8c9cc] hover:bg-white/5 hover:text-white"
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
-          <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">网络路由</span>
-        </div>
-        <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
-          <div className="flex flex-wrap gap-2">
-            {(["direct", "auto_detect", "local_proxy"] as const).map((mode) => {
-              const active = activeRouteMode === mode;
-              return (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => {
-                    resetResult();
-                    void props.onUpdateSettings(updateNetworkRoute(props.settings, mode, routeUrlDraft));
-                  }}
-                  disabled={isBusy}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold tracking-wide transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
-                    active
-                      ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
-                      : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-black/20"
-                  }`}
-                >
-                  {networkRouteLabel(mode)}
-                </button>
-              );
-            })}
-          </div>
-          <p className="text-xs leading-5 text-[var(--app-text-dim)]">
-            {networkRouteHint(activeRouteMode)}
-          </p>
-          {activeRouteMode === "local_proxy" ? (
-            <div className="pt-2 border-t border-[var(--app-border-subtle)]">
-              <input
-                aria-label="本地代理地址"
-                value={routeUrlDraft}
-                onChange={(event) => {
-                  resetResult();
-                  setRouteUrlDraft(event.target.value);
-                }}
-                onBlur={() => {
-                  void props.onUpdateSettings(updateNetworkRoute(props.settings, activeRouteMode, routeUrlDraft));
-                }}
-                disabled={isBusy}
-                className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
-                placeholder={networkRoutePlaceholder(activeRouteMode)}
-                spellCheck={false}
-              />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-1">
+                <span className="text-[var(--app-text-muted)] text-sm font-bold uppercase tracking-wider">网络路由</span>
+              </div>
+              <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
+                <div className="flex flex-wrap gap-2">
+                  {(["direct", "auto_detect", "local_proxy"] as const).map((mode) => {
+                    const active = activeRouteMode === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => {
+                          resetResult();
+                          void props.onUpdateSettings(updateNetworkRoute(props.settings, mode, routeUrlDraft));
+                        }}
+                        disabled={isBusy}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-semibold tracking-wide transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-55 ${
+                          active
+                            ? "bg-[var(--app-border-strong)] text-[var(--app-text)] shadow-sm border border-[var(--app-border-subtle)]"
+                            : "text-[var(--app-text-muted)] hover:text-[var(--app-text-secondary)] hover:bg-black/20"
+                        }`}
+                      >
+                        {networkRouteLabel(mode)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs leading-5 text-[var(--app-text-dim)]">
+                  {networkRouteHint(activeRouteMode)}
+                </p>
+                {activeRouteMode === "local_proxy" ? (
+                  <div className="pt-2 border-t border-[var(--app-border-subtle)]">
+                    <input
+                      aria-label="本地代理地址"
+                      value={routeUrlDraft}
+                      onChange={(event) => {
+                        resetResult();
+                        setRouteUrlDraft(event.target.value);
+                      }}
+                      onBlur={() => {
+                        void props.onUpdateSettings(updateNetworkRoute(props.settings, activeRouteMode, routeUrlDraft));
+                      }}
+                      disabled={isBusy}
+                      className="bg-[var(--app-surface)] border border-[var(--app-border-subtle)] rounded-lg px-3.5 py-2 w-full text-sm text-[var(--app-text-secondary)] focus:outline-none focus:border-[var(--app-accent)] font-mono transition-colors"
+                      placeholder={networkRoutePlaceholder(activeRouteMode)}
+                      spellCheck={false}
+                    />
+                  </div>
+                ) : null}
+              </div>
             </div>
-          ) : null}
-        </div>
+          </>
+        ) : null}
       </div>
 
       <div className="space-y-3">

@@ -154,7 +154,7 @@ export default function App() {
     },
     tauriRuntime
   });
-  useAutoUpdate({
+  const { autoUpdateState } = useAutoUpdate({
     savedAppSettings,
     selectedClient,
     settingsState,
@@ -635,6 +635,7 @@ export default function App() {
                               <img src={game.pvCardImage} alt={game.name} className="w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
                               {isSelected ? <div className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded bg-yellow-400 text-black text-[9px] font-black uppercase tracking-wider block z-10">使用中</div> : null}
+                              {isSelected && autoUpdateState === "available" ? <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded bg-emerald-500 text-white text-[9px] font-black uppercase tracking-wider block z-10">可更新</div> : null}
                               <AnimatePresence>
                                 {isCardHovered ? (
                                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16, ease: "easeOut" }} className="absolute inset-0 bg-black/75 flex items-center justify-center pointer-events-none z-20">
