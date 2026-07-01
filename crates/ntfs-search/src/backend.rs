@@ -14,7 +14,10 @@ use std::path::{Path, PathBuf};
 /// 单个 root 的扫描任务句柄：root 路径 + 后台异步扫描的 JoinHandle。
 /// 拆出 type alias 是为了把过长的 `Vec<(PathBuf, JoinHandle<Result<...>>)>`
 /// 从函数体内挪出来（clippy::type_complexity）。
-type ScanTask = (PathBuf, tokio::task::JoinHandle<Result<Vec<FileEntry>, ScanError>>);
+type ScanTask = (
+    PathBuf,
+    tokio::task::JoinHandle<Result<Vec<FileEntry>, ScanError>>,
+);
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio_util::sync::CancellationToken;
 
@@ -76,8 +79,7 @@ pub(super) fn select_backend_for_root(root: &Path) -> SelectedBackend {
     // 都会被 type-check，导致 macOS 编译时 `windows::volume::xxx` 解析失败。
     #[cfg(windows)]
     let requested = {
-        let cached = windows::volume::path_to_drive_letter(root)
-            .and_then(lookup_cached_backend);
+        let cached = windows::volume::path_to_drive_letter(root).and_then(lookup_cached_backend);
         cached.unwrap_or_else(|| probe_windows_backend_kind(root))
     };
     #[cfg(not(windows))]
@@ -127,9 +129,7 @@ fn probe_windows_backend_kind(_root: &Path) -> BackendKind {
     if windows::elevation::is_process_elevated() {
         BackendKind::Mft
     } else {
-        tracing::debug!(
-            "process not elevated; skipping Mft/Usn probe, using Walkdir directly"
-        );
+        tracing::debug!("process not elevated; skipping Mft/Usn probe, using Walkdir directly");
         BackendKind::Walkdir
     }
 }
@@ -193,8 +193,7 @@ pub(super) async fn scan_all_roots(
     // walkdir 内部 emit 的 EntriesFound.found 是 per-drive current_len，并行下
     // 直接 emit 给前端会让覆盖式 setFoundCount 倒退；GlobalizingSink 拦截后
     // 转成"所有盘 last 值之和"，前端覆盖式更新即正确。
-    let per_drive_last: Arc<Mutex<HashMap<PathBuf, usize>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let per_drive_last: Arc<Mutex<HashMap<PathBuf, usize>>> = Arc::new(Mutex::new(HashMap::new()));
     let max_results = opts.max_results;
 
     // spawn 所有盘的 scan_root 并发执行；保留 (root, task) 用于 join 后聚合。
@@ -351,8 +350,14 @@ mod tests {
 
     #[test]
     fn normalize_drive_root_appends_separator_for_bare_drive_letter() {
-        assert_eq!(normalize_drive_root(PathBuf::from("D:")), PathBuf::from("D:\\"));
-        assert_eq!(normalize_drive_root(PathBuf::from("c:")), PathBuf::from("c:\\"));
+        assert_eq!(
+            normalize_drive_root(PathBuf::from("D:")),
+            PathBuf::from("D:\\")
+        );
+        assert_eq!(
+            normalize_drive_root(PathBuf::from("c:")),
+            PathBuf::from("c:\\")
+        );
     }
 
     #[test]
@@ -409,8 +414,12 @@ mod tests {
             if let ProgressEvent::EntriesFound { found } = ev {
                 let mut cur = max_clone.load(Ordering::Relaxed);
                 while found > cur {
-                    match max_clone.compare_exchange(cur, found, Ordering::Relaxed, Ordering::Relaxed)
-                    {
+                    match max_clone.compare_exchange(
+                        cur,
+                        found,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
                         Ok(_) => break,
                         Err(actual) => cur = actual,
                     }
@@ -455,10 +464,14 @@ mod tests {
             .with_max_results(4);
 
         let start = Instant::now();
-        let entries =
-            scan_all_roots(opts.roots.clone(), opts, Arc::new(crate::NoopSink), CancellationToken::new())
-                .await
-                .unwrap();
+        let entries = scan_all_roots(
+            opts.roots.clone(),
+            opts,
+            Arc::new(crate::NoopSink),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         let elapsed = start.elapsed();
 
         // 软上限：总匹配可能略多（cancel 前已在扫的盘会完成当前批次）
@@ -506,12 +519,7 @@ mod tests {
         // 全局累计单调不减（GlobalizingSink 求和）
         let mut prev = 0;
         for &t in totals.iter() {
-            assert!(
-                t >= prev,
-                "全局 EntriesFound 应单调不减：{} < {}",
-                t,
-                prev
-            );
+            assert!(t >= prev, "全局 EntriesFound 应单调不减：{} < {}", t, prev);
             prev = t;
         }
         // walkdir 在小目录上只在"首次命中"时 emit 一次 EntriesFound（local=1），

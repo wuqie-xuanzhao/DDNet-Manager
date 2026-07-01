@@ -137,9 +137,7 @@ impl Backend for WalkdirBackend {
                     };
 
                     let current_len = {
-                        let mut guard = found
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
+                        let mut guard = found.lock().unwrap_or_else(|e| e.into_inner());
                         guard.push(FileEntry::from_metadata(path, &meta));
                         guard.len()
                     };
@@ -160,9 +158,7 @@ impl Backend for WalkdirBackend {
                     }
 
                     if n % 1000 == 0 {
-                        let mut le = last_emit
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
+                        let mut le = last_emit.lock().unwrap_or_else(|e| e.into_inner());
                         if le.elapsed() > std::time::Duration::from_millis(100) {
                             progress.emit(ProgressEvent::EntriesFound { found: current_len });
                             *le = Instant::now();
@@ -181,9 +177,7 @@ impl Backend for WalkdirBackend {
                 })
             });
 
-            let mut guard = found
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut guard = found.lock().unwrap_or_else(|e| e.into_inner());
             Ok(std::mem::take(&mut *guard))
         })
         .await
@@ -199,7 +193,12 @@ mod tests {
 
     async fn scan(backend: &WalkdirBackend, root: &Path, opts: &NtfsScanOptions) -> Vec<FileEntry> {
         backend
-            .scan_root(root, opts, Arc::new(crate::NoopSink), CancellationToken::new())
+            .scan_root(
+                root,
+                opts,
+                Arc::new(crate::NoopSink),
+                CancellationToken::new(),
+            )
             .await
             .unwrap()
     }
@@ -234,8 +233,7 @@ mod tests {
         for i in 0..100 {
             fs::write(tmp.path().join(format!("f{i}.txt")), b"x").unwrap();
         }
-        let opts = NtfsScanOptions::new(|n| n.ends_with(".exe"))
-            .with_max_records_scanned(10);
+        let opts = NtfsScanOptions::new(|n| n.ends_with(".exe")).with_max_records_scanned(10);
         let entries = scan(&WalkdirBackend, tmp.path(), &opts).await;
         assert!(entries.is_empty());
     }
@@ -274,7 +272,10 @@ mod tests {
         // 黑名单目录也有目标文件，但应该被跳过
         fs::create_dir_all(tmp.path().join("node_modules").join("pkg")).unwrap();
         fs::write(
-            tmp.path().join("node_modules").join("pkg").join("DDNet.exe"),
+            tmp.path()
+                .join("node_modules")
+                .join("pkg")
+                .join("DDNet.exe"),
             b"node_modules",
         )
         .unwrap();
@@ -290,7 +291,11 @@ mod tests {
             .iter()
             .map(|e| e.path.to_string_lossy().replace('\\', "/"))
             .collect();
-        assert_eq!(entries.len(), 2, "应找到主目录 + sub，跳过 node_modules / .git");
+        assert_eq!(
+            entries.len(),
+            2,
+            "应找到主目录 + sub，跳过 node_modules / .git"
+        );
         assert!(paths.iter().any(|p| p.ends_with("/DDNet.exe")));
         assert!(paths.iter().any(|p| p.contains("/sub/DDNet.exe")));
         assert!(!paths.iter().any(|p| p.contains("node_modules")));

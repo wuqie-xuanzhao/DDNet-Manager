@@ -564,7 +564,10 @@ mod tests {
 
         // admin 应走 USN 主路径（downgrades=0）；普通用户 fallback Walkdir（downgrades=1）
         if is_elevated {
-            assert_eq!(downgrade_count, 0, "elevated process should use USN directly");
+            assert_eq!(
+                downgrade_count, 0,
+                "elevated process should use USN directly"
+            );
         } else {
             assert!(downgrade_count >= 1, "non-elevated process should fallback");
         }

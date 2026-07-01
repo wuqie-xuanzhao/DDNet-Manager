@@ -563,9 +563,15 @@ mod tests {
 
         // admin 应走 MFT 主路径（downgrades=0）；普通用户 Mft→Usn→Walkdir（downgrades=2）
         if is_elevated {
-            assert_eq!(downgrade_count, 0, "elevated process should use MFT directly");
+            assert_eq!(
+                downgrade_count, 0,
+                "elevated process should use MFT directly"
+            );
         } else {
-            assert!(downgrade_count >= 2, "non-elevated process should fallback Mft→Usn→Walkdir");
+            assert!(
+                downgrade_count >= 2,
+                "non-elevated process should fallback Mft→Usn→Walkdir"
+            );
         }
 
         assert!(
