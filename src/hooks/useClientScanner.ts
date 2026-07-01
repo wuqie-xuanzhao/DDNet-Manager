@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ClientInstallation, ScanClientInstallationsOptions } from "../types";
 import { appendScanEventCapped, type ScanProgressEvent } from "../lib/scanProgress";
+import { cancelScanClients, scanClientsViaMft } from "../lib/tauri";
 
 export interface ScanClientsViaMftParams {
   options?: ScanClientInstallationsOptions;
@@ -79,10 +79,7 @@ export function useClientScanner(): UseClientScannerResult {
       setEvents([]);
       setFoundCount(0);
       try {
-        const installations = await invoke<ClientInstallation[]>(
-          "scan_clients_via_mft",
-          { options: params?.options ?? null }
-        );
+        const installations = await scanClientsViaMft(params?.options);
         return installations;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -103,7 +100,7 @@ export function useClientScanner(): UseClientScannerResult {
 
   const cancel = useCallback(async (): Promise<boolean> => {
     try {
-      const cancelled = await invoke<boolean>("cancel_scan_clients");
+      const cancelled = await cancelScanClients();
       if (cancelled) {
         // 后端确认取消，前端立即停止"扫描中"显示；实际 scan_clients_via_mft
         // 会在 master_cancel 触发后秒级返回，UI 状态对齐避免一直 spinner

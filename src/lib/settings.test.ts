@@ -27,4 +27,13 @@ describe("updateNetworkRoute", () => {
     });
     expect(networkRouteUrl(next)).toBe("http://127.0.0.1:7890");
   });
+
+  it("stores auto_detect mode without requiring a proxy url", () => {
+    const next = updateNetworkRoute(defaultAppSettings, "auto_detect", "http://127.0.0.1:7890");
+
+    expect(next.network_route).toEqual({
+      mode: "auto_detect",
+      local_proxy_url: null
+    });
+  });
 });

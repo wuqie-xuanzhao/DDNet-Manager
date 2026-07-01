@@ -30,6 +30,13 @@ export function buildNetworkRoute(routeMode: NetworkRouteMode, routeUrl: string)
     return null;
   }
 
+  if (routeMode === "auto_detect") {
+    return {
+      mode: routeMode,
+      local_proxy_url: null
+    };
+  }
+
   const trimmedUrl = routeUrl.trim();
   if (!trimmedUrl) {
     throw new Error("route_url_invalid");
@@ -45,8 +52,10 @@ export function networkRouteLabel(mode: NetworkRouteMode) {
   switch (mode) {
     case "direct":
       return "直接下载";
+    case "auto_detect":
+      return "自动检测";
     case "local_proxy":
-      return "本地代理";
+      return "手动填写";
   }
 }
 
@@ -54,6 +63,8 @@ export function networkRouteLabel(mode: NetworkRouteMode) {
 export function networkRoutePlaceholder(mode: NetworkRouteMode): string {
   switch (mode) {
     case "direct":
+      return "";
+    case "auto_detect":
       return "";
     case "local_proxy":
       return "http://127.0.0.1:7890";
@@ -65,6 +76,8 @@ export function networkRouteHint(mode: NetworkRouteMode): string {
   switch (mode) {
     case "direct":
       return "直接访问 github.com 与 api.github.com。若你的网络无法访问 GitHub，请改用本地代理。";
+    case "auto_detect":
+      return "自动检测系统代理（环境变量 HTTPS_PROXY 或 Windows 系统代理）。适合已配置 Clash/V2Ray 系统代理的用户，无需手动填写地址。";
     case "local_proxy":
       return "通过本地代理（如 Clash、v2ray 的本地端口）访问 GitHub。填写你的代理地址，常见为 http://127.0.0.1:7890。所有下载与更新请求都会走这个代理隧道。";
   }
@@ -142,10 +155,22 @@ export function deriveAutoUpdateView(input: {
   }
 
   if (!input.snapshot.update) {
+    // 兜底：catch 分支已由 error 优先处理，正常成功路径 update 一定非 null。
+    // 到这里说明状态异常，按 error 展示而非误判为"已是最新版"。
     return {
       autoUpdate: null,
-      autoUpdateError: null,
-      autoUpdateState: "current" as const
+      autoUpdateError: "更新检查未返回有效结果。",
+      autoUpdateState: "error" as const
+    };
+  }
+
+  // reason != "none" 表示检查不可用（catalog 无条目/无 release/无资产/不支持自动更新/manifest 无条目）。
+  // 旧逻辑把这些情况误判为 "current"（已是最新版），这里改为展示后端 message 的 error state。
+  if (input.snapshot.update.reason !== "none") {
+    return {
+      autoUpdate: null,
+      autoUpdateError: input.snapshot.update.message ?? "当前客户端无法检查自动更新。",
+      autoUpdateState: "error" as const
     };
   }
 

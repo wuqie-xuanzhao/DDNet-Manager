@@ -11,6 +11,7 @@ import {
   listDownloadJobRecoveries,
   listInstallHistory,
   reportLocalSmokeResult,
+  rollbackClientInstallation,
   setDefaultClient,
   startUpdateDownload,
   upsertClientInstallation,
@@ -99,6 +100,8 @@ function installHistoryStatusLabel(status: InstallHistoryRecord["status"]) {
       return "安装完成";
     case "failed":
       return "安装失败";
+    case "rolled_back":
+      return "已回滚";
   }
 }
 
@@ -522,15 +525,19 @@ export function UpdatePanel(props: {
       if (latestRequestIdRef.current !== requestId) {
         return;
       }
-      setUpdate(result);
-      if (!result) {
-        const message = "无可用更新";
+      // reason != "none" 表示检查不可用（catalog 无条目/无 release/无资产/不支持自动更新/manifest 无条目）。
+      // 旧逻辑把这些情况误判为"无可用更新"统一文案，这里改用后端 message 让用户知道具体原因。
+      // review B4：unavailable 结果不 setUpdate，保持 update 为 null（check 开始时已 setUpdate(null)），
+      // 避免空 latest_version / action=none 的 unavailable 结果污染 update state。
+      if (result.reason !== "none") {
+        const message = result.message ?? "无可用更新";
         setError(message);
         if (smokeAutomation) {
           void completeSmoke("failed", "check", message);
         }
         return;
       }
+      setUpdate(result);
       if (smokeAutomation) {
         if (!result.needs_update) {
           void completeSmoke("failed", "check", result.message ?? "已最新");
@@ -683,6 +690,31 @@ export function UpdatePanel(props: {
     }
   }, [completeSmoke, refreshClientArtifacts, setError, setIsBusy, setJob, setNotice, smokeAutomation]);
 
+  // 回滚一次已完成的安装事务。后端会把磁盘上的 rollback 目录 rename 回 install_dir，
+  // 并把原 history 状态改为 rolled_back。回滚成功后必须刷新客户端列表与当前 client，
+  // 否则 UI 仍展示新版本号。
+  const rollbackHistory = useCallback(async (historyId: string) => {
+    setError(null);
+    setNotice("正在回滚");
+    setIsBusy(true);
+    try {
+      const updatedClient = await rollbackClientInstallation(historyId);
+      // 同步当前选中客户端与客户端列表，让 UI 立即反映回滚后的版本号。
+      setClient((prev) => (prev && prev.id === updatedClient.id ? updatedClient : prev));
+      setClients((prev) => prev.map((c) => (c.id === updatedClient.id ? updatedClient : c)));
+      // 清空之前检查/下载的旧状态，避免旧结果与新回滚状态并存。
+      setUpdate(null);
+      setJob(null);
+      await refreshClientArtifacts();
+      setNotice("已回滚到上一版本");
+    } catch (err) {
+      setNotice(null);
+      setError(getUpdateErrorMessage(err));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [refreshClientArtifacts, setClient, setClients, setError, setIsBusy, setNotice, setUpdate, setJob]);
+
   useEffect(() => {
     if (!smokeEnabled || hydratedKey !== hydrationKey || isBusy || smokeReportedRef.current) {
       return;
@@ -804,7 +836,7 @@ export function UpdatePanel(props: {
         </div>
         <div className="bg-[var(--app-input)] border border-[var(--app-border-subtle)] rounded-xl p-4 space-y-3.5">
           <div className="flex flex-wrap gap-2">
-            {(["direct", "local_proxy"] as const).map((mode) => {
+            {(["direct", "auto_detect", "local_proxy"] as const).map((mode) => {
               const active = activeRouteMode === mode;
               return (
                 <button
@@ -829,7 +861,7 @@ export function UpdatePanel(props: {
           <p className="text-xs leading-5 text-[var(--app-text-dim)]">
             {networkRouteHint(activeRouteMode)}
           </p>
-          {activeRouteMode !== "direct" ? (
+          {activeRouteMode === "local_proxy" ? (
             <div className="pt-2 border-t border-[var(--app-border-subtle)]">
               <input
                 aria-label="本地代理地址"
@@ -894,7 +926,7 @@ export function UpdatePanel(props: {
           </button>
         </div>
 
-        {update?.action === "open_url" ? (
+        {update?.action === "open_url" && update.reason === "none" ? (
           <div className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-3">
             <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
               <span className="rounded-full bg-black/20 px-3 py-1">{updateSourceLabel(update.source_kind)}</span>
@@ -917,7 +949,7 @@ export function UpdatePanel(props: {
               </button>
             ) : null}
           </div>
-        ) : update ? (
+        ) : update && update.reason === "none" ? (
           <div className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-3">
             <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
               <span className="rounded-full bg-black/20 px-3 py-1">最新 {update.latest_version}</span>
@@ -1000,18 +1032,37 @@ export function UpdatePanel(props: {
                   ) : null}
                 </div>
               ))}
-              {visibleInstallHistory.map((record) => (
-                <div key={record.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
-                    <span className="rounded-full bg-black/20 px-3 py-1">版本 {record.version}</span>
-                    <span className={`rounded-full px-3 py-1 border ${record.status === "completed" ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-red-500/15 text-red-400 border-red-500/30"}`}>
-                      {installHistoryStatusLabel(record.status)}
-                    </span>
+              {visibleInstallHistory.map((record) => {
+                const canRollback = record.status === "completed" && Boolean(record.rollback_path);
+                const statusTone =
+                  record.status === "completed"
+                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                    : record.status === "rolled_back"
+                      ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                      : "bg-red-500/15 text-red-400 border-red-500/30";
+                return (
+                  <div key={record.id} className="rounded-xl bg-[var(--app-input)] border border-[var(--app-border-subtle)] p-4 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-black text-[var(--app-text-muted)]">
+                      <span className="rounded-full bg-black/20 px-3 py-1">版本 {record.version}</span>
+                      <span className={`rounded-full px-3 py-1 border ${statusTone}`}>
+                        {installHistoryStatusLabel(record.status)}
+                      </span>
+                    </div>
+                    <div className="text-xs font-semibold text-[var(--app-text-dim)]">{formatCompletedAt(record.completed_at)}</div>
+                    {record.error ? <div className="text-sm font-bold text-red-400">{getUpdateErrorMessage(record.error)}</div> : null}
+                    {canRollback ? (
+                      <button
+                        type="button"
+                        onClick={() => void rollbackHistory(record.id)}
+                        disabled={isBusy}
+                        className="h-9 rounded-lg bg-[var(--app-surface)] border border-[var(--app-border-subtle)] px-4 text-sm font-bold text-[var(--app-text)] hover:border-amber-400/60 hover:text-amber-400 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        回滚到此版本之前
+                      </button>
+                    ) : null}
                   </div>
-                  <div className="text-xs font-semibold text-[var(--app-text-dim)]">{formatCompletedAt(record.completed_at)}</div>
-                  {record.error ? <div className="text-sm font-bold text-red-400">{getUpdateErrorMessage(record.error)}</div> : null}
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : null}
         </div>

@@ -48,7 +48,20 @@ describe("useAutoUpdate", () => {
 
   it("retries the same request key after auto check is disabled and enabled again", async () => {
     checkClientUpdate.mockRejectedValueOnce(new Error("network down"));
-    checkClientUpdate.mockResolvedValueOnce(null);
+    // checkClientUpdate 不再返回 null：用 reason="none" + needs_update=false 表示"已是最新版"。
+    checkClientUpdate.mockResolvedValueOnce({
+      client_id: "qmclient",
+      channel: "stable",
+      current_version: "2.62.3",
+      latest_version: "2.62.3",
+      asset: { platform: "windows-x86_64", asset_url: "", sha256: "", size: 0 },
+      needs_update: false,
+      source_kind: "github_release",
+      action: "none",
+      action_url: null,
+      message: null,
+      reason: "none"
+    });
 
     const { rerender, result } = renderHook(
       (props: { autoCheck: boolean }) =>

@@ -57,7 +57,7 @@ const RELEASE_CACHE_TTL_MS = 5 * 60 * 1000;
 /// 跨 tab 共享的 release 元数据缓存：client_id → { check, fetchedAt }。
 /// 避免每个 tab 都打一次 GitHub API。组件层用模块级 Map 持久化。
 type ReleaseCacheEntry = {
-  check: ClientUpdateCheck | null;
+  check: ClientUpdateCheck;
   fetchedAt: number;
 };
 const releaseCache = new Map<string, ReleaseCacheEntry>();
@@ -196,15 +196,17 @@ export function useClientInstaller(params: {
   /// 把 release 元数据合并到当前 installed state。
   /// 只在 state 是 installed 时刷新 latest/needsUpdate/assetSize/releaseUrl。
   /// 必须声明在 fetchRelease 前（fetchRelease 的缓存命中分支会调它）。
-  const applyReleaseToState = useCallback((check: ClientUpdateCheck | null) => {
+  /// reason != "none" 表示检查不可用（无 release/无资产等），保留 prev 已有版本信息不清空。
+  const applyReleaseToState = useCallback((check: ClientUpdateCheck) => {
     setState((prev) => {
       if (prev.kind !== "installed") return prev;
+      if (check.reason !== "none") return prev;
       return {
         ...prev,
-        latest: check?.latest_version ?? null,
-        needsUpdate: Boolean(check?.needs_update),
-        assetSize: check?.asset.size ?? null,
-        releaseUrl: check?.action_url ?? null
+        latest: check.latest_version || null,
+        needsUpdate: Boolean(check.needs_update),
+        assetSize: check.asset.size || null,
+        releaseUrl: check.action_url ?? null
       };
     });
   }, []);
@@ -259,7 +261,11 @@ export function useClientInstaller(params: {
         return;
       }
 
-      releaseCache.set(catalogClientId, { check, fetchedAt: Date.now() });
+      // review B3：只在 reason === "none"（检查成功）时缓存。unavailable 结果
+      // （无 release/无资产等）不缓存，避免 5 分钟内即使后端已修复仍命中旧 unavailable。
+      if (check.reason === "none") {
+        releaseCache.set(catalogClientId, { check, fetchedAt: Date.now() });
+      }
       applyReleaseToState(check);
     } catch (err) {
       console.warn(`[useClientInstaller] fetchRelease failed for ${catalogClientId}:`, err);

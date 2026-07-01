@@ -19,6 +19,7 @@ const listDownloadJobRecoveries = vi.fn();
 const listInstallHistory = vi.fn();
 const loadAppSettings = vi.fn();
 const reportLocalSmokeResult = vi.fn();
+const rollbackClientInstallation = vi.fn();
 const closeWindow = vi.fn();
 const validateClientDir = vi.fn();
 const upsertClientInstallation = vi.fn();
@@ -50,6 +51,7 @@ vi.mock("../../lib/tauri", async () => {
     listInstallHistory: (...args: unknown[]) => listInstallHistory(...args),
     loadAppSettings: (...args: unknown[]) => loadAppSettings(...args),
     reportLocalSmokeResult: (...args: unknown[]) => reportLocalSmokeResult(...args),
+    rollbackClientInstallation: (...args: unknown[]) => rollbackClientInstallation(...args),
     startUpdateDownload: vi.fn(),
     upsertClientInstallation: (...args: unknown[]) => upsertClientInstallation(...args),
     validateClientDir: (...args: unknown[]) => validateClientDir(...args)
@@ -112,7 +114,9 @@ const mockSettings = {
   autostart: false,
   exit_game_show_launcher: true,
   close_behavior: "minimize_to_tray",
-  allow_silent_update: true
+  allow_silent_update: true,
+  extra_trusted_hosts: [],
+  mirror_prefixes: []
 };
 const mockOnUpdateSettings = vi.fn().mockResolvedValue(undefined);
 
@@ -120,9 +124,23 @@ describe("UpdatePanel event ownership", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listeners.clear();
-    checkClientUpdate.mockResolvedValue(null);
+    // checkClientUpdate 不再返回 null：默认返回"已是最新版"，避免触发 error 分支。
+    checkClientUpdate.mockResolvedValue({
+      client_id: "qmclient",
+      channel: "stable",
+      current_version: "1.0.0",
+      latest_version: "1.0.0",
+      asset: { platform: "windows-x86_64", asset_url: "", sha256: "", size: 0 },
+      needs_update: false,
+      source_kind: "github_release",
+      action: "none",
+      action_url: null,
+      message: null,
+      reason: "none"
+    });
     closeWindow.mockResolvedValue(undefined);
     reportLocalSmokeResult.mockResolvedValue(undefined);
+    rollbackClientInstallation.mockReset();
     getDefaultClient.mockResolvedValue(defaultClient);
     loadAppSettings.mockResolvedValue(mockSettings);
     listDownloadJobRecoveries.mockResolvedValue([]);
@@ -266,6 +284,79 @@ describe("UpdatePanel event ownership", () => {
     });
     await waitFor(() => {
       expect(closeWindow).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("exposes rollback entry for completed install history with rollback_path", async () => {
+    // 守卫缺口3：成功安装后保留的 rollback 目录必须能通过 IPC 回滚，
+    // 且只在 status=completed + rollback_path 非空时显示按钮。
+    const completedWithRollback = {
+      id: "install-completed-1",
+      job_id: "download-1",
+      client_installation_id: "client-current",
+      client_id: "qmclient",
+      version: "2.62.4",
+      asset_url: "https://example.com/QmClient.zip",
+      package_kind: "zip",
+      status: "completed" as const,
+      rollback_path: "D:/Games/QmClient.ddnet-manager-rollback-install-completed-1",
+      error: null,
+      completed_at: "2026-07-01T00:00:00Z"
+    };
+    const rolledBackRecord = {
+      id: "install-rolled-1",
+      job_id: "download-2",
+      client_installation_id: "client-current",
+      client_id: "qmclient",
+      version: "2.62.5",
+      asset_url: "https://example.com/QmClient.zip",
+      package_kind: "zip",
+      status: "rolled_back" as const,
+      rollback_path: "D:/Games/QmClient.ddnet-manager-rollback-install-rolled-1",
+      error: null,
+      completed_at: "2026-07-01T01:00:00Z"
+    };
+    const failedRecord = {
+      id: "install-failed-1",
+      job_id: "download-3",
+      client_installation_id: "client-current",
+      client_id: "qmclient",
+      version: "2.62.6",
+      asset_url: "https://example.com/QmClient.zip",
+      package_kind: "zip",
+      status: "failed" as const,
+      rollback_path: null,
+      error: "checksum mismatch",
+      completed_at: "2026-07-01T02:00:00Z"
+    };
+    listInstallHistory.mockResolvedValue([completedWithRollback, rolledBackRecord, failedRecord]);
+
+    render(<UpdatePanel settings={mockSettings} onUpdateSettings={mockOnUpdateSettings} />);
+
+    // 展开历史记录卡片
+    await waitFor(() => {
+      expect(listInstallHistory).toHaveBeenCalledWith("client-current");
+    });
+    const toggle = await screen.findByText(/展开（3）/);
+    await act(async () => {
+      toggle.click();
+    });
+
+    // 只有 completed + rollback_path 非空的记录应显示回滚按钮
+    const rollbackButtons = screen.getAllByRole("button", { name: "回滚到此版本之前" });
+    expect(rollbackButtons).toHaveLength(1);
+
+    // 点击回滚应调用 IPC，并把客户端记录刷成回滚后版本（version=null）
+    rollbackClientInstallation.mockResolvedValue({ ...defaultClient, version: null });
+    await act(async () => {
+      rollbackButtons[0].click();
+    });
+    await waitFor(() => {
+      expect(rollbackClientInstallation).toHaveBeenCalledWith("install-completed-1");
+    });
+    await waitFor(() => {
+      // notice 在客户端卡片和 visibleNotice 两处都渲染，用 getAllByText 兜底。
+      expect(screen.getAllByText("已回滚到上一版本").length).toBeGreaterThan(0);
     });
   });
 });

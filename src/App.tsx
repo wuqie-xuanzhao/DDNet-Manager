@@ -11,7 +11,7 @@ import NewsCard from "./components/launcher/NewsCard";
 import SocialSidebar from "./components/launcher/SocialSidebar";
 import type { GameConfig, GameNewsItem, SocialLink } from "./components/launcher/types";
 import VideoPlayer from "./components/launcher/VideoPlayer";
-import WindowControls from "./components/launcher/WindowControls";
+import WindowControls from "./components/layout/WindowControls";
 import { soundEngine } from "./components/launcher/audio";
 import { SettingsDialog, type SettingsSectionId } from "./components/settings/SettingsDialog";
 import { useAppSettings } from "./hooks/useAppSettings";

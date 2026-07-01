@@ -144,8 +144,8 @@ export function loadManifest(
   return invoke<UpdateManifest>("load_manifest", { url, networkRoute });
 }
 
-export function checkClientUpdate(request: CheckClientUpdateRequest): Promise<ClientUpdateCheck | null> {
-  return invoke<ClientUpdateCheck | null>("check_client_update", { request });
+export function checkClientUpdate(request: CheckClientUpdateRequest): Promise<ClientUpdateCheck> {
+  return invoke<ClientUpdateCheck>("check_client_update", { request });
 }
 
 export function startUpdateDownload(request: StartUpdateDownloadRequest): Promise<DownloadJob> {
@@ -170,6 +170,16 @@ export function listDownloadJobRecoveries(
 
 export function installDownloadedUpdate(jobId: string): Promise<DownloadJob> {
   return invoke<DownloadJob>("install_downloaded_update", { jobId });
+}
+
+/**
+ * 回滚一次已完成的安装事务，把磁盘上的客户端目录恢复到该次安装前的状态。
+ *
+ * 输入 historyId 必须对应一条 status="completed" 且 rollback_path 仍存在的安装历史。
+ * 成功后该 history 记录的 status 会被后端改为 "rolled_back"。
+ */
+export function rollbackClientInstallation(historyId: string): Promise<ClientInstallation> {
+  return invoke<ClientInstallation>("rollback_client_installation", { historyId });
 }
 
 export function launchClient(path: string): Promise<void> {

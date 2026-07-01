@@ -33,7 +33,9 @@ const baseSettings = {
   autostart: false,
   exit_game_show_launcher: true,
   close_behavior: "ask",
-  allow_silent_update: true
+  allow_silent_update: true,
+  extra_trusted_hosts: [],
+  mirror_prefixes: []
 };
 
 const hasUpdateResult: AppUpdateCheck = {

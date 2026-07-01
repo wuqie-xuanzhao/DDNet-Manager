@@ -49,7 +49,9 @@ const baseSettings = {
   autostart: false,
   exit_game_show_launcher: true,
   close_behavior: "ask",
-  allow_silent_update: true
+  allow_silent_update: true,
+  extra_trusted_hosts: [],
+  mirror_prefixes: []
 };
 
 function makeClient(overrides: Partial<ClientInstallation> = {}): ClientInstallation {
@@ -111,7 +113,8 @@ const releaseCheck: ClientUpdateCheck = {
   source_kind: "github_release",
   action: "download",
   action_url: "https://github.com/wxj881027/QmClient/releases",
-  message: null
+  message: null,
+  reason: "none"
 };
 
 describe("useClientInstaller", () => {

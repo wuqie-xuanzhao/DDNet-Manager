@@ -10,7 +10,9 @@ export const defaultAppSettings: AppSettings = {
   autostart: false,
   exit_game_show_launcher: true,
   close_behavior: "ask",
-  allow_silent_update: true
+  allow_silent_update: true,
+  extra_trusted_hosts: [],
+  mirror_prefixes: []
 };
 
 export function networkRouteUrl(settings: AppSettings) {
@@ -20,6 +22,16 @@ export function networkRouteUrl(settings: AppSettings) {
 export function updateNetworkRoute(settings: AppSettings, mode: NetworkRouteMode, rawUrl: string): AppSettings {
   if (mode === "direct") {
     return { ...settings, network_route: null };
+  }
+
+  if (mode === "auto_detect") {
+    return {
+      ...settings,
+      network_route: {
+        mode,
+        local_proxy_url: null
+      }
+    };
   }
 
   const trimmedUrl = rawUrl.trim();

@@ -137,7 +137,7 @@ export type UpsertClientInstallationRequest = {
   is_default?: boolean;
 };
 
-export type NetworkRouteMode = "direct" | "local_proxy";
+export type NetworkRouteMode = "direct" | "auto_detect" | "local_proxy";
 
 export type NetworkRouteConfig = {
   mode: NetworkRouteMode;
@@ -155,6 +155,10 @@ export type AppSettings = {
   exit_game_show_launcher: boolean;
   close_behavior: string;
   allow_silent_update: boolean;
+  /** 用户显式信任的额外下载 host（公共反代域名），对应后端 SSRF 白名单动态放行。 */
+  extra_trusted_hosts: string[];
+  /** 反代前缀列表；空时后端用 DEFAULT_MIRROR_PREFIXES 兜底。 */
+  mirror_prefixes: string[];
 };
 
 export type LocalSmokeResultStatus = "succeeded" | "failed";
@@ -171,7 +175,7 @@ export type LocalSmokeAutomationConfig = {
   closeWindowOnFinish: boolean;
 };
 
-export type InstallHistoryStatus = "completed" | "failed";
+export type InstallHistoryStatus = "completed" | "failed" | "rolled_back";
 
 export type InstallHistoryRecord = {
   id: string;
@@ -207,6 +211,14 @@ export type UpdateManifest = {
   clients: ManifestClient[];
 };
 
+export type UpdateCheckReason =
+  | "client_not_in_catalog"
+  | "no_release_for_channel"
+  | "no_asset_for_platform"
+  | "auto_update_disabled"
+  | "manifest_entry_missing"
+  | "none";
+
 export type ClientUpdateCheck = {
   client_id: string;
   channel: string;
@@ -223,6 +235,13 @@ export type ClientUpdateCheck = {
   action: "download" | "open_url" | "none";
   action_url: string | null;
   message: string | null;
+  /**
+   * 更新检查无法提供自动更新动作的具体原因。
+   * `action === "none"` 时：`reason === "none"` 表示确为已是最新版，
+   * 其他值表示检查不可用（catalog 无条目/无 release/无资产/不支持自动更新/manifest 无条目）。
+   * 前端据此区分"已是最新版"与"无法检查"，避免误判。
+   */
+  reason: UpdateCheckReason;
 };
 
 export type CheckClientUpdateRequest = {

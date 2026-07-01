@@ -5,15 +5,19 @@ import { useClientScanner } from "./useClientScanner";
 
 let emitHandler: ((e: { payload: ScanProgressEvent }) => void) | null = null;
 const unlisten = vi.fn();
-const invoke = vi.fn();
 const listen = vi.fn();
-
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: (...args: unknown[]) => invoke(...args)
-}));
+const scanClientsViaMft = vi.fn();
+const cancelScanClients = vi.fn();
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listen(...args)
+}));
+
+// useClientScanner 通过 lib/tauri.ts 集中封装调 IPC（规约：禁止裸 invoke），
+// 测试 mock 封装层而非底层 @tauri-apps/api/core invoke。
+vi.mock("../lib/tauri", () => ({
+  scanClientsViaMft: (...args: unknown[]) => scanClientsViaMft(...args),
+  cancelScanClients: (...args: unknown[]) => cancelScanClients(...args)
 }));
 
 describe("useClientScanner", () => {
@@ -24,7 +28,8 @@ describe("useClientScanner", () => {
       emitHandler = handler;
       return unlisten;
     });
-    invoke.mockResolvedValue([]);
+    scanClientsViaMft.mockResolvedValue([]);
+    cancelScanClients.mockResolvedValue(false);
   });
 
   it("subscribes scan-progress on mount and unsubscribes on unmount", async () => {
@@ -73,9 +78,9 @@ describe("useClientScanner", () => {
     expect(result.current.foundCount).toBe(0);
   });
 
-  it("start invokes scan_clients_via_mft, clears events, and returns installations", async () => {
+  it("start invokes scanClientsViaMft, clears events, and returns installations", async () => {
     const fakeClient = { id: "qmclient-abc", display_name: "QmClient" };
-    invoke.mockResolvedValueOnce([fakeClient]);
+    scanClientsViaMft.mockResolvedValueOnce([fakeClient]);
 
     const { result } = renderHook(() => useClientScanner());
 
@@ -91,14 +96,14 @@ describe("useClientScanner", () => {
       installations = await result.current.start();
     });
 
-    expect(invoke).toHaveBeenCalledWith("scan_clients_via_mft", { options: null });
+    expect(scanClientsViaMft).toHaveBeenCalledWith(undefined);
     expect(installations).toEqual([fakeClient]);
     expect(result.current.events).toHaveLength(0);
     expect(result.current.scanning).toBe(false);
   });
 
-  it("captures invoke error into error state and rethrows", async () => {
-    invoke.mockRejectedValueOnce(new Error("boom"));
+  it("captures scanClientsViaMft error into error state and rethrows", async () => {
+    scanClientsViaMft.mockRejectedValueOnce(new Error("boom"));
 
     const { result } = renderHook(() => useClientScanner());
 
@@ -110,8 +115,8 @@ describe("useClientScanner", () => {
     expect(result.current.scanning).toBe(false);
   });
 
-  it("cancel invokes cancel_scan_clients and returns true on success", async () => {
-    invoke.mockResolvedValueOnce(true);
+  it("cancel invokes cancelScanClients and returns true on success", async () => {
+    cancelScanClients.mockResolvedValueOnce(true);
     const { result } = renderHook(() => useClientScanner());
 
     let cancelled = false;
@@ -120,11 +125,11 @@ describe("useClientScanner", () => {
     });
 
     expect(cancelled).toBe(true);
-    expect(invoke).toHaveBeenCalledWith("cancel_scan_clients");
+    expect(cancelScanClients).toHaveBeenCalledWith();
   });
 
-  it("cancel returns false and sets error when invoke rejects", async () => {
-    invoke.mockRejectedValueOnce(new Error("network down"));
+  it("cancel returns false and sets error when cancelScanClients rejects", async () => {
+    cancelScanClients.mockRejectedValueOnce(new Error("network down"));
     const { result } = renderHook(() => useClientScanner());
 
     let cancelled = true;

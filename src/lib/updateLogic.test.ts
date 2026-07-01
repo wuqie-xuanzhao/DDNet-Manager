@@ -44,7 +44,8 @@ describe("buildNetworkRoute", () => {
 
   it("keeps route mode labels stable", () => {
     expect(networkRouteLabel("direct")).toBe("直接下载");
-    expect(networkRouteLabel("local_proxy")).toBe("本地代理");
+    expect(networkRouteLabel("auto_detect")).toBe("自动检测");
+    expect(networkRouteLabel("local_proxy")).toBe("手动填写");
   });
 
   it("exposes user-facing hint text explaining each route mode", () => {
@@ -67,6 +68,19 @@ describe("buildNetworkRoute", () => {
       local_proxy_url: "http://127.0.0.1:7890"
     });
   });
+
+  it("builds an auto_detect route without requiring a url", () => {
+    expect(buildNetworkRoute("auto_detect", "")).toEqual({
+      mode: "auto_detect",
+      local_proxy_url: null
+    });
+  });
+
+  it("exposes label and hint for auto_detect mode", () => {
+    expect(networkRouteLabel("auto_detect")).toBe("自动检测");
+    expect(networkRouteHint("auto_detect")).toContain("系统代理");
+    expect(networkRoutePlaceholder("auto_detect")).toBe("");
+  });
 });
 
 describe("deriveAutoUpdateView", () => {
@@ -85,7 +99,8 @@ describe("deriveAutoUpdateView", () => {
     source_kind: "manifest",
     action: "download",
     action_url: null,
-    message: null
+    message: null,
+    reason: "none"
   };
 
   it("hides stale update results when the active request key changes", () => {
@@ -104,6 +119,84 @@ describe("deriveAutoUpdateView", () => {
       autoUpdateError: null,
       autoUpdateState: "checking"
     });
+  });
+
+  it("treats non-none reason as error instead of current to avoid false latest", () => {
+    // 回归守卫：旧逻辑把 checkClientUpdate 返回的 null（表示检查不可用）误判为
+    // "current"（已是最新版）。新逻辑用 reason != "none" 表示检查不可用，
+    // 必须映射到 error state 并展示后端 message，不能误判为"已是最新版"。
+    const unavailable: ClientUpdateCheck = {
+      ...update,
+      action: "none",
+      needs_update: false,
+      latest_version: "",
+      message: "该渠道下无匹配的 release。",
+      reason: "no_release_for_channel"
+    };
+    const view = deriveAutoUpdateView({
+      mode: "ready",
+      requestKey: "client-a",
+      snapshot: {
+        requestKey: "client-a",
+        update: unavailable,
+        error: null
+      }
+    });
+
+    expect(view.autoUpdateState).toBe("error");
+    expect(view.autoUpdate).toBeNull();
+    expect(view.autoUpdateError).toBe("该渠道下无匹配的 release。");
+  });
+
+  it("maps all non-none reason variants to error state", () => {
+    // 覆盖多个 reason 值，确保枚举字符串拼接无拼写错误，且前端对所有非 none 值行为一致。
+    const reasons: Array<{ reason: ClientUpdateCheck["reason"]; message: string }> = [
+      { reason: "client_not_in_catalog", message: "客户端不在内置 catalog 中。" },
+      { reason: "no_asset_for_platform", message: "无当前平台的匹配资产。" },
+      { reason: "auto_update_disabled", message: "该客户端不支持自动更新。" },
+      { reason: "manifest_entry_missing", message: "manifest 中无该条目。" }
+    ];
+    for (const { reason, message } of reasons) {
+      const unavailable: ClientUpdateCheck = {
+        ...update,
+        action: "none",
+        needs_update: false,
+        latest_version: "",
+        message,
+        reason
+      };
+      const view = deriveAutoUpdateView({
+        mode: "ready",
+        requestKey: "client-a",
+        snapshot: {
+          requestKey: "client-a",
+          update: unavailable,
+          error: null
+        }
+      });
+      expect(view.autoUpdateState).toBe("error");
+      expect(view.autoUpdateError).toBe(message);
+    }
+  });
+
+  it("maps reason none with needs_update false to current (genuine latest)", () => {
+    const latest: ClientUpdateCheck = {
+      ...update,
+      needs_update: false,
+      latest_version: "2.62.3",
+      reason: "none"
+    };
+    const view = deriveAutoUpdateView({
+      mode: "ready",
+      requestKey: "client-a",
+      snapshot: {
+        requestKey: "client-a",
+        update: latest,
+        error: null
+      }
+    });
+
+    expect(view.autoUpdateState).toBe("current");
   });
 });
 
