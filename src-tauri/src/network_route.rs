@@ -10,7 +10,23 @@
 //! 代理地址（如 127.0.0.1）不进入目标校验。
 
 use crate::models::{NetworkRouteConfig, NetworkRouteMode};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
+
+/// 路由探测结果缓存项。
+struct RouteProbeCache {
+    route: NetworkRouteConfig,
+    local_proxy_url: Option<String>,
+    timestamp: std::time::Instant,
+}
+
+/// 探测结果 TTL：5 分钟。
+const ROUTE_PROBE_CACHE_TTL: Duration = Duration::from_secs(300);
+
+/// 全局路由探测缓存。成功探测后写入，后续调用在 TTL 内直接命中，
+/// 避免每次无路由配置时都重新串行探测（最坏 15 秒）。
+static ROUTE_PROBE_CACHE: LazyLock<Mutex<Option<RouteProbeCache>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 /// 构建带本地代理隧道的 reqwest 客户端。
 ///
@@ -215,13 +231,37 @@ pub async fn probe_route_connectivity(
 ///
 /// 若全部不可达，返回 `None`（调用方应降级提示用户检查网络）。
 /// `local_proxy_url` 为空或无效时跳过 local_proxy 探测。
+///
+/// 探测结果在 TTL（5 分钟）内缓存，避免频繁重复探测。
 pub async fn auto_select_route(local_proxy_url: Option<&str>) -> Option<NetworkRouteConfig> {
+    // 先检查缓存：TTL 内且 local_proxy_url 匹配时直接命中
+    {
+        let guard = ROUTE_PROBE_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(cache) = guard.as_ref() {
+            if cache.timestamp.elapsed() < ROUTE_PROBE_CACHE_TTL
+                && cache.local_proxy_url.as_deref() == local_proxy_url
+            {
+                return Some(cache.route.clone());
+            }
+        }
+    }
+
     // 1. 探测 direct
     let direct = NetworkRouteConfig {
         mode: NetworkRouteMode::Direct,
         local_proxy_url: None,
     };
     if probe_route_connectivity(Some(&direct)).await.is_ok() {
+        let mut guard = ROUTE_PROBE_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *guard = Some(RouteProbeCache {
+            route: direct.clone(),
+            local_proxy_url: local_proxy_url.map(|s| s.to_string()),
+            timestamp: std::time::Instant::now(),
+        });
         return Some(direct);
     }
 
@@ -231,6 +271,14 @@ pub async fn auto_select_route(local_proxy_url: Option<&str>) -> Option<NetworkR
         local_proxy_url: None,
     };
     if probe_route_connectivity(Some(&auto)).await.is_ok() {
+        let mut guard = ROUTE_PROBE_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *guard = Some(RouteProbeCache {
+            route: auto.clone(),
+            local_proxy_url: local_proxy_url.map(|s| s.to_string()),
+            timestamp: std::time::Instant::now(),
+        });
         return Some(auto);
     }
 
@@ -243,6 +291,14 @@ pub async fn auto_select_route(local_proxy_url: Option<&str>) -> Option<NetworkR
                 local_proxy_url: Some(trimmed.to_string()),
             };
             if probe_route_connectivity(Some(&local)).await.is_ok() {
+                let mut guard = ROUTE_PROBE_CACHE
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                *guard = Some(RouteProbeCache {
+                    route: local.clone(),
+                    local_proxy_url: local_proxy_url.map(|s| s.to_string()),
+                    timestamp: std::time::Instant::now(),
+                });
                 return Some(local);
             }
         }
