@@ -245,6 +245,7 @@ pub async fn load_manifest(
 /// 字段区分"已是最新版"与"无法判断/不支持自动更新"等语义，避免前端把后者误判为前者。
 #[tauri::command]
 pub async fn check_client_update(
+    app: AppHandle,
     registry: RegistryState<'_>,
     request: CheckClientUpdateRequest,
 ) -> Result<ClientUpdateCheck, IpcError> {
@@ -261,7 +262,8 @@ pub async fn check_client_update(
         })
         .and_then(|client| client.version);
 
-    crate::update_source::check_client_update(&request, current_version)
+    let cache_dir = app.path().cache_dir().ok();
+    crate::update_source::check_client_update(&request, current_version, cache_dir.as_deref())
         .await
         .map_err(IpcError::from)
 }

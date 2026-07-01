@@ -12,7 +12,7 @@ use crate::models::{
 use crate::registry::ClientRegistry;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 
 /// verify-progress 事件 payload。前端 useClientInstaller 监听后渲染校验进度条，
@@ -163,9 +163,14 @@ async fn prepare_update_download_job(
         network_route: network_route.clone(),
         use_manifest_source: request.use_manifest_source,
     };
-    let update = crate::update_source::check_client_update(&update_request, client.version)
-        .await
-        .map_err(ManagerError::Internal)?;
+    let cache_dir = app.path().cache_dir().ok();
+    let update = crate::update_source::check_client_update(
+        &update_request,
+        client.version,
+        cache_dir.as_deref(),
+    )
+    .await
+    .map_err(ManagerError::Internal)?;
     // update_source 现在始终返回 ClientUpdateCheck，无可用下载时 action != Download。
     // 用 reason 不可用时附带的 message 直接报错。
     if update.action != UpdateAction::Download {

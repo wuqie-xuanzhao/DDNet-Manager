@@ -36,7 +36,7 @@ async fn check_client_update_returns_client_not_in_catalog_for_unknown_client() 
         network_route: None,
         use_manifest_source: false,
     };
-    let result = super::check_client_update(&request, None)
+    let result = super::check_client_update(&request, None, None)
         .await
         .expect("未知 client_id 不应返回 Err");
     assert_eq!(result.reason, UpdateCheckReason::ClientNotInCatalog);

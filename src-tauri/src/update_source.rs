@@ -7,6 +7,8 @@ struct ManifestUpdateInput<'a> {
     request: &'a CheckClientUpdateRequest,
     current_version: Option<String>,
     platform: String,
+    /// manifest 缓存目录。`None` 时禁用本地缓存 fallback。
+    cache_dir: Option<&'a std::path::Path>,
 }
 
 struct DownloadUpdateInput {
@@ -32,6 +34,7 @@ struct CatalogUpdateInput<'a> {
 pub async fn check_client_update(
     request: &CheckClientUpdateRequest,
     current_version: Option<String>,
+    cache_dir: Option<&std::path::Path>,
 ) -> Result<ClientUpdateCheck, String> {
     // 若用户未配置路由，自动探测并选择最佳网络路径。
     let mut request = request.clone();
@@ -46,6 +49,7 @@ pub async fn check_client_update(
             request: &request,
             current_version,
             platform: request.platform.clone().unwrap_or_else(current_platform),
+            cache_dir,
         })
         .await;
     }
@@ -218,12 +222,10 @@ fn manual_update(input: ManualUpdateInput, current_version: Option<String>) -> C
 async fn check_manifest_update(
     input: ManifestUpdateInput<'_>,
 ) -> Result<ClientUpdateCheck, String> {
-    // 后续工作：manifest 检查走缓存需要 cache_dir，目前 check_client_update 纯函数无 AppHandle 上下文。
-    // 当前传 None 即走纯网络无缓存。等后续把 cache_dir 作为参数透传后再启用缓存 fallback。
     let manifest = crate::manifest::fetch_manifest_with_route(
         crate::commands::download::required_manifest_url(input.request.manifest_url.as_deref())?,
         input.request.network_route.as_ref(),
-        None,
+        input.cache_dir,
     )
     .await?;
     let selector = ClientUpdateSelector {
